@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
 
 interface ReconciliationFinding {
   type: string
@@ -225,4 +226,124 @@ export async function runFullReconciliation(
   }
 
   return results
+}
+
+/**
+ * Creates a transaction signature hash for duplicate detection
+ * Based on: account_id + date + amount + description
+ */
+export function createTransactionSignature(params: {
+  account_id: string
+  txn_date: string | null
+  amount: number
+  description: string | null
+}): string {
+  const parts = [
+    params.account_id,
+    params.txn_date ?? '',
+    params.amount.toString(),
+    (params.description ?? '').toLowerCase().trim(),
+  ]
+  const key = parts.join('|')
+  return crypto.createHash('sha256').update(key).digest('hex')
+}
+
+/**
+ * Checks if a transaction already exists in the database by comparing similar attributes
+ * Looks for exact amount + date + account within 2 days to catch duplicates
+ */
+export async function findExistingTransactionMatch(
+  supabase: SupabaseClient,
+  params: {
+    account_id: string
+    txn_date: string | null
+    amount: number
+    description: string | null
+  }
+): Promise<boolean> {
+  if (!params.txn_date) {
+    return false
+  }
+
+  try {
+    const txnDate = new Date(params.txn_date)
+    const dayBefore = new Date(txnDate)
+    dayBefore.setDate(dayBefore.getDate() - 1)
+    const dayAfter = new Date(txnDate)
+    dayAfter.setDate(dayAfter.getDate() + 1)
+
+    const { data, error } = await supabase
+      .from('statement_transactions')
+      .select('id', { count: 'exact' })
+      .eq('account_id', params.account_id)
+      .eq('amount', params.amount)
+      .gte('txn_date', dayBefore.toISOString().split('T')[0])
+      .lte('txn_date', dayAfter.toISOString().split('T')[0])
+      .limit(1)
+
+    if (error) {
+      console.error('Duplicate check error:', error)
+      return false
+    }
+
+    return (data?.length ?? 0) > 0
+  } catch (err) {
+    console.error('Exception in duplicate check:', err)
+    return false
+  }
+}
+
+/**
+ * Filters parsed transactions to only include new ones (not duplicates)
+ * Used during statement approval to prevent reimporting existing data
+ */
+export async function filterNewParsedTransactions(
+  supabase: SupabaseClient,
+  accountId: string,
+  transactions: Array<{
+    date?: string
+    description?: string
+    amount?: number
+    txn_type?: string
+  }>
+): Promise<{
+  new_count: number
+  duplicate_count: number
+  new_transactions: Array<{
+    date?: string
+    description?: string
+    amount?: number
+    txn_type?: string
+  }>
+  duplicate_transactions: Array<{
+    date?: string
+    description?: string
+    amount?: number
+    txn_type?: string
+  }>
+}> {
+  const new_transactions: typeof transactions = []
+  const duplicate_transactions: typeof transactions = []
+
+  for (const txn of transactions) {
+    const isExisting = await findExistingTransactionMatch(supabase, {
+      account_id: accountId,
+      txn_date: txn.date ?? null,
+      amount: txn.amount ?? 0,
+      description: txn.description ?? null,
+    })
+
+    if (isExisting) {
+      duplicate_transactions.push(txn)
+    } else {
+      new_transactions.push(txn)
+    }
+  }
+
+  return {
+    new_count: new_transactions.length,
+    duplicate_count: duplicate_transactions.length,
+    new_transactions,
+    duplicate_transactions,
+  }
 }

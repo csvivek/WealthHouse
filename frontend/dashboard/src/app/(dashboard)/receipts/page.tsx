@@ -30,6 +30,7 @@ interface ReceiptRow {
 export default function ReceiptsPage() {
   const [receipts, setReceipts] = useState<ReceiptRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     async function fetchReceipts() {
@@ -64,6 +65,48 @@ export default function ReceiptsPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Receipts</h1>
         <p className="text-muted-foreground">Review parsed receipts from Telegram and uploads.</p>
+        <div className="mt-4">
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              onChange={async e => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                setUploading(true)
+                try {
+                  const fd = new FormData()
+                  fd.append('receipt', file)
+                  const res = await fetch('/api/receipts/upload', {
+                    method: 'POST',
+                    body: fd,
+                  })
+                  if (res.ok) {
+                    const json = await res.json()
+                    // refresh receipts
+                    const supabase = createClient()
+                    const { data } = await supabase
+                      .from('receipts')
+                      .select('id, receipt_datetime, merchant_raw, total_amount, currency, extraction_confidence, status, source, created_at')
+                      .order('created_at', { ascending: false })
+                    setReceipts((data as ReceiptRow[]) ?? [])
+                  } else {
+                    console.error('Upload failed', await res.text())
+                  }
+                } catch (err) {
+                  console.error(err)
+                } finally {
+                  setUploading(false)
+                  e.target.value = ''
+                }
+              }}
+            />
+            <span className="cursor-pointer rounded bg-blue-500 px-4 py-2 text-white text-sm font-medium hover:bg-blue-600">
+              {uploading ? 'Uploading…' : 'Upload Receipt'}
+            </span>
+          </label>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">

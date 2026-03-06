@@ -41,41 +41,132 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
 
-  useEffect(() => {
-    const fetchProfile = async () => {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        setLoading(false)
-        return
-      }
-      setUserId(user.id)
-      setEmail(user.email ?? '')
+  // household management state
+  const [household, setHousehold] = useState<any[]>([])
+  const [householdName, setHouseholdName] = useState('')
+  const [editingHouseholdName, setEditingHouseholdName] = useState(false)
+  const [currentProfile, setCurrentProfile] = useState<any | null>(null)
+  const [isDialogOpen, setDialogOpen] = useState(false)
+  const [editName, setEditName] = useState('')
+  const [editRole, setEditRole] = useState<'owner' | 'member'>('member')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [savingMember, setSavingMember] = useState(false)
 
-      const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-
-      if (profile) {
-        setFullName(profile.display_name ?? '')
-        setAvatarUrl(profile.avatar_url ?? '')
-      }
+  // move outside so we can call it again after saving
+  const fetchProfile = async () => {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
       setLoading(false)
+      return
     }
+    setUserId(user.id)
+    setEmail(user.email ?? '')
+
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single()
+
+    if (profile) {
+      setFullName(profile.display_name ?? '')
+      setAvatarUrl(profile.avatar_url ?? '')
+      setCurrentProfile(profile)
+    }
+
+    // load household info & members when profile available
+    if (profile) {
+      const [res1, res2] = await Promise.all([
+        fetch('/api/household'),
+        fetch('/api/household/profiles'),
+      ])
+      if (res1.ok) {
+        const j = await res1.json()
+        setHouseholdName(j.household?.name || '')
+      }
+      if (res2.ok) {
+        const j = await res2.json()
+        setHousehold(j.profiles || [])
+      }
+    }
+
+    setLoading(false)
+  }
+
+  useEffect(() => {
     fetchProfile()
   }, [])
 
   const handleSave = async () => {
     if (!userId) return
     setSaving(true)
-    const supabase = createClient()
-    await supabase
-      .from('user_profiles')
-      .update({ display_name: fullName, avatar_url: avatarUrl })
-      .eq('id', userId)
+    try {
+      const supabase = createClient()
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ display_name: fullName, avatar_url: avatarUrl })
+        .eq('id', userId)
+      if (error) {
+        console.error('Save failed:', error.message)
+        alert('Failed to save profile: ' + error.message)
+      } else {
+        alert('Profile saved successfully!')
+        // refresh data so page reflects change immediately
+        await fetchProfile()
+      }
+    } catch (err) {
+      console.error(err)
+      alert('Error saving profile')
+    }
     setSaving(false)
+  }
+
+  // household member actions
+  const openEdit = (member: any) => {
+    setEditingId(member.id)
+    setEditName(member.display_name || '')
+    setEditRole(member.role || 'member')
+    setDialogOpen(true)
+  }
+
+  const saveEdit = async () => {
+    if (!editingId) return
+    setSavingMember(true)
+    try {
+      const res = await fetch(`/api/household/profiles/${editingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ display_name: editName, role: editRole }),
+      })
+      if (res.ok) {
+        const { profile } = await res.json()
+        setHousehold(h => h.map(m => (m.id === profile.id ? profile : m)))
+        if (currentProfile && currentProfile.id === profile.id) {
+          setCurrentProfile(profile)
+        }
+      } else {
+        console.error('Edit failed', await res.text())
+      }
+    } catch (err) {
+      console.error(err)
+    }
+    setSavingMember(false)
+    setDialogOpen(false)
+  }
+
+  const removeMember = async (id: string) => {
+    if (!confirm('Are you sure you want to remove this member from the household?')) return
+    try {
+      const res = await fetch(`/api/household/profiles/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setHousehold(h => h.filter(m => m.id !== id))
+      } else {
+        console.error('Remove failed', await res.text())
+      }
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   if (loading) {
@@ -96,6 +187,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="profile" className="space-y-6">
         <TabsList>
           <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="household">Household</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
@@ -136,6 +228,151 @@ export default function SettingsPage() {
               </Button>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Household Tab */}
+        <TabsContent value="household">
+          <Card>
+            <CardHeader>
+              <CardTitle>Household Members</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-2">
+                Household: {householdName}
+                {currentProfile?.role === 'owner' && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="ml-2"
+                    onClick={() => setEditingHouseholdName(true)}
+                  >
+                    Edit
+                  </Button>
+                )}
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-3 pr-4 font-medium">Name</th>
+                      <th className="pb-3 pr-4 font-medium">Email</th>
+                      <th className="pb-3 pr-4 font-medium">Role</th>
+                      <th className="pb-3 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {household.map((member) => (
+                      <tr key={member.id} className="border-b last:border-0">
+                        <td className="py-3 pr-4">{member.display_name}</td>
+                        <td className="py-3 pr-4">{member.email || '-'}</td>
+                        <td className="py-3 pr-4">{member.role}</td>
+                        <td className="py-3">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openEdit(member)}
+                          >
+                            Edit
+                          </Button>
+                          {currentProfile?.role === 'owner' && member.id !== currentProfile.id && (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              className="ml-2"
+                              onClick={() => removeMember(member.id)}
+                            >
+                              Remove
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Edit dialog */}
+          <Dialog open={isDialogOpen} onOpenChange={setDialogOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Edit Member</DialogTitle>
+                <DialogDescription>Modify display name or role.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="editName">Full Name</Label>
+                  <Input
+                    id="editName"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="editRole">Role</Label>
+                  <Select
+                    value={editRole}
+                    onValueChange={setEditRole}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="owner">Owner</SelectItem>
+                      <SelectItem value="member">Member</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex justify-end">
+                  <Button onClick={saveEdit} disabled={savingMember}>
+                    {savingMember ? 'Saving…' : 'Save'}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Household name edit dialog */}
+          <Dialog open={editingHouseholdName} onOpenChange={setEditingHouseholdName}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Edit Household Name</DialogTitle>
+                <DialogDescription>Change the name of your household.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="householdName">Name</Label>
+                  <Input
+                    id="householdName"
+                    value={householdName}
+                    onChange={(e) => setHouseholdName(e.target.value)}
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={async () => {
+                      try {
+                        const res = await fetch('/api/household', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ name: householdName }),
+                        })
+                        if (!res.ok) {
+                          console.error('Household name update failed', await res.text())
+                        }
+                      } catch (err) {
+                        console.error(err)
+                      }
+                      setEditingHouseholdName(false)
+                    }}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         {/* Security Tab */}

@@ -57,6 +57,7 @@ const mainNavItems = [
   { title: "Transactions", href: "/transactions", icon: ArrowLeftRight },
   { title: "Investments", href: "/investments", icon: TrendingUp },
   { title: "Receipts", href: "/receipts", icon: Receipt },
+  { title: "Statements", href: "/statements", icon: FileText },
   { title: "Crypto", href: "/crypto", icon: Coins },
   { title: "AI Chat", href: "/chat", icon: Bot },
 ]
