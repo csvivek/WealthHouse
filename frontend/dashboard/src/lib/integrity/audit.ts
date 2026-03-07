@@ -1,6 +1,13 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 
-export type DataSource = 'manual' | 'ai_categorized' | 'ai_receipt' | 'plaid_import' | 'crypto_sync' | 'system'
+export type DataSource =
+  | 'manual'
+  | 'ai_categorized'
+  | 'ai_receipt'
+  | 'statement_import'
+  | 'plaid_import'
+  | 'crypto_sync'
+  | 'system'
 
 interface AuditEntry {
   table_name: string

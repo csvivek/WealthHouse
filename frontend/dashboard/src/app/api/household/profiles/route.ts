@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createClient as createService } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
@@ -11,7 +11,7 @@ function serviceClient() {
   )
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const supabase = await createServerSupabaseClient()
     const {
@@ -48,10 +48,15 @@ export async function GET(request: NextRequest) {
     }
 
     // flatten email field
-    const normalized = (profiles || []).map((p) => ({
-      ...p,
-      email: (p as any).auth?.users?.email ?? null,
-    }))
+    const normalized = (profiles || []).map((profile) => {
+      const record = ((profile ?? {}) as unknown) as Record<string, unknown>
+      const auth = (record.auth ?? null) as { users?: { email?: string | null } } | null
+
+      return {
+        ...record,
+        email: auth?.users?.email ?? null,
+      }
+    })
 
     return NextResponse.json({ profiles: normalized })
   } catch (err) {

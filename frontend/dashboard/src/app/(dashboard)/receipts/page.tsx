@@ -83,7 +83,7 @@ export default function ReceiptsPage() {
                     body: fd,
                   })
                   if (res.ok) {
-                    const json = await res.json()
+                    await res.json()
                     // refresh receipts
                     const supabase = createClient()
                     const { data } = await supabase

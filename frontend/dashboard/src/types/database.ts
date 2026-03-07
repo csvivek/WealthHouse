@@ -510,11 +510,347 @@ export type Database = {
           },
         ]
       }
+      file_imports: {
+        Row: {
+          id: string
+          household_id: string
+          account_id: string
+          uploaded_by: string
+          file_name: string
+          file_sha256: string
+          mime_type: string
+          file_size_bytes: number
+          status: Database['public']['Enums']['file_import_status']
+          duplicate_of_file_import_id: string | null
+          institution_code: string | null
+          institution_id: string | null
+          statement_date: string | null
+          statement_period_start: string | null
+          statement_period_end: string | null
+          currency: string | null
+          parse_confidence: number | null
+          raw_parse_result: Record<string, unknown> | null
+          summary_json: Record<string, unknown> | null
+          card_info_json: Record<string, unknown> | null
+          parse_error: string | null
+          total_rows: number | null
+          approved_rows: number | null
+          rejected_rows: number | null
+          duplicate_rows: number | null
+          committed_rows: number | null
+          committed_statement_import_id: string | null
+          committed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          account_id: string
+          uploaded_by: string
+          file_name: string
+          file_sha256: string
+          mime_type: string
+          file_size_bytes: number
+          status?: Database['public']['Enums']['file_import_status']
+          duplicate_of_file_import_id?: string | null
+          institution_code?: string | null
+          institution_id?: string | null
+          statement_date?: string | null
+          statement_period_start?: string | null
+          statement_period_end?: string | null
+          currency?: string | null
+          parse_confidence?: number | null
+          raw_parse_result?: Record<string, unknown> | null
+          summary_json?: Record<string, unknown> | null
+          card_info_json?: Record<string, unknown> | null
+          parse_error?: string | null
+          total_rows?: number | null
+          approved_rows?: number | null
+          rejected_rows?: number | null
+          duplicate_rows?: number | null
+          committed_rows?: number | null
+          committed_statement_import_id?: string | null
+          committed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          household_id?: string
+          account_id?: string
+          uploaded_by?: string
+          file_name?: string
+          file_sha256?: string
+          mime_type?: string
+          file_size_bytes?: number
+          status?: Database['public']['Enums']['file_import_status']
+          duplicate_of_file_import_id?: string | null
+          institution_code?: string | null
+          institution_id?: string | null
+          statement_date?: string | null
+          statement_period_start?: string | null
+          statement_period_end?: string | null
+          currency?: string | null
+          parse_confidence?: number | null
+          raw_parse_result?: Record<string, unknown> | null
+          summary_json?: Record<string, unknown> | null
+          card_info_json?: Record<string, unknown> | null
+          parse_error?: string | null
+          total_rows?: number | null
+          approved_rows?: number | null
+          rejected_rows?: number | null
+          duplicate_rows?: number | null
+          committed_rows?: number | null
+          committed_statement_import_id?: string | null
+          committed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'file_imports_account_id_fkey'
+            columns: ['account_id']
+            isOneToOne: false
+            referencedRelation: 'accounts'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'file_imports_duplicate_of_file_import_id_fkey'
+            columns: ['duplicate_of_file_import_id']
+            isOneToOne: false
+            referencedRelation: 'file_imports'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'file_imports_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'file_imports_uploaded_by_fkey'
+            columns: ['uploaded_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      import_staging: {
+        Row: {
+          id: string
+          file_import_id: string
+          household_id: string
+          account_id: string
+          row_index: number
+          review_status: Database['public']['Enums']['staging_review_status']
+          duplicate_status: Database['public']['Enums']['staging_duplicate_status']
+          duplicate_transaction_id: string | null
+          txn_hash: string
+          source_txn_hash: string
+          txn_date: string
+          posting_date: string | null
+          merchant_raw: string
+          description: string | null
+          reference: string | null
+          amount: number
+          txn_type: string
+          currency: string
+          original_amount: number | null
+          original_currency: string | null
+          confidence: number | null
+          original_data: Record<string, unknown>
+          is_edited: boolean
+          review_note: string | null
+          last_reviewed_by: string | null
+          last_reviewed_at: string | null
+          committed_transaction_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          file_import_id: string
+          household_id: string
+          account_id: string
+          row_index: number
+          review_status?: Database['public']['Enums']['staging_review_status']
+          duplicate_status?: Database['public']['Enums']['staging_duplicate_status']
+          duplicate_transaction_id?: string | null
+          txn_hash: string
+          source_txn_hash: string
+          txn_date: string
+          posting_date?: string | null
+          merchant_raw: string
+          description?: string | null
+          reference?: string | null
+          amount: number
+          txn_type: string
+          currency: string
+          original_amount?: number | null
+          original_currency?: string | null
+          confidence?: number | null
+          original_data: Record<string, unknown>
+          is_edited?: boolean
+          review_note?: string | null
+          last_reviewed_by?: string | null
+          last_reviewed_at?: string | null
+          committed_transaction_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          file_import_id?: string
+          household_id?: string
+          account_id?: string
+          row_index?: number
+          review_status?: Database['public']['Enums']['staging_review_status']
+          duplicate_status?: Database['public']['Enums']['staging_duplicate_status']
+          duplicate_transaction_id?: string | null
+          txn_hash?: string
+          source_txn_hash?: string
+          txn_date?: string
+          posting_date?: string | null
+          merchant_raw?: string
+          description?: string | null
+          reference?: string | null
+          amount?: number
+          txn_type?: string
+          currency?: string
+          original_amount?: number | null
+          original_currency?: string | null
+          confidence?: number | null
+          original_data?: Record<string, unknown>
+          is_edited?: boolean
+          review_note?: string | null
+          last_reviewed_by?: string | null
+          last_reviewed_at?: string | null
+          committed_transaction_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'import_staging_account_id_fkey'
+            columns: ['account_id']
+            isOneToOne: false
+            referencedRelation: 'accounts'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'import_staging_committed_transaction_id_fkey'
+            columns: ['committed_transaction_id']
+            isOneToOne: false
+            referencedRelation: 'statement_transactions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'import_staging_duplicate_transaction_id_fkey'
+            columns: ['duplicate_transaction_id']
+            isOneToOne: false
+            referencedRelation: 'statement_transactions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'import_staging_file_import_id_fkey'
+            columns: ['file_import_id']
+            isOneToOne: false
+            referencedRelation: 'file_imports'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'import_staging_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'import_staging_last_reviewed_by_fkey'
+            columns: ['last_reviewed_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      approval_log: {
+        Row: {
+          id: string
+          household_id: string
+          file_import_id: string
+          staging_id: string | null
+          actor_user_id: string
+          action: Database['public']['Enums']['approval_action']
+          old_data: Record<string, unknown> | null
+          new_data: Record<string, unknown> | null
+          note: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          file_import_id: string
+          staging_id?: string | null
+          actor_user_id: string
+          action: Database['public']['Enums']['approval_action']
+          old_data?: Record<string, unknown> | null
+          new_data?: Record<string, unknown> | null
+          note?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          household_id?: string
+          file_import_id?: string
+          staging_id?: string | null
+          actor_user_id?: string
+          action?: Database['public']['Enums']['approval_action']
+          old_data?: Record<string, unknown> | null
+          new_data?: Record<string, unknown> | null
+          note?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'approval_log_actor_user_id_fkey'
+            columns: ['actor_user_id']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'approval_log_file_import_id_fkey'
+            columns: ['file_import_id']
+            isOneToOne: false
+            referencedRelation: 'file_imports'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'approval_log_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'approval_log_staging_id_fkey'
+            columns: ['staging_id']
+            isOneToOne: false
+            referencedRelation: 'import_staging'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       statement_imports: {
         Row: {
           id: string
           account_id: string
           institution_id: string
+          file_import_id: string | null
           statement_period_start: string | null
           statement_period_end: string | null
           statement_name: string
@@ -529,6 +865,7 @@ export type Database = {
           id?: string
           account_id: string
           institution_id: string
+          file_import_id?: string | null
           statement_period_start?: string | null
           statement_period_end?: string | null
           statement_name: string
@@ -543,6 +880,7 @@ export type Database = {
           id?: string
           account_id?: string
           institution_id?: string
+          file_import_id?: string | null
           statement_period_start?: string | null
           statement_period_end?: string | null
           statement_name?: string
@@ -566,6 +904,13 @@ export type Database = {
             columns: ['institution_id']
             isOneToOne: false
             referencedRelation: 'institutions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'statement_imports_file_import_id_fkey'
+            columns: ['file_import_id']
+            isOneToOne: false
+            referencedRelation: 'file_imports'
             referencedColumns: ['id']
           },
         ]
@@ -1622,7 +1967,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      ensure_user_profile: {
+        Args: Record<string, never>
+        Returns: undefined
+      }
     }
     Enums: {
       member_role: 'self' | 'spouse' | 'child' | 'parent' | 'other'
@@ -1633,6 +1981,10 @@ export type Database = {
       asset_type: 'fiat' | 'crypto' | 'stock' | 'etf' | 'bond' | 'commodity'
       asset_class: 'real_estate' | 'vehicle' | 'equipment' | 'other'
       parse_status: 'received' | 'parsing' | 'parsed' | 'confirmed' | 'failed'
+      file_import_status: 'received' | 'parsing' | 'in_review' | 'committing' | 'committed' | 'rejected' | 'duplicate' | 'failed'
+      staging_review_status: 'pending' | 'approved' | 'rejected' | 'committed'
+      staging_duplicate_status: 'none' | 'existing_final' | 'within_import'
+      approval_action: 'edit' | 'approve' | 'reject' | 'bulk_approve' | 'bulk_reject' | 'commit'
       txn_type: 'debit' | 'credit' | 'unknown'
       ledger_source_priority: 'receipt' | 'statement' | 'manual'
       ledger_status: 'active' | 'voided' | 'pending'

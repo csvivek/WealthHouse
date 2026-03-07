@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { parseReceipt } from '@/lib/ai/receipt-parser'
+import type { Database } from '@/types/database'
 import crypto from 'crypto'
+
+type ParsedReceipt = Awaited<ReturnType<typeof parseReceipt>>
+type ParsedReceiptItem = ParsedReceipt['items'][number]
+type ReceiptInsert = Database['public']['Tables']['receipts']['Insert']
+type ReceiptItemInsert = Database['public']['Tables']['receipt_items']['Insert']
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,7 +56,7 @@ export async function POST(request: NextRequest) {
     const fileUrl = uploadData?.path || null
 
     // parse receipt using existing AI helper
-    let parsed: any = null
+    let parsed: ParsedReceipt | null = null
     try {
       const base64 = bytes.toString('base64')
       parsed = await parseReceipt(base64, file.type || 'image/jpeg')
@@ -59,7 +65,7 @@ export async function POST(request: NextRequest) {
     }
 
     // insert into receipts table
-    const insertObj: any = {
+    const insertObj: ReceiptInsert = {
       merchant_raw: parsed?.merchantName || file.name,
       total_amount: parsed?.totalAmount || 0,
       currency: parsed?.currency || 'SGD',
@@ -84,11 +90,12 @@ export async function POST(request: NextRequest) {
 
     // insert items if available
     if (parsed?.items && Array.isArray(parsed.items) && parsed.items.length) {
-      const itemsToInsert = parsed.items.map((it: any) => ({
+      const itemsToInsert: ReceiptItemInsert[] = parsed.items.map((item: ParsedReceiptItem) => ({
         receipt_id: receipt.id,
-        name: it.name,
-        quantity: it.quantity,
-        price: it.price,
+        item_name_raw: item.name,
+        quantity: item.quantity,
+        unit_price: item.price,
+        line_total: item.quantity * item.price,
       }))
       await supabase.from('receipt_items').insert(itemsToInsert)
     }

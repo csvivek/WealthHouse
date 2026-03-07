@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
 import { createServerSupabaseClient } from "@/lib/supabase/server"
+import { ensureProfile } from "@/lib/supabase/ensure-profile"
 import { AppSidebar } from "@/components/app-sidebar"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 
@@ -14,6 +15,8 @@ export default async function DashboardLayout({
   } = await supabase.auth.getUser()
 
   if (!user) redirect("/login")
+
+  await ensureProfile(supabase, user.id)
 
   const { data: profile } = await supabase
     .from("user_profiles")

@@ -28,6 +28,16 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 
+type HouseholdRole = 'owner' | 'member'
+
+interface HouseholdProfile {
+  id: string
+  display_name: string | null
+  avatar_url: string | null
+  role: HouseholdRole
+  email?: string | null
+}
+
 export default function SettingsPage() {
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
@@ -42,13 +52,13 @@ export default function SettingsPage() {
   const [userId, setUserId] = useState<string | null>(null)
 
   // household management state
-  const [household, setHousehold] = useState<any[]>([])
+  const [household, setHousehold] = useState<HouseholdProfile[]>([])
   const [householdName, setHouseholdName] = useState('')
   const [editingHouseholdName, setEditingHouseholdName] = useState(false)
-  const [currentProfile, setCurrentProfile] = useState<any | null>(null)
+  const [currentProfile, setCurrentProfile] = useState<HouseholdProfile | null>(null)
   const [isDialogOpen, setDialogOpen] = useState(false)
   const [editName, setEditName] = useState('')
-  const [editRole, setEditRole] = useState<'owner' | 'member'>('member')
+  const [editRole, setEditRole] = useState<HouseholdRole>('member')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [savingMember, setSavingMember] = useState(false)
 
@@ -72,7 +82,7 @@ export default function SettingsPage() {
     if (profile) {
       setFullName(profile.display_name ?? '')
       setAvatarUrl(profile.avatar_url ?? '')
-      setCurrentProfile(profile)
+        setCurrentProfile(profile as HouseholdProfile)
     }
 
     // load household info & members when profile available
@@ -87,7 +97,7 @@ export default function SettingsPage() {
       }
       if (res2.ok) {
         const j = await res2.json()
-        setHousehold(j.profiles || [])
+        setHousehold((j.profiles || []) as HouseholdProfile[])
       }
     }
 
@@ -95,7 +105,11 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    fetchProfile()
+    async function loadProfile() {
+      await fetchProfile()
+    }
+
+    void loadProfile()
   }, [])
 
   const handleSave = async () => {
@@ -123,7 +137,7 @@ export default function SettingsPage() {
   }
 
   // household member actions
-  const openEdit = (member: any) => {
+  const openEdit = (member: HouseholdProfile) => {
     setEditingId(member.id)
     setEditName(member.display_name || '')
     setEditRole(member.role || 'member')
@@ -141,7 +155,9 @@ export default function SettingsPage() {
       })
       if (res.ok) {
         const { profile } = await res.json()
-        setHousehold(h => h.map(m => (m.id === profile.id ? profile : m)))
+        setHousehold((householdMembers) =>
+          householdMembers.map((member) => (member.id === profile.id ? profile : member)),
+        )
         if (currentProfile && currentProfile.id === profile.id) {
           setCurrentProfile(profile)
         }
@@ -313,7 +329,7 @@ export default function SettingsPage() {
                   <Label htmlFor="editRole">Role</Label>
                   <Select
                     value={editRole}
-                    onValueChange={setEditRole}
+                    onValueChange={(value) => setEditRole(value as HouseholdRole)}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select role" />

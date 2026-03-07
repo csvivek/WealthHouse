@@ -8,6 +8,7 @@ import {
   ArrowLeftRight,
   TrendingUp,
   Receipt,
+  FileUp,
   Coins,
   Bot,
   Shield,
@@ -56,8 +57,8 @@ const mainNavItems = [
   { title: "Accounts", href: "/accounts", icon: Wallet },
   { title: "Transactions", href: "/transactions", icon: ArrowLeftRight },
   { title: "Investments", href: "/investments", icon: TrendingUp },
+  { title: "Statements", href: "/statements", icon: FileUp },
   { title: "Receipts", href: "/receipts", icon: Receipt },
-  { title: "Statements", href: "/statements", icon: FileText },
   { title: "Crypto", href: "/crypto", icon: Coins },
   { title: "AI Chat", href: "/chat", icon: Bot },
 ]
