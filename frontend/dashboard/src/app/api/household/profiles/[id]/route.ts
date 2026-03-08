@@ -10,7 +10,7 @@ function serviceClient() {
   )
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const supabase = await createServerSupabaseClient()
     const {
@@ -20,6 +20,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const { id } = await params
     const updates = await request.json()
     // allowed fields
     const { display_name, avatar_url, role } = updates
@@ -36,7 +37,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     }
 
     // check permission: self or owner
-    if (user.id !== params.id && me.role !== 'owner') {
+    if (user.id !== id && me.role !== 'owner') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -44,7 +45,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     const { data: updated, error } = await service
       .from('user_profiles')
       .update({ display_name, avatar_url, role })
-      .eq('id', params.id)
+      .eq('id', id)
       .select()
       .single()
 
@@ -60,7 +61,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   }
 }
 
-export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const supabase = await createServerSupabaseClient()
     const {
@@ -69,6 +70,8 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const { id } = await params
 
     // only owner may remove others, and cannot remove self
     const { data: me } = await supabase
@@ -81,13 +84,13 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
       return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
     }
 
-    if (me.role !== 'owner' || params.id === user.id) {
+    if (me.role !== 'owner' || id === user.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     const service = serviceClient()
     // remove profile (household_members is separate and does not reference user id)
-    await service.from('user_profiles').delete().eq('id', params.id)
+    await service.from('user_profiles').delete().eq('id', id)
 
     return NextResponse.json({ success: true })
   } catch (err) {

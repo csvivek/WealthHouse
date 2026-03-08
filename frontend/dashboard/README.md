@@ -34,3 +34,13 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Supervising Review Agent
+
+This repo includes a local blocking review workflow for development actions.
+
+- `npm run review:agent -- --proposal review-agent/example-proposal.json --format text`
+- `npm run review:checkpoint -- --validation "npx eslint src/app/api/ai/statement/[importId]/rows/route.ts,npx tsc --noEmit" --format text`
+- `npm run review:memory -- --format text`
+
+See [`review-agent/README.md`](./review-agent/README.md) for the proposal format and escalation rules.

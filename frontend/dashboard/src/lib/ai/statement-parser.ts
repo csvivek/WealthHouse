@@ -64,7 +64,7 @@ Return only valid JSON with this exact shape:
   },
   "account": {
     "account_type": "savings | current | credit_card | fixed_deposit | investment | crypto_exchange | loan",
-    "product_name": "best product/account/card name",
+    "product_name": "best statement-level product/account name",
     "identifier_hint": "masked account hint or last 4 digits",
     "card_name": "card product name if applicable",
     "card_last4": "last four digits if applicable",
@@ -79,8 +79,16 @@ Return only valid JSON with this exact shape:
       "amount": number,
       "currency": "ISO currency",
       "statement_type": "specific normalized type",
-      "category_hint": "specific spending or transfer category",
-      "reference": "reference or null"
+      "category_hint": "one canonical WealthHouse category",
+      "reference": "reference or null",
+      "account": {
+        "account_type": "savings | current | credit_card | fixed_deposit | investment | crypto_exchange | loan",
+        "product_name": "originating account/card name for this transaction",
+        "identifier_hint": "masked account hint or last 4 digits for this transaction",
+        "card_name": "card name for this transaction if applicable",
+        "card_last4": "last four digits for this transaction if applicable",
+        "currency": "transaction account currency"
+      }
     }
   ]
 }
@@ -88,21 +96,22 @@ Return only valid JSON with this exact shape:
 General rules:
 - Concatenate multi-line statement descriptions into a single readable description.
 - statement_type must be specific, not generic. Prefer values like credit_card_payment, purchase, paynow, fast_transfer, giro, wallet_topup, interest, salary, investment_purchase, investment_sale, refund, fee, cash_deposit, transfer_in, transfer_out, internal_transfer.
-- category_hint must be a real finance category, not a statement label. Prefer values like Transfer, Transportation, Dining, Utilities, Groceries, Shopping, Salary, Interest, Investments, Fees, Cash, Bills, Uncategorized.
+- category_hint must be one of these WealthHouse categories only: Groceries, Eating Out, General Household, Transport, Shopping, Kids, Subscriptions, Dining, Flowers / Gifts, Other.
 - Skip statement summary rows such as opening balance, carried forward, subtotal, total, grand total, points summaries, and rewards sections.
 - Keep transaction amount as a positive absolute value. Direction is encoded by statement_type context and later processing.
 - Extract the best account/card product name and identifier hint from the statement header.
+- Do not infer duplicates or remove rows just because merchant/date/amount repeat. If the statement shows two separate rows, return two separate transactions.
 
 DBS-specific rules:
 - DBS consolidated bank statements contain multiple account blocks. Extract transactions only from the transaction details section.
+- DBS credit-card statements may contain multiple card sections. Each transaction must include the card/account block it belongs to in transactions[].account.
 - For DBS bank lines with FAST Payment / Receipt, inspect continuation lines and classify as paynow, transfer_in, transfer_out, or internal_transfer instead of a generic payment.
-- TOP-UP TO PAYLAH! is wallet_topup and category Transfer.
-- Funds Transfer between own accounts is internal_transfer and category Transfer.
-- Interest is interest and category Interest.
-- Buy - ... is investment_purchase; Sell - ... is investment_sale.
-- DBS credit-card statements may contain multiple card sections. Use the card header to populate card_name and card_last4.
-- DBS credit-card rows with PAYMENT - ... or amounts suffixed with CR are credit_card_payment, not purchases.
-- Standard DBS credit-card merchant spend rows should be purchase and have category hints inferred from the merchant, for example GOPAY-GOJEK -> Transportation, BUS/MRT -> Transportation, SP DIGITAL -> Utilities, YA KUN / TOAST BOX / OLD CHANG KEE -> Dining.
+- TOP-UP TO PAYLAH! is wallet_topup and category Other.
+- Funds Transfer between own accounts is internal_transfer and category Other.
+- Interest is interest and category Other.
+- Buy - ... is investment_purchase and category Other; Sell - ... is investment_sale and category Other.
+- DBS credit-card rows with PAYMENT - ... or amounts suffixed with CR are credit_card_payment or refund, not purchases, and category Other unless the merchant context clearly indicates something else.
+- Standard DBS credit-card merchant spend rows should have category hints inferred from the merchant, for example GOPAY-GOJEK -> Transport, BUS/MRT -> Transport, SP DIGITAL -> Other, YA KUN / TOAST BOX / OLD CHANG KEE -> Eating Out, SHENG SIONG / NTUC / U STARS -> Groceries, OPENAI / NETFLIX / CIRCLES.LIFE -> Subscriptions.
 
 If you cannot confidently detect a field, use null or unknown rather than inventing data.`
 

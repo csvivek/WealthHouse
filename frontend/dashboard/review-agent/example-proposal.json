@@ -1,0 +1,16 @@
+{
+  "action_type": "safe_local_change",
+  "intent": "Update statement review category editing.",
+  "paths": [
+    "src/app/api/ai/statement/[importId]/rows/route.ts",
+    "src/app/(dashboard)/statements/review/[importId]/page.tsx"
+  ],
+  "commands": [
+    "npx eslint src/app/api/ai/statement/[importId]/rows/route.ts"
+  ],
+  "risk_flags": [],
+  "validation_plan": [
+    "npx eslint src/app/api/ai/statement/[importId]/rows/route.ts",
+    "npx tsc --noEmit"
+  ]
+}

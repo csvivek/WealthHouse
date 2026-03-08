@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import {
   createAccountWithRelatedRecords,
   findOrCreateInstitution,
@@ -42,21 +41,20 @@ export async function POST(request: NextRequest) {
       card_last4,
     } = body
 
-    if (!product_name || !institution_name && !institution_id && !institution_code) {
+    if (!product_name || (!institution_name && !institution_id && !institution_code)) {
       return NextResponse.json(
         { error: 'Institution and product name are required.' },
         { status: 400 },
       )
     }
 
-    const service = createServiceSupabaseClient()
-    const institution = await findOrCreateInstitution(service, {
+    const institution = await findOrCreateInstitution(supabase, {
       institutionId: institution_id,
       institutionCode: institution_code,
       institutionName: institution_name,
     })
 
-    const account = await createAccountWithRelatedRecords(service, {
+    const account = await createAccountWithRelatedRecords(supabase, {
       householdId: profile.household_id,
       institutionId: institution.id,
       accountType: normalizeAccountType(account_type),
@@ -71,6 +69,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ account, institution })
   } catch (error) {
     console.error('Account creation error:', error)
-    return NextResponse.json({ error: 'Failed to create account' }, { status: 500 })
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to create account' },
+      { status: 500 },
+    )
   }
 }

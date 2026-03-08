@@ -1,5 +1,8 @@
 import { SupabaseClient } from '@supabase/supabase-js'
 
+const AUDIT_TABLE_MISSING_CODES = new Set(['PGRST205', '42P01'])
+let auditTableUnavailable = false
+
 export type DataSource =
   | 'manual'
   | 'ai_categorized'
@@ -20,10 +23,22 @@ interface AuditEntry {
 }
 
 export async function logAudit(supabase: SupabaseClient, entry: AuditEntry) {
-  const { error } = await supabase.from('audit_log').insert(entry)
-  if (error) {
-    console.error('Failed to write audit log:', error)
+  if (auditTableUnavailable) {
+    return
   }
+
+  const { error } = await supabase.from('audit_log').insert(entry)
+  if (!error) {
+    return
+  }
+
+  if (AUDIT_TABLE_MISSING_CODES.has(error.code || '')) {
+    auditTableUnavailable = true
+    console.warn('Audit log table is unavailable; skipping audit writes until schema is updated.')
+    return
+  }
+
+  console.error('Failed to write audit log:', error)
 }
 
 /**

@@ -10,10 +10,24 @@ export interface ApprovedCategoryDefinition {
 export interface AvailableCategory {
   id: number
   name: string
+  type?: 'income' | 'expense' | 'transfer' | null
   group_name?: string | null
 }
 
 const CATEGORIES_DOC_PATH = join(process.cwd(), 'knowledge', 'categories.md')
+
+const BUILTIN_ALIASES: Record<string, string[]> = {
+  Groceries: ['grocery', 'supermarket', 'market'],
+  'Eating Out': ['dining', 'food', 'restaurant', 'restaurants', 'cafe', 'coffee', 'takeaway'],
+  'General Household': ['household', 'home supplies', 'home'],
+  Transport: ['transport', 'transportation', 'travel', 'bus', 'mrt', 'taxi', 'ride'],
+  Shopping: ['retail', 'online shopping', 'marketplace', 'ecommerce'],
+  Kids: ['children', 'child', 'school'],
+  Subscriptions: ['subscription', 'subscriptions', 'saas', 'software', 'membership'],
+  Dining: ['fine dining', 'celebration dining'],
+  'Flowers / Gifts': ['flowers', 'flower', 'gift', 'gifts'],
+  Other: ['other', 'misc', 'miscellaneous', 'uncategorized', 'unknown', 'utilities', 'bills', 'fees', 'cash', 'salary', 'interest', 'transfer', 'refund', 'payment', 'investments'],
+}
 
 let cachedDefinitions: ApprovedCategoryDefinition[] | null = null
 
@@ -28,12 +42,17 @@ function normalizeCategoryToken(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-export function loadApprovedCategoryDefinitions(): ApprovedCategoryDefinition[] {
-  if (cachedDefinitions) {
-    return cachedDefinitions
-  }
+function buildAliases(canonicalName: string, aliases: string[] = []) {
+  return Array.from(
+    new Set(
+      [...aliases, ...(BUILTIN_ALIASES[canonicalName] ?? [])]
+        .map((value) => normalizeCategoryToken(value))
+        .filter(Boolean),
+    ),
+  )
+}
 
-  const markdown = readFileSync(CATEGORIES_DOC_PATH, 'utf-8')
+function parseMarkdownTableDefinitions(markdown: string) {
   const definitions: ApprovedCategoryDefinition[] = []
 
   for (const line of markdown.split('\n')) {
@@ -49,15 +68,94 @@ export function loadApprovedCategoryDefinitions(): ApprovedCategoryDefinition[] 
     definitions.push({
       canonicalName,
       purpose,
-      aliases: (aliases || '')
-        .split(',')
-        .map((value) => normalizeCategoryToken(value))
-        .filter(Boolean),
+      aliases: buildAliases(canonicalName, (aliases || '').split(',')),
     })
   }
 
-  cachedDefinitions = definitions
   return definitions
+}
+
+function parseNarrativeDefinitions(markdown: string) {
+  const definitions: ApprovedCategoryDefinition[] = []
+  const lines = markdown.split('\n')
+  let inPrimaryCategories = false
+  let currentName: string | null = null
+  let currentPurpose = ''
+
+  function flushCurrent() {
+    if (!currentName) {
+      return
+    }
+
+    definitions.push({
+      canonicalName: currentName,
+      purpose: currentPurpose || `${currentName} spending category`,
+      aliases: buildAliases(currentName),
+    })
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+
+    if (!inPrimaryCategories) {
+      if (line.toLowerCase() === 'primary categories') {
+        inPrimaryCategories = true
+      }
+      continue
+    }
+
+    if (/^merchant mapping rules$/i.test(line)) {
+      break
+    }
+
+    const headingMatch = line.match(/^\d+\.\s+(.+)$/)
+    if (headingMatch) {
+      flushCurrent()
+      currentName = headingMatch[1].trim()
+      currentPurpose = ''
+      continue
+    }
+
+    if (!currentName || !line || line === '⸻') {
+      continue
+    }
+
+    if (
+      line.startsWith('Examples:') ||
+      line.startsWith('Example Merchants:') ||
+      line.startsWith('Example tracked items:') ||
+      line.startsWith('Merchant Mapping Rules') ||
+      line.startsWith('Version') ||
+      line.startsWith('Category Design Principles') ||
+      line.startsWith('Grocery Intelligence Categories')
+    ) {
+      continue
+    }
+
+    if (line.startsWith('•')) {
+      continue
+    }
+
+    if (!currentPurpose) {
+      currentPurpose = line
+    }
+  }
+
+  flushCurrent()
+  return definitions
+}
+
+export function loadApprovedCategoryDefinitions(): ApprovedCategoryDefinition[] {
+  if (cachedDefinitions) {
+    return cachedDefinitions
+  }
+
+  const markdown = readFileSync(CATEGORIES_DOC_PATH, 'utf-8')
+  const tableDefinitions = parseMarkdownTableDefinitions(markdown)
+  const narrativeDefinitions = tableDefinitions.length === 0 ? parseNarrativeDefinitions(markdown) : []
+
+  cachedDefinitions = tableDefinitions.length > 0 ? tableDefinitions : narrativeDefinitions
+  return cachedDefinitions
 }
 
 export function getApprovedCategoryNames() {

@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "review:agent": "node scripts/review-agent.mjs review",
+    "review:checkpoint": "node scripts/review-agent.mjs checkpoint",
+    "review:exec": "node scripts/review-agent.mjs exec",
+    "review:memory": "node scripts/review-agent.mjs memory"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

@@ -1,39 +1,44 @@
-import * as crypto from 'crypto'
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
 import { parseStatement } from '@/lib/ai/statement-parser'
-import { normalizeDirection } from '@/lib/statements/helpers'
+import type { ParsedStatementResult } from '@/lib/statements/helpers'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { ensureProfile } from '@/lib/supabase/ensure-profile'
+import {
+  buildParsedAccountLabel,
+  computeFileHash,
+  loadAccountCandidates,
+  resolveAccountCandidate,
+  resolvedAccountFromCandidate,
+  routeParsedTransactions,
+  stageRoutedTransactions,
+} from '@/lib/server/statement-import'
+import {
+  cleanupExpiredStatementParseSessions,
+  createStatementParseSession,
+  isStatementParseSessionSchemaError,
+} from '@/lib/server/statement-parse-sessions'
 
-function computeFileHash(bytes: Buffer): string {
-  return crypto.createHash('sha256').update(bytes).digest('hex')
+const PARSE_SESSION_MIGRATION_HINT = 'Apply supabase migration 006_statement_parse_sessions.sql to enable continue-without-reupload recovery.'
+
+function buildRoutingFailureMessage(unmatchedLabels: string[]) {
+  const uniqueLabels = Array.from(new Set(unmatchedLabels.filter(Boolean)))
+  const preview = uniqueLabels.slice(0, 3).join('; ')
+  const moreCount = Math.max(uniqueLabels.length - 3, 0)
+  const details = moreCount > 0 ? `${preview}; and ${moreCount} more.` : preview
+
+  return `This statement contains transactions for accounts that could not be matched automatically. ${details} Review or create the missing account(s), then continue without re-uploading.`
 }
 
-function computeTxnHash(
-  accountId: string,
-  txnDate: string,
-  postingDate: string | undefined,
-  amount: number,
-  currency: string,
-  merchantRaw: string,
-  reference: string | undefined,
-): string {
-  const input = [
-    accountId,
-    txnDate,
-    postingDate ?? '',
-    String(amount),
-    currency,
-    merchantRaw.trim().toLowerCase(),
-    reference ?? '',
-  ].join('|')
-
-  return crypto.createHash('sha256').update(input).digest('hex')
+function buildSchemaMissingRecoveryMessage(baseMessage: string) {
+  return `${baseMessage} Continue-without-reupload is temporarily unavailable because statement parse session storage is not deployed. ${PARSE_SESSION_MIGRATION_HINT}`
 }
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerSupabaseClient()
+    const db = supabase as any
+
     const {
       data: { user },
     } = await supabase.auth.getUser()
@@ -56,25 +61,10 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData()
     const file = formData.get('statement') as File | null
-    const accountId = formData.get('account_id') as string | null
+    const selectedAccountId = formData.get('account_id') as string | null
 
     if (!file) {
       return NextResponse.json({ error: 'Statement file is required' }, { status: 400 })
-    }
-
-    if (!accountId) {
-      return NextResponse.json({ error: 'Account selection is required' }, { status: 400 })
-    }
-
-    const { data: account } = await supabase
-      .from('accounts')
-      .select('id, institution_id')
-      .eq('id', accountId)
-      .eq('household_id', profile.household_id)
-      .single()
-
-    if (!account) {
-      return NextResponse.json({ error: 'Account not found or not in household' }, { status: 404 })
     }
 
     const bytes = Buffer.from(await file.arrayBuffer())
@@ -101,203 +91,152 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { data: fileImport, error: fileImportError } = await supabase
-      .from('file_imports')
-      .insert({
-        household_id: profile.household_id,
-        account_id: accountId,
-        uploaded_by: user.id,
-        file_name: file.name,
-        file_sha256: fileSha256,
-        mime_type: file.type || 'application/octet-stream',
-        file_size_bytes: bytes.byteLength,
-        status: 'parsing',
-        institution_id: account.institution_id,
-      })
-      .select('id')
-      .single()
-
-    if (fileImportError || !fileImport) {
-      return NextResponse.json({ error: 'Failed to register file import' }, { status: 500 })
-    }
-
-    let parsed
+    let parsed: ParsedStatementResult
     try {
       parsed = await parseStatement(bytes, file.type || 'application/pdf', file.name)
     } catch (parseError) {
-      await supabase
-        .from('file_imports')
-        .update({
-          status: 'failed',
-          parse_error: parseError instanceof Error ? parseError.message : 'Parse failed',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', fileImport.id)
-
       return NextResponse.json(
         { error: parseError instanceof Error ? parseError.message : 'Failed to parse statement' },
         { status: 500 },
       )
     }
 
-    const parsedTransactions = (parsed.transactions || [])
-      .map((transaction) => {
-        const txnDate = transaction.date || transaction.posting_date || null
-        const amount = Math.abs(transaction.amount || 0)
-
-        if (!txnDate || !amount) {
-          return null
-        }
-
-        return {
-          txn_date: txnDate,
-          posting_date: transaction.posting_date || undefined,
-          merchant_raw: transaction.merchant || transaction.description || 'Imported transaction',
-          amount,
-          txn_type: normalizeDirection(transaction),
-          description: transaction.description || null,
-          reference: transaction.reference || undefined,
-          currency: transaction.currency || parsed.currency || 'SGD',
-          original_amount:
-            transaction.currency && transaction.currency !== (parsed.currency || 'SGD') ? amount : null,
-          original_currency:
-            transaction.currency && transaction.currency !== (parsed.currency || 'SGD') ? transaction.currency : null,
-        }
-      })
-      .filter((transaction): transaction is NonNullable<typeof transaction> => Boolean(transaction))
-
-    const existingHashes = new Set<string>()
-    if (parsedTransactions.length > 0) {
-      const hashes = parsedTransactions.map((transaction) =>
-        computeTxnHash(
-          accountId,
-          transaction.txn_date,
-          transaction.posting_date,
-          transaction.amount,
-          transaction.currency,
-          transaction.merchant_raw,
-          transaction.reference,
-        ),
+    const candidateAccounts = await loadAccountCandidates(db, profile.household_id)
+    if (candidateAccounts.length === 0) {
+      return NextResponse.json(
+        {
+          error: `No active accounts found. Add this account first: ${buildParsedAccountLabel(parsed.account, parsed.institution_name || parsed.institution_code)}`,
+          code: 'account_required',
+        },
+        { status: 422 },
       )
-
-      const { data: existing } = await supabase
-        .from('statement_transactions')
-        .select('txn_hash')
-        .eq('account_id', accountId)
-        .in('txn_hash', hashes)
-
-      if (existing) {
-        for (const row of existing) {
-          if (row.txn_hash) {
-            existingHashes.add(row.txn_hash)
-          }
-        }
-      }
     }
 
-    const withinImportCounts = new Map<string, number>()
-    const txnHashes = parsedTransactions.map((transaction) =>
-      computeTxnHash(
-        accountId,
-        transaction.txn_date,
-        transaction.posting_date,
-        transaction.amount,
-        transaction.currency,
-        transaction.merchant_raw,
-        transaction.reference,
-      ),
-    )
-
-    for (const hash of txnHashes) {
-      withinImportCounts.set(hash, (withinImportCounts.get(hash) || 0) + 1)
+    let manualAccount = null
+    if (selectedAccountId) {
+      const selectedCandidate = candidateAccounts.find((account) => account.id === selectedAccountId)
+      if (!selectedCandidate) {
+        return NextResponse.json({ error: 'Selected account was not found.' }, { status: 404 })
+      }
+      manualAccount = resolvedAccountFromCandidate(selectedCandidate, 'manual')
     }
 
-    let duplicateCount = 0
-    const stagingRows = parsedTransactions.map((transaction, index) => {
-      const txnHash = txnHashes[index]
-      let duplicateStatus: 'none' | 'existing_final' | 'within_import' = 'none'
-
-      if (existingHashes.has(txnHash)) {
-        duplicateStatus = 'existing_final'
-        duplicateCount += 1
-      } else if ((withinImportCounts.get(txnHash) || 0) > 1) {
-        duplicateStatus = 'within_import'
-        duplicateCount += 1
-      }
-
-      return {
-        file_import_id: fileImport.id,
-        household_id: profile.household_id,
-        account_id: accountId,
-        row_index: index,
-        review_status: 'pending' as const,
-        duplicate_status: duplicateStatus,
-        txn_hash: txnHash,
-        source_txn_hash: txnHash,
-        txn_date: transaction.txn_date,
-        posting_date: transaction.posting_date || null,
-        merchant_raw: transaction.merchant_raw,
-        description: transaction.description,
-        reference: transaction.reference || null,
-        amount: transaction.amount,
-        txn_type: transaction.txn_type,
-        currency: transaction.currency,
-        original_amount: transaction.original_amount,
-        original_currency: transaction.original_currency,
-        confidence: parsedTransactions.length > 0 ? 0.85 : 0,
-        original_data: transaction,
-        is_edited: false,
-      }
-    })
-
-    if (stagingRows.length > 0) {
-      const { error: stagingError } = await supabase
-        .from('import_staging')
-        .insert(stagingRows)
-
-      if (stagingError) {
-        await supabase
-          .from('file_imports')
-          .update({
-            status: 'failed',
-            parse_error: 'Failed to stage transactions',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', fileImport.id)
-
-        return NextResponse.json({ error: 'Failed to stage parsed transactions' }, { status: 500 })
-      }
-    }
-
-    await supabase
-      .from('file_imports')
-      .update({
-        status: 'in_review',
-        institution_code: parsed.institution_code || null,
-        statement_date: parsed.statement_date || null,
-        statement_period_start: parsed.period_start || null,
-        statement_period_end: parsed.period_end || null,
-        currency: parsed.currency || 'SGD',
-        parse_confidence: parsedTransactions.length > 0 ? 0.85 : 0,
-        raw_parse_result: parsed as unknown as Record<string, unknown>,
-        summary_json: (parsed.summary_json || { summary: parsed.summary || null }) as Record<string, unknown>,
-        card_info_json: (parsed.account || null) as Record<string, unknown> | null,
-        total_rows: parsedTransactions.length,
-        duplicate_rows: duplicateCount,
-        updated_at: new Date().toISOString(),
+    let parseSessionStorageAvailable = true
+    try {
+      await cleanupExpiredStatementParseSessions({
+        supabase: db,
+        householdId: profile.household_id,
+        userId: user.id,
       })
-      .eq('id', fileImport.id)
+    } catch (error) {
+      if (isStatementParseSessionSchemaError(error)) {
+        parseSessionStorageAvailable = false
+      } else {
+        throw error
+      }
+    }
 
-    return NextResponse.json({
-      importId: fileImport.id,
-      status: 'in_review',
-      institutionCode: parsed.institution_code ?? null,
-      transactionsCount: parsedTransactions.length,
-      duplicateCount,
-      statementDate: parsed.statement_date ?? null,
-      period: { start: parsed.period_start ?? null, end: parsed.period_end ?? null },
-      reviewUrl: `/statements/review/${fileImport.id}`,
+    const routed = await routeParsedTransactions({
+      supabase: db,
+      parsed,
+      candidateAccounts,
+      manualAccount,
     })
+
+    if (routed.unmatchedAccountDescriptors.length > 0) {
+      const baseMessage = buildRoutingFailureMessage(routed.unmatchedAccountDescriptors.map((row) => row.label))
+
+      if (!parseSessionStorageAvailable) {
+        return NextResponse.json(
+          {
+            error: buildSchemaMissingRecoveryMessage(baseMessage),
+            code: 'transaction_account_match_required',
+            parseSessionId: null,
+            recoveryMode: 'reupload_required',
+            parsedStatement: buildParsedAccountLabel(parsed.account, parsed.institution_name || parsed.institution_code),
+            unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors,
+            suggestedExistingAccounts: routed.suggestedExistingAccounts,
+            action: PARSE_SESSION_MIGRATION_HINT,
+          },
+          { status: 422 },
+        )
+      }
+
+      try {
+        const parseSessionId = await createStatementParseSession({
+          supabase: db,
+          householdId: profile.household_id,
+          userId: user.id,
+          fileName: file.name,
+          fileSha256,
+          mimeType: file.type || 'application/octet-stream',
+          fileSizeBytes: bytes.byteLength,
+          selectedAccountId,
+          parsedPayload: parsed as unknown as Record<string, unknown>,
+          unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors as unknown as Array<Record<string, unknown>>,
+          suggestedExistingAccounts: routed.suggestedExistingAccounts as unknown as Array<Record<string, unknown>>,
+        })
+
+        return NextResponse.json(
+          {
+            error: baseMessage,
+            code: 'transaction_account_match_required',
+            parseSessionId,
+            recoveryMode: 'resume_supported',
+            parsedStatement: buildParsedAccountLabel(parsed.account, parsed.institution_name || parsed.institution_code),
+            unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors,
+            suggestedExistingAccounts: routed.suggestedExistingAccounts,
+          },
+          { status: 422 },
+        )
+      } catch (error) {
+        if (!isStatementParseSessionSchemaError(error)) {
+          throw error
+        }
+
+        return NextResponse.json(
+          {
+            error: buildSchemaMissingRecoveryMessage(baseMessage),
+            code: 'transaction_account_match_required',
+            parseSessionId: null,
+            recoveryMode: 'reupload_required',
+            parsedStatement: buildParsedAccountLabel(parsed.account, parsed.institution_name || parsed.institution_code),
+            unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors,
+            suggestedExistingAccounts: routed.suggestedExistingAccounts,
+            action: PARSE_SESSION_MIGRATION_HINT,
+          },
+          { status: 422 },
+        )
+      }
+    }
+
+    const primaryAccount =
+      routed.routedTransactions[0]?.account
+      || manualAccount
+      || resolveAccountCandidate({
+        candidates: candidateAccounts,
+        institutionName: parsed.institution_name || parsed.institution_code || '',
+        descriptor: parsed.account ?? null,
+      }).account
+
+    if (!primaryAccount) {
+      return NextResponse.json({ error: 'Could not determine which account this statement belongs to.' }, { status: 422 })
+    }
+
+    const result = await stageRoutedTransactions({
+      supabase: db,
+      householdId: profile.household_id,
+      userId: user.id,
+      parsed,
+      routedTransactions: routed.routedTransactions,
+      fileName: file.name,
+      fileSha256,
+      mimeType: file.type || 'application/octet-stream',
+      fileSizeBytes: bytes.byteLength,
+      primaryAccount,
+    })
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Statement parse error:', error)
     return NextResponse.json(

@@ -1,56 +1,159 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Receipt, Loader2, CheckCircle2, XCircle, AlertTriangle, Copy } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Loader2, UploadCloud, FileText, TriangleAlert, CheckCircle2, CircleX, Eye } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { createClient } from '@/lib/supabase/client'
+import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate } from '@/lib/format'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
-const statusConfig: Record<string, { label: string; className: string; icon: React.ElementType }> = {
-  pending_confirm: { label: 'Pending', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400', icon: AlertTriangle },
-  confirmed: { label: 'Confirmed', className: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400', icon: CheckCircle2 },
-  rejected: { label: 'Rejected', className: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400', icon: XCircle },
-  duplicate: { label: 'Duplicate', className: 'bg-gray-100 text-gray-700 dark:bg-gray-900/40 dark:text-gray-400', icon: Copy },
+interface UploadRow {
+  id: string
+  status: string
+  original_filename: string
+  file_size_bytes: number
+  mime_type: string
+  created_at: string
+  parse_error: string | null
+  committed_receipt_id: string | null
 }
 
-interface ReceiptRow {
+interface FinalReceiptRow {
   id: string
-  receipt_datetime: string | null
   merchant_raw: string
   total_amount: number
   currency: string
-  extraction_confidence: number
-  status: string
-  source: string
   created_at: string
+  approved_at: string | null
+  status: string
+  source_upload_id: string | null
+}
+
+interface UploadStats {
+  totalUploads: number
+  parsing: number
+  needsReview: number
+  ready: number
+  committed: number
+  failed: number
+  finalReceipts: number
+}
+
+const statusConfig: Record<string, { label: string; className: string; icon: React.ElementType }> = {
+  uploaded: { label: 'Uploaded', className: 'bg-slate-100 text-slate-700 dark:bg-slate-900/50 dark:text-slate-300', icon: FileText },
+  parsing: { label: 'Parsing', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300', icon: Loader2 },
+  needs_review: { label: 'Needs Review', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300', icon: TriangleAlert },
+  ready_for_approval: { label: 'Ready', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300', icon: CheckCircle2 },
+  committed: { label: 'Committed', className: 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300', icon: CheckCircle2 },
+  failed: { label: 'Failed', className: 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300', icon: CircleX },
+}
+
+function humanFileSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`
 }
 
 export default function ReceiptsPage() {
-  const [receipts, setReceipts] = useState<ReceiptRow[]>([])
+  const router = useRouter()
+
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [uploads, setUploads] = useState<UploadRow[]>([])
+  const [receipts, setReceipts] = useState<FinalReceiptRow[]>([])
+  const [stats, setStats] = useState<UploadStats>({
+    totalUploads: 0,
+    parsing: 0,
+    needsReview: 0,
+    ready: 0,
+    committed: 0,
+    failed: 0,
+    finalReceipts: 0,
+  })
 
-  useEffect(() => {
-    async function fetchReceipts() {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setLoading(false); return }
+  const fetchData = useCallback(async () => {
+    try {
+      const response = await fetch('/api/receipts/uploads', { cache: 'no-store' })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        const message = payload?.action ? String(payload.error) + ' ' + String(payload.action) : payload?.error ?? 'Failed to load receipts data'
+        throw new Error(message)
+      }
 
-      const { data } = await supabase
-        .from('receipts')
-        .select('id, receipt_datetime, merchant_raw, total_amount, currency, extraction_confidence, status, source, created_at')
-        .order('created_at', { ascending: false })
+      const payload = await response.json() as {
+        uploads: UploadRow[]
+        receipts: FinalReceiptRow[]
+        stats: UploadStats
+      }
 
-      setReceipts((data as ReceiptRow[]) ?? [])
+      setUploads(payload.uploads ?? [])
+      setReceipts(payload.receipts ?? [])
+      setStats((current) => payload.stats ?? current)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load receipts data')
+    } finally {
       setLoading(false)
     }
-    fetchReceipts()
   }, [])
 
-  const pendingCount = receipts.filter(r => r.status === 'pending_confirm').length
-  const confirmedCount = receipts.filter(r => r.status === 'confirmed').length
+  useEffect(() => {
+    void fetchData()
+  }, [fetchData])
+
+  useEffect(() => {
+    if (!uploads.some((upload) => upload.status === 'parsing')) return
+
+    const timer = setInterval(() => {
+      void fetchData()
+    }, 2500)
+
+    return () => clearInterval(timer)
+  }, [uploads, fetchData])
+
+  const latestUploads = useMemo(() => uploads.slice(0, 12), [uploads])
+  const latestReceipts = useMemo(() => receipts.slice(0, 10), [receipts])
+
+  async function handleUpload(file: File) {
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('receipt', file)
+
+      const response = await fetch('/api/receipts/upload', {
+        method: 'POST',
+        body: form,
+      })
+
+      const payload = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        const message = payload?.error || 'Upload failed'
+        const action = payload?.action
+        toast.error(action ? `${message} ${action}` : message)
+        return
+      }
+
+      const uploadId = payload.uploadId as string | undefined
+      toast.success('Receipt uploaded. Parsing started.')
+      await fetchData()
+      if (uploadId) {
+        router.push(`/receipts/review/${uploadId}`)
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -62,125 +165,81 @@ export default function ReceiptsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Receipts</h1>
-        <p className="text-muted-foreground">Review parsed receipts from Telegram and uploads.</p>
-        <div className="mt-4">
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="file"
-              accept="image/*,application/pdf"
-              className="hidden"
-              onChange={async e => {
-                const file = e.target.files?.[0]
-                if (!file) return
-                setUploading(true)
-                try {
-                  const fd = new FormData()
-                  fd.append('receipt', file)
-                  const res = await fetch('/api/receipts/upload', {
-                    method: 'POST',
-                    body: fd,
-                  })
-                  if (res.ok) {
-                    await res.json()
-                    // refresh receipts
-                    const supabase = createClient()
-                    const { data } = await supabase
-                      .from('receipts')
-                      .select('id, receipt_datetime, merchant_raw, total_amount, currency, extraction_confidence, status, source, created_at')
-                      .order('created_at', { ascending: false })
-                    setReceipts((data as ReceiptRow[]) ?? [])
-                  } else {
-                    console.error('Upload failed', await res.text())
-                  }
-                } catch (err) {
-                  console.error(err)
-                } finally {
-                  setUploading(false)
-                  e.target.value = ''
-                }
-              }}
-            />
-            <span className="cursor-pointer rounded bg-blue-500 px-4 py-2 text-white text-sm font-medium hover:bg-blue-600">
-              {uploading ? 'Uploading…' : 'Upload Receipt'}
-            </span>
-          </label>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Receipts</h1>
+          <p className="text-muted-foreground">Upload receipts, review staged extraction, then approve into final receipt records.</p>
         </div>
+
+        <label className="inline-flex items-center gap-2">
+          <input
+            type="file"
+            accept="image/*,application/pdf"
+            className="hidden"
+            onChange={async (event) => {
+              const file = event.target.files?.[0]
+              if (!file) return
+              await handleUpload(file)
+              event.target.value = ''
+            }}
+          />
+          <span className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
+            {uploading ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
+            {uploading ? 'Uploading…' : 'Upload Receipt'}
+          </span>
+        </label>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card>
-          <CardContent className="pt-0">
-            <p className="text-sm text-muted-foreground">Total Receipts</p>
-            <p className="text-2xl font-bold">{receipts.length}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-0">
-            <p className="text-sm text-muted-foreground">Pending Review</p>
-            <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{pendingCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-0">
-            <p className="text-sm text-muted-foreground">Confirmed</p>
-            <p className="text-2xl font-bold text-green-600 dark:text-green-400">{confirmedCount}</p>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        <Card><CardContent className="pt-0"><p className="text-xs text-muted-foreground">Total Uploads</p><p className="text-2xl font-bold">{stats.totalUploads}</p></CardContent></Card>
+        <Card><CardContent className="pt-0"><p className="text-xs text-muted-foreground">Parsing</p><p className="text-2xl font-bold text-blue-600">{stats.parsing}</p></CardContent></Card>
+        <Card><CardContent className="pt-0"><p className="text-xs text-muted-foreground">Needs Review</p><p className="text-2xl font-bold text-amber-600">{stats.needsReview}</p></CardContent></Card>
+        <Card><CardContent className="pt-0"><p className="text-xs text-muted-foreground">Ready</p><p className="text-2xl font-bold text-emerald-600">{stats.ready}</p></CardContent></Card>
+        <Card><CardContent className="pt-0"><p className="text-xs text-muted-foreground">Committed</p><p className="text-2xl font-bold text-green-600">{stats.committed}</p></CardContent></Card>
+        <Card><CardContent className="pt-0"><p className="text-xs text-muted-foreground">Final Receipts</p><p className="text-2xl font-bold">{stats.finalReceipts}</p></CardContent></Card>
       </div>
 
-      {receipts.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-            <Receipt className="mb-4 size-12 text-muted-foreground" />
-            <p className="text-lg font-medium text-muted-foreground">
-              No receipts yet. Send receipt images via Telegram or upload them to start tracking.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">All Receipts</CardTitle>
-          </CardHeader>
-          <CardContent>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Receipt Upload Queue</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {latestUploads.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">No receipt uploads yet.</p>
+          ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-3 pr-4 font-medium">Date</th>
-                    <th className="pb-3 pr-4 font-medium">Merchant</th>
-                    <th className="pb-3 pr-4 font-medium">Amount</th>
-                    <th className="pb-3 pr-4 font-medium">Source</th>
-                    <th className="pb-3 pr-4 font-medium">Confidence</th>
-                    <th className="pb-3 font-medium">Status</th>
+                    <th className="pb-2 pr-4 font-medium">Uploaded</th>
+                    <th className="pb-2 pr-4 font-medium">File</th>
+                    <th className="pb-2 pr-4 font-medium">Size</th>
+                    <th className="pb-2 pr-4 font-medium">Status</th>
+                    <th className="pb-2 pr-4 font-medium">Error</th>
+                    <th className="pb-2 font-medium">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {receipts.map(receipt => {
-                    const config = statusConfig[receipt.status] ?? statusConfig.pending_confirm
-                    const confidencePct = Math.round(receipt.extraction_confidence * 100)
+                  {latestUploads.map((upload) => {
+                    const config = statusConfig[upload.status] || statusConfig.uploaded
+                    const StatusIcon = config.icon
                     return (
-                      <tr key={receipt.id} className="border-b last:border-0">
-                        <td className="py-3 pr-4 whitespace-nowrap text-muted-foreground">
-                          {receipt.receipt_datetime ? formatDate(receipt.receipt_datetime) : formatDate(receipt.created_at)}
-                        </td>
-                        <td className="py-3 pr-4 font-medium">{receipt.merchant_raw}</td>
-                        <td className="py-3 pr-4 font-medium tabular-nums">
-                          {formatCurrency(receipt.total_amount, receipt.currency)}
-                        </td>
-                        <td className="py-3 pr-4 text-muted-foreground capitalize">{receipt.source}</td>
+                      <tr key={upload.id} className="border-b last:border-0">
+                        <td className="py-3 pr-4 whitespace-nowrap text-muted-foreground">{formatDate(upload.created_at)}</td>
+                        <td className="py-3 pr-4 font-medium">{upload.original_filename}</td>
+                        <td className="py-3 pr-4 text-muted-foreground">{humanFileSize(upload.file_size_bytes)}</td>
                         <td className="py-3 pr-4">
-                          <span className={cn(
-                            'text-xs font-medium',
-                            confidencePct >= 90 ? 'text-green-600' : confidencePct >= 70 ? 'text-yellow-600' : 'text-red-600'
-                          )}>
-                            {confidencePct}%
-                          </span>
+                          <Badge className={cn('inline-flex items-center gap-1 border-0 text-xs', config.className)}>
+                            <StatusIcon className={cn('size-3', upload.status === 'parsing' && 'animate-spin')} />
+                            {config.label}
+                          </Badge>
                         </td>
+                        <td className="py-3 pr-4 text-xs text-muted-foreground">{upload.parse_error || '-'}</td>
                         <td className="py-3">
-                          <Badge className={cn('text-xs border-0', config.className)}>{config.label}</Badge>
+                          <Button variant="outline" size="sm" className="gap-1" onClick={() => router.push(`/receipts/review/${upload.id}`)}>
+                            <Eye className="size-3.5" />
+                            Review
+                          </Button>
                         </td>
                       </tr>
                     )
@@ -188,9 +247,45 @@ export default function ReceiptsPage() {
                 </tbody>
               </table>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Recently Approved Receipts</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {latestReceipts.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No approved receipts yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-2 pr-4 font-medium">Date</th>
+                    <th className="pb-2 pr-4 font-medium">Merchant</th>
+                    <th className="pb-2 pr-4 font-medium">Amount</th>
+                    <th className="pb-2 pr-4 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {latestReceipts.map((receipt) => (
+                    <tr key={receipt.id} className="border-b last:border-0">
+                      <td className="py-3 pr-4 text-muted-foreground">{formatDate(receipt.approved_at || receipt.created_at)}</td>
+                      <td className="py-3 pr-4 font-medium">{receipt.merchant_raw}</td>
+                      <td className="py-3 pr-4 font-medium">{formatCurrency(receipt.total_amount, receipt.currency)}</td>
+                      <td className="py-3">
+                        <Badge className="border-0 bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300">{receipt.status}</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

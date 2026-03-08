@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "criticalPathPrefixes": [
+    "src/app/api/",
+    "src/lib/ai/",
+    "src/lib/supabase/",
+    "src/lib/knowledge/",
+    "src/types/database.ts",
+    "supabase/migrations/"
+  ],
+  "validationRequiredPrefixes": [
+    "src/app/api/",
+    "src/app/(dashboard)/",
+    "src/lib/",
+    "supabase/migrations/"
+  ],
+  "protectedPathFragments": [
+    ".env",
+    "supabase/migrations/",
+    "src/types/database.ts",
+    "src/lib/supabase/service.ts"
+  ],
+  "highRiskCommandPrefixes": [
+    [
+      "rm",
+      "-rf"
+    ],
+    [
+      "git",
+      "push"
+    ],
+    [
+      "git",
+      "merge"
+    ],
+    [
+      "git",
+      "reset"
+    ],
+    [
+      "git",
+      "rebase"
+    ],
+    [
+      "git",
+      "checkout"
+    ],
+    [
+      "supabase",
+      "db"
+    ],
+    [
+      "psql"
+    ],
+    [
+      "curl"
+    ],
+    [
+      "wget"
+    ]
+  ],
+  "highRiskActionTypes": [
+    "destructive_filesystem",
+    "schema_change",
+    "external_admin_operation",
+    "push_or_merge",
+    "deploy"
+  ],
+  "highRiskFlags": [
+    "destructive",
+    "network",
+    "schema",
+    "secrets",
+    "deploy",
+    "admin"
+  ],
+  "requiredProposalFields": [
+    "action_type",
+    "intent"
+  ],
+  "sharedPlatformPrefixes": [
+    "src/app/api/",
+    "src/lib/",
+    "src/types/database.ts",
+    "supabase/migrations/"
+  ],
+  "protectedFeatureSets": [
+    {
+      "ruleId": "statement_flow_regression_guard",
+      "name": "Statement upload, review, and commit flow",
+      "pathPrefixes": [
+        "src/app/api/ai/statement/",
+        "src/app/(dashboard)/statements/",
+        "src/lib/ai/statement-parser.ts",
+        "src/lib/server/statement-commit.ts",
+        "src/lib/server/statement-commit-jobs.ts",
+        "src/lib/statement-commit-jobs.tsx",
+        "src/lib/knowledge/",
+        "src/lib/statements/"
+      ],
+      "sharedRiskPrefixes": [
+        "src/app/api/",
+        "src/lib/",
+        "src/types/database.ts",
+        "supabase/migrations/"
+      ],
+      "validationMatchers": [
+        "statement",
+        "upload",
+        "review",
+        "commit",
+        "reopen",
+        "src/app/api/ai/statement",
+        "src/app/(dashboard)/statements",
+        "manual statement flow"
+      ],
+      "requiredValidationMessage": "Add statement-flow regression validation. Shared platform changes must confirm statement upload, review, and commit remain intact.",
+      "recommendedValidation": [
+        "npx eslint src/app/api/ai/statement/route.ts src/app/api/ai/statement/commit/route.ts 'src/app/(dashboard)/statements/page.tsx' 'src/app/(dashboard)/statements/review/[importId]/page.tsx'",
+        "npx tsc --noEmit",
+        "manual statement flow smoke check: upload -> review -> commit"
+      ]
+    }
+  ]
+}

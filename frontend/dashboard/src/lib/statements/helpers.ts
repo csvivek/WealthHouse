@@ -1,3 +1,12 @@
+export interface ParsedStatementAccount {
+  account_type?: string | null
+  product_name?: string | null
+  identifier_hint?: string | null
+  card_name?: string | null
+  card_last4?: string | null
+  currency?: string | null
+}
+
 export interface ParsedStatementTransaction {
   date?: string | null
   posting_date?: string | null
@@ -8,6 +17,7 @@ export interface ParsedStatementTransaction {
   statement_type?: string | null
   category_hint?: string | null
   reference?: string | null
+  account?: ParsedStatementAccount | null
 }
 
 export interface ParsedStatementResult {
@@ -19,14 +29,7 @@ export interface ParsedStatementResult {
   currency?: string | null
   summary?: string | null
   summary_json?: Record<string, unknown> | null
-  account?: {
-    account_type?: string | null
-    product_name?: string | null
-    identifier_hint?: string | null
-    card_name?: string | null
-    card_last4?: string | null
-    currency?: string | null
-  } | null
+  account?: ParsedStatementAccount | null
   transactions?: ParsedStatementTransaction[]
 }
 
