@@ -1,10 +1,9 @@
 'use client'
 
-import { useRef, useEffect, useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import {
   TrendingUp,
-  TrendingDown,
   Wallet,
   ArrowDownUp,
   CreditCard,
@@ -24,10 +23,18 @@ import {
   formatCurrencyCompact,
   formatDateShort,
 } from '@/lib/format'
-
-/* ------------------------------------------------------------------ */
-/*  Interfaces matching the actual database schema                     */
-/* ------------------------------------------------------------------ */
+import { OverviewFilterBar, type OverviewFilters } from '@/components/dashboard/OverviewFilterBar'
+import { OverviewTabs, type OverviewTabValue } from '@/components/dashboard/OverviewTabs'
+import { resolveDatePeriodRange } from '@/lib/date-periods'
+import { CategoryBadge } from '@/components/category-badge'
+import { AccountPortfolioSection } from '@/components/dashboard/AccountPortfolioSection'
+import {
+  computeCashFlowData,
+  DEFAULT_OVERVIEW_FILTERS,
+  deriveOverviewFilterOptions,
+  resolveScopedCategoryIds,
+  type OverviewCategory,
+} from '@/lib/overview-filters'
 
 interface Account {
   id: string
@@ -51,10 +58,21 @@ interface StatementTransaction {
   created_at: string
 }
 
-interface Category {
-  id: number
-  name: string
-  group_name: string | null
+interface CategoryWithHierarchy extends OverviewCategory {
+  icon_key: string | null
+  color_token: string | null
+  color_hex: string | null
+  domain_type: string | null
+  payment_subtype: string | null
+}
+
+interface ReceiptRow {
+  id: string
+  receipt_datetime: string | null
+  merchant_raw: string
+  total_amount: number
+  category_id: number | null
+  suggested_account_id: string | null
 }
 
 interface CardRow {
@@ -72,56 +90,12 @@ interface AssetBalance {
   assets: { symbol: string; name: string | null; asset_type: string } | null
 }
 
-interface CashFlowDataPoint {
-  month: string
-  income: number
-  expenses: number
-}
-
 interface AssetAllocationDataPoint {
   label: string
   value: number
 }
 
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-function computeCashFlowData(
-  transactions: StatementTransaction[],
-): CashFlowDataPoint[] {
-  const now = new Date()
-  const months: CashFlowDataPoint[] = []
-
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const label = d.toLocaleDateString('en-SG', { month: 'short' })
-    const year = d.getFullYear()
-    const month = d.getMonth()
-
-    let income = 0
-    let expenses = 0
-    for (const txn of transactions) {
-      const txnDate = new Date(txn.txn_date)
-      if (txnDate.getFullYear() === year && txnDate.getMonth() === month) {
-        if (txn.txn_type === 'credit') {
-          income += Math.abs(txn.amount)
-        } else if (txn.txn_type === 'debit') {
-          expenses += Math.abs(txn.amount)
-        }
-      }
-    }
-    months.push({ month: label, income, expenses })
-  }
-
-  return months
-}
-
-/* ------------------------------------------------------------------ */
-/*  D3 Charts                                                          */
-/* ------------------------------------------------------------------ */
-
-function CashFlowChart({ data }: { data: CashFlowDataPoint[] }) {
+function CashFlowChart({ data }: { data: ReturnType<typeof computeCashFlowData> }) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -129,7 +103,9 @@ function CashFlowChart({ data }: { data: CashFlowDataPoint[] }) {
     if (!svgRef.current || !containerRef.current) return
 
     const draw = () => {
-      const container = containerRef.current!
+      const container = containerRef.current
+      if (!container) return
+
       const width = container.clientWidth
       const height = 280
       const margin = { top: 20, right: 20, bottom: 40, left: 60 }
@@ -202,14 +178,14 @@ function CashFlowChart({ data }: { data: CashFlowDataPoint[] }) {
             .axisLeft(y)
             .ticks(5)
             .tickFormat((d) => `$${(d as number) / 1000}k`)
-            .tickSize(-innerW)
+            .tickSize(-innerW),
         )
         .call((sel) => sel.select('.domain').remove())
         .call((sel) =>
           sel
             .selectAll('.tick line')
             .attr('stroke', axisColor)
-            .attr('stroke-opacity', 0.1)
+            .attr('stroke-opacity', 0.1),
         )
         .selectAll('text')
         .attr('fill', axisColor)
@@ -223,7 +199,7 @@ function CashFlowChart({ data }: { data: CashFlowDataPoint[] }) {
 
       monthGroups
         .append('rect')
-        .attr('x', () => x1('income')!)
+        .attr('x', () => x1('income') ?? 0)
         .attr('y', (d) => y(d.income))
         .attr('width', x1.bandwidth())
         .attr('height', (d) => innerH - y(d.income))
@@ -232,7 +208,7 @@ function CashFlowChart({ data }: { data: CashFlowDataPoint[] }) {
 
       monthGroups
         .append('rect')
-        .attr('x', () => x1('expenses')!)
+        .attr('x', () => x1('expenses') ?? 0)
         .attr('y', (d) => y(d.expenses))
         .attr('width', x1.bandwidth())
         .attr('height', (d) => innerH - y(d.expenses))
@@ -272,7 +248,9 @@ function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
     if (!svgRef.current || !containerRef.current) return
 
     const draw = () => {
-      const container = containerRef.current!
+      const container = containerRef.current
+      if (!container) return
+
       const size = Math.min(container.clientWidth, 260)
       const radius = size / 2
 
@@ -283,7 +261,7 @@ function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
 
       svg.selectAll('*').remove()
 
-      const total = data.reduce((s, d) => s + d.value, 0)
+      const total = data.reduce((sum, point) => sum + point.value, 0)
 
       if (total === 0) {
         svg
@@ -302,9 +280,9 @@ function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
         .attr('transform', `translate(${radius},${radius})`)
 
       const style = getComputedStyle(document.documentElement)
-      const colors = [1, 2, 3, 4].map((i) => {
-        const val = style.getPropertyValue(`--chart-${i}`).trim()
-        return val ? `oklch(${val})` : ['#22c55e', '#3b82f6', '#a855f7', '#eab308'][i - 1]
+      const colors = [1, 2, 3, 4].map((index) => {
+        const value = style.getPropertyValue(`--chart-${index}`).trim()
+        return value ? `oklch(${value})` : ['#22c55e', '#3b82f6', '#a855f7', '#eab308'][index - 1]
       })
 
       const pie = d3
@@ -323,7 +301,7 @@ function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
         .data(pie(data))
         .join('path')
         .attr('d', arc)
-        .attr('fill', (_, i) => colors[i])
+        .attr('fill', (_, index) => colors[index])
 
       g.append('text')
         .attr('text-anchor', 'middle')
@@ -351,9 +329,9 @@ function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
 
   const style =
     typeof window !== 'undefined' ? getComputedStyle(document.documentElement) : null
-  const legendColors = [1, 2, 3, 4].map((i) => {
-    const val = style?.getPropertyValue(`--chart-${i}`).trim()
-    return val ? `oklch(${val})` : ['#22c55e', '#3b82f6', '#a855f7', '#eab308'][i - 1]
+  const legendColors = [1, 2, 3, 4].map((index) => {
+    const value = style?.getPropertyValue(`--chart-${index}`).trim()
+    return value ? `oklch(${value})` : ['#22c55e', '#3b82f6', '#a855f7', '#eab308'][index - 1]
   })
 
   return (
@@ -362,14 +340,14 @@ function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
         <svg ref={svgRef} />
       </div>
       <div className="grid w-full grid-cols-2 gap-x-4 gap-y-2 text-sm">
-        {data.map((d, i) => (
-          <div key={d.label} className="flex items-center gap-2">
+        {data.map((point, index) => (
+          <div key={point.label} className="flex items-center gap-2">
             <span
               className="inline-block h-3 w-3 shrink-0 rounded-sm"
-              style={{ background: legendColors[i] }}
+              style={{ background: legendColors[index] }}
             />
-            <span className="text-muted-foreground">{d.label}</span>
-            <span className="ml-auto font-medium">{formatCurrencyCompact(d.value)}</span>
+            <span className="text-muted-foreground">{point.label}</span>
+            <span className="ml-auto font-medium">{formatCurrencyCompact(point.value)}</span>
           </div>
         ))}
       </div>
@@ -377,96 +355,190 @@ function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Main Dashboard Page                                                */
-/* ------------------------------------------------------------------ */
-
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<OverviewTabValue>('payments')
+  const [filters, setFilters] = useState<OverviewFilters>({ ...DEFAULT_OVERVIEW_FILTERS })
   const [accounts, setAccounts] = useState<Account[]>([])
   const [recentTxns, setRecentTxns] = useState<StatementTransaction[]>([])
   const [allTxns, setAllTxns] = useState<StatementTransaction[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
+  const [receipts, setReceipts] = useState<ReceiptRow[]>([])
+  const [categories, setCategories] = useState<CategoryWithHierarchy[]>([])
   const [cards, setCards] = useState<CardRow[]>([])
   const [assetBalances, setAssetBalances] = useState<AssetBalance[]>([])
 
   useEffect(() => {
+    let isActive = true
+
     async function fetchData() {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setLoading(false); return }
+      setLoading(true)
+      try {
+        const supabase = createClient()
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
 
-      const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('household_id')
-        .eq('id', user.id)
-        .single()
+        if (!user) {
+          if (!isActive) return
+          setAccounts([])
+          setRecentTxns([])
+          setAllTxns([])
+          setReceipts([])
+          setCategories([])
+          setCards([])
+          setAssetBalances([])
+          return
+        }
 
-      if (!profile) { setLoading(false); return }
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('household_id')
+          .eq('id', user.id)
+          .single()
 
-      const { data: accts } = await supabase
-        .from('accounts')
-        .select('id, account_type, product_name, nickname, currency, is_active')
-        .eq('household_id', profile.household_id)
+        if (!profile) {
+          if (!isActive) return
+          setAccounts([])
+          setRecentTxns([])
+          setAllTxns([])
+          setReceipts([])
+          setCategories([])
+          setCards([])
+          setAssetBalances([])
+          return
+        }
 
-      const accountList = accts ?? []
-      setAccounts(accountList)
-      const accountIds = accountList.map((a) => a.id)
+        const { data: accountData } = await supabase
+          .from('accounts')
+          .select('id, account_type, product_name, nickname, currency, is_active')
+          .eq('household_id', profile.household_id)
 
-      if (accountIds.length === 0) {
-        setLoading(false)
-        return
-      }
+        const accountList = (accountData as Account[] | null) ?? []
+        const scopedAccounts =
+          filters.accountId === 'all'
+            ? accountList
+            : accountList.filter((account) => account.id === filters.accountId)
 
-      const [recentRes, allRes, catRes, cardsRes, balancesRes] = await Promise.all([
-        supabase
+        const scopedAccountIds = scopedAccounts.map((account) => account.id)
+
+        const { data: categoryData } = await supabase
+          .from('categories')
+          .select('id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id)')
+
+        const categoryRows = (categoryData as CategoryWithHierarchy[] | null) ?? []
+        const scopedCategoryIds = resolveScopedCategoryIds(categoryRows, filters)
+        const { start, end } = resolveDatePeriodRange(filters.period)
+
+        let paymentsQuery = supabase
           .from('statement_transactions')
           .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
-          .in('account_id', accountIds)
           .order('txn_date', { ascending: false })
-          .limit(8),
-        supabase
-          .from('statement_transactions')
-          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
-          .in('account_id', accountIds),
-        supabase.from('categories').select('id, name, group_name'),
-        supabase
-          .from('cards')
-          .select('id, account_id, card_name, total_outstanding')
-          .in('account_id', accountIds),
-        supabase
-          .from('asset_balances')
-          .select('id, account_id, asset_id, balance, assets(symbol, name, asset_type)')
-          .in('account_id', accountIds),
-      ])
 
-      setRecentTxns((recentRes.data as StatementTransaction[]) ?? [])
-      setAllTxns((allRes.data as StatementTransaction[]) ?? [])
-      setCategories((catRes.data as Category[]) ?? [])
-      setCards((cardsRes.data as CardRow[]) ?? [])
-      setAssetBalances((balancesRes.data as AssetBalance[]) ?? [])
-      setLoading(false)
+        if (scopedAccountIds.length > 0) {
+          paymentsQuery = paymentsQuery.in('account_id', scopedAccountIds)
+        } else {
+          paymentsQuery = paymentsQuery.in('account_id', [''])
+        }
+
+        const hasCategoryFilters =
+          filters.groupId !== 'all' || filters.subgroupId !== 'all' || filters.categoryId !== 'all'
+        if (hasCategoryFilters) {
+          paymentsQuery = paymentsQuery.in('category_id', scopedCategoryIds.length > 0 ? scopedCategoryIds : [-1])
+        }
+
+        if (start) paymentsQuery = paymentsQuery.gte('txn_date', start)
+        if (end) paymentsQuery = paymentsQuery.lte('txn_date', end)
+
+        let receiptsQuery = supabase
+          .from('receipts')
+          .select('id, receipt_datetime, merchant_raw, total_amount, category_id, suggested_account_id')
+          .eq('status', 'confirmed')
+          .order('receipt_datetime', { ascending: false, nullsFirst: false })
+
+        if (filters.accountId !== 'all') {
+          receiptsQuery = receiptsQuery.eq('suggested_account_id', filters.accountId)
+        }
+
+        if (hasCategoryFilters) {
+          receiptsQuery = receiptsQuery.in('category_id', scopedCategoryIds.length > 0 ? scopedCategoryIds : [-1])
+        }
+
+        if (start) receiptsQuery = receiptsQuery.gte('receipt_datetime', `${start}T00:00:00.000Z`)
+        if (end) receiptsQuery = receiptsQuery.lte('receipt_datetime', `${end}T23:59:59.999Z`)
+
+        const [paymentsRes, receiptsRes, cardsRes, balancesRes] = await Promise.all([
+          paymentsQuery,
+          receiptsQuery,
+          scopedAccountIds.length > 0
+            ? supabase
+                .from('cards')
+                .select('id, account_id, card_name, total_outstanding')
+                .in('account_id', scopedAccountIds)
+            : Promise.resolve({ data: [] as CardRow[] }),
+          scopedAccountIds.length > 0
+            ? supabase
+                .from('asset_balances')
+                .select('id, account_id, asset_id, balance, assets(symbol, name, asset_type)')
+                .in('account_id', scopedAccountIds)
+            : Promise.resolve({ data: [] as AssetBalance[] }),
+        ])
+
+        if (!isActive) return
+
+        const paymentRows = (paymentsRes.data as StatementTransaction[] | null) ?? []
+        setAccounts(accountList)
+        setCategories(categoryRows)
+        setAllTxns(paymentRows)
+        setRecentTxns(paymentRows.slice(0, 8))
+        setReceipts((receiptsRes.data as ReceiptRow[] | null) ?? [])
+        setCards((cardsRes.data as CardRow[] | null) ?? [])
+        setAssetBalances((balancesRes.data as AssetBalance[] | null) ?? [])
+      } catch (error) {
+        console.error('Failed to load dashboard data:', error)
+        if (!isActive) return
+        setAccounts([])
+        setRecentTxns([])
+        setAllTxns([])
+        setReceipts([])
+        setCategories([])
+        setCards([])
+        setAssetBalances([])
+      } finally {
+        if (isActive) {
+          setLoading(false)
+        }
+      }
     }
-    fetchData()
-  }, [])
+
+    void fetchData()
+
+    return () => {
+      isActive = false
+    }
+  }, [filters])
+
+  const { accountOptions, categoryOptions, groupOptions, subgroupOptions } = useMemo(
+    () => deriveOverviewFilterOptions({ accounts, categories, filters }),
+    [accounts, categories, filters],
+  )
 
   const categoryMap = useMemo(
-    () => new Map(categories.map((c) => [c.id, c])),
+    () => new Map(categories.map((category) => [category.id, category])),
     [categories],
   )
 
   const totalCardOutstanding = useMemo(
-    () => cards.reduce((s, c) => s + (c.total_outstanding ?? 0), 0),
+    () => cards.reduce((sum, card) => sum + (card.total_outstanding ?? 0), 0),
     [cards],
   )
 
   const monthlyCashFlow = useMemo(() => {
     const income = allTxns
-      .filter((t) => t.txn_type === 'credit')
-      .reduce((s, t) => s + Math.abs(t.amount), 0)
+      .filter((transaction) => transaction.txn_type === 'credit')
+      .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0)
     const expenses = allTxns
-      .filter((t) => t.txn_type === 'debit')
-      .reduce((s, t) => s + Math.abs(t.amount), 0)
+      .filter((transaction) => transaction.txn_type === 'debit')
+      .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0)
     return income - expenses
   }, [allTxns])
 
@@ -474,15 +546,23 @@ export default function DashboardPage() {
 
   const assetAllocationData = useMemo<AssetAllocationDataPoint[]>(() => {
     const groups: Record<string, number> = {}
-    for (const ab of assetBalances) {
-      const type = ab.assets?.asset_type ?? 'other'
+    for (const assetBalance of assetBalances) {
+      const type = assetBalance.assets?.asset_type ?? 'other'
       const label = type.charAt(0).toUpperCase() + type.slice(1)
-      groups[label] = (groups[label] ?? 0) + ab.balance
+      groups[label] = (groups[label] ?? 0) + assetBalance.balance
     }
+
     return Object.entries(groups).map(([label, value]) => ({ label, value }))
   }, [assetBalances])
 
-  const activeAccounts = accounts.filter((a) => a.is_active).length
+  const activeAccounts = useMemo(() => {
+    if (filters.accountId === 'all') {
+      return accounts.filter((account) => account.is_active).length
+    }
+
+    const selected = accounts.find((account) => account.id === filters.accountId)
+    return selected?.is_active ? 1 : 0
+  }, [accounts, filters.accountId])
 
   if (loading) {
     return (
@@ -498,153 +578,182 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Your financial overview at a glance.
-        </p>
+        <p className="text-muted-foreground">Your financial overview at a glance.</p>
       </div>
 
-      {/* Row 1: Summary Cards */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Active Accounts</CardDescription>
-            <CardTitle className="text-2xl">{activeAccounts}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <Wallet className="h-4 w-4" />
-              <span>Linked to household</span>
-            </div>
-          </CardContent>
-        </Card>
+      <OverviewTabs value={activeTab} onValueChange={setActiveTab} />
+      <OverviewFilterBar
+        filters={filters}
+        accountOptions={accountOptions}
+        categoryOptions={categoryOptions}
+        groupOptions={groupOptions}
+        subgroupOptions={subgroupOptions}
+        onChange={setFilters}
+        onReset={() => setFilters({ ...DEFAULT_OVERVIEW_FILTERS })}
+      />
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Investment Holdings</CardDescription>
-            <CardTitle className="text-2xl">{assetBalances.length}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <TrendingUp className="h-4 w-4" />
-              <span>Asset positions</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Card Outstanding</CardDescription>
-            <CardTitle className="text-2xl">
-              {formatCurrency(totalCardOutstanding)}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <CreditCard className="h-4 w-4" />
-              <span>Credit card balances</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardDescription>Monthly Cash Flow</CardDescription>
-            <CardTitle
-              className={cn(
-                'text-2xl',
-                isPositiveFlow ? 'text-emerald-500' : 'text-red-500',
-              )}
-            >
-              {isPositiveFlow ? '+' : ''}
-              {formatCurrency(monthlyCashFlow)}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <ArrowDownUp className="h-4 w-4" />
-              <span>Income minus expenses</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Row 2: Cash Flow Chart + Asset Allocation */}
-      <div className="grid gap-4 grid-cols-1 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Cash Flow</CardTitle>
-            <CardDescription>
-              Monthly income vs expenses over the last 6 months
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <CashFlowChart data={cashFlowData} />
-          </CardContent>
-        </Card>
-
+      {activeTab === 'receipts' ? (
         <Card>
           <CardHeader>
-            <CardTitle>Asset Allocation</CardTitle>
-            <CardDescription>Breakdown by asset class</CardDescription>
+            <CardTitle>Receipts</CardTitle>
+            <CardDescription>Server-filtered receipt overview</CardDescription>
           </CardHeader>
           <CardContent>
-            <AssetAllocationChart data={assetAllocationData} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Row 3: Recent Transactions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Transactions</CardTitle>
-          <CardDescription>Your latest statement activity</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {recentTxns.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No transactions yet
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {recentTxns.map((txn) => {
-                const category =
-                  txn.category_id != null
-                    ? categoryMap.get(txn.category_id)
-                    : undefined
-                const isCredit = txn.txn_type === 'credit'
-                const merchantName =
-                  txn.merchant_normalized ??
-                  txn.merchant_raw ??
-                  txn.description ??
-                  'Unknown'
-                return (
-                  <div
-                    key={txn.id}
-                    className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/50"
-                  >
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{merchantName}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {category?.name ?? 'Uncategorized'} ·{' '}
-                        {formatDateShort(txn.txn_date)}
-                      </p>
-                    </div>
-                    <span
-                      className={cn(
-                        'shrink-0 font-medium tabular-nums',
-                        isCredit ? 'text-emerald-500' : 'text-foreground',
-                      )}
-                    >
-                      {isCredit ? '+' : '-'}
-                      {formatCurrency(Math.abs(txn.amount))}
-                    </span>
+            {receipts.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">No receipts found.</p>
+            ) : (
+              receipts.slice(0, 10).map((receipt) => (
+                <div key={receipt.id} className="flex items-center justify-between border-b py-2 last:border-b-0">
+                  <div>
+                    <p className="font-medium">{receipt.merchant_raw}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {receipt.receipt_datetime ? formatDateShort(receipt.receipt_datetime) : 'No date'}
+                    </p>
                   </div>
-                )
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                  <p className="font-medium">{formatCurrency(receipt.total_amount)}</p>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Active Accounts</CardDescription>
+                <CardTitle className="text-2xl">{activeAccounts}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <Wallet className="h-4 w-4" />
+                  <span>Linked to household</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Investment Holdings</CardDescription>
+                <CardTitle className="text-2xl">{assetBalances.length}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <TrendingUp className="h-4 w-4" />
+                  <span>Asset positions</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Card Outstanding</CardDescription>
+                <CardTitle className="text-2xl">{formatCurrency(totalCardOutstanding)}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <CreditCard className="h-4 w-4" />
+                  <span>Credit card balances</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Monthly Cash Flow</CardDescription>
+                <CardTitle className={cn('text-2xl', isPositiveFlow ? 'text-emerald-500' : 'text-red-500')}>
+                  {isPositiveFlow ? '+' : ''}
+                  {formatCurrency(monthlyCashFlow)}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <ArrowDownUp className="h-4 w-4" />
+                  <span>Income minus expenses</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle>Cash Flow</CardTitle>
+                <CardDescription>Monthly income vs expenses over the last 6 months</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <CashFlowChart data={cashFlowData} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Asset Allocation</CardTitle>
+                <CardDescription>Breakdown by asset class</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <AssetAllocationChart data={assetAllocationData} />
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Transactions</CardTitle>
+              <CardDescription>Your latest statement activity</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {recentTxns.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">No transactions yet</p>
+              ) : (
+                <div className="space-y-1">
+                  {recentTxns.map((transaction) => {
+                    const category =
+                      transaction.category_id != null ? categoryMap.get(transaction.category_id) : undefined
+                    const isCredit = transaction.txn_type === 'credit'
+                    const merchantName =
+                      transaction.merchant_normalized ??
+                      transaction.merchant_raw ??
+                      transaction.description ??
+                      'Unknown'
+
+                    return (
+                      <div
+                        key={transaction.id}
+                        className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/50"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{merchantName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            <CategoryBadge
+                              {...(category ?? {})}
+                              name={category?.name ?? null}
+                              fallbackLabel="Uncategorized"
+                              className="h-5 px-1.5 text-[11px]"
+                            />{' '}
+                            · {formatDateShort(transaction.txn_date)}
+                          </p>
+                        </div>
+                        <span
+                          className={cn(
+                            'shrink-0 font-medium tabular-nums',
+                            isCredit ? 'text-emerald-500' : 'text-foreground',
+                          )}
+                        >
+                          {isCredit ? '+' : '-'}
+                          {formatCurrency(Math.abs(transaction.amount))}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      <AccountPortfolioSection />
     </div>
   )
 }

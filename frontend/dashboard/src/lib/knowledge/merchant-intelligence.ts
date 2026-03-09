@@ -1,6 +1,7 @@
 import { openai } from '@/lib/ai/openai'
 import { searchMerchantOnWeb } from '@/lib/ai/web-search'
 import {
+  backfillMerchantKnowledgeCategoryIds,
   buildMerchantFamilyName,
   findMerchantKnowledgeMatch,
   normalizeMerchantName,
@@ -124,15 +125,23 @@ Rules:
 export async function resolveMerchantCategory(
   input: MerchantIntelligenceInput,
 ): Promise<MerchantIntelligenceResult> {
+  backfillMerchantKnowledgeCategoryIds(input.availableCategories.map((category) => ({ id: category.id, name: category.name })))
+
   const knowledgeMatch = findMerchantKnowledgeMatch(input.merchantName, input.description)
   if (knowledgeMatch) {
+    const byId =
+      typeof knowledgeMatch.record.approved_category_id === 'number'
+        ? input.availableCategories.find((category) => category.id === knowledgeMatch.record.approved_category_id) ?? null
+        : null
+
     const canonicalCategory =
       resolveApprovedCategoryName(knowledgeMatch.record.approved_category_name) || resolveApprovedCategoryName('Other')
-    const mappedCategory = mapApprovedCategoryToAvailableCategory(input.availableCategories, canonicalCategory)
+    const byNameFallback = mapApprovedCategoryToAvailableCategory(input.availableCategories, canonicalCategory)
+    const resolvedCategory = byId ?? byNameFallback
 
     return {
-      categoryId: mappedCategory?.id ?? knowledgeMatch.record.approved_category_id,
-      categoryName: mappedCategory?.name ?? canonicalCategory ?? 'Other',
+      categoryId: resolvedCategory?.id ?? knowledgeMatch.record.approved_category_id,
+      categoryName: resolvedCategory?.name ?? knowledgeMatch.record.approved_category_name ?? canonicalCategory ?? 'Other',
       categoryConfidence: 1,
       categoryDecisionSource: knowledgeMatch.matchedBy === 'exact' ? 'knowledge_base' : 'alias_resolution',
       merchantCanonicalName: knowledgeMatch.record.canonical_merchant_name,

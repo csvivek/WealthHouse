@@ -7,13 +7,14 @@ import { rememberMerchantCategory } from '@/lib/knowledge/merchant-categories'
 import {
   buildPropagationPreview,
   resolveCategorySelectionForSave,
+  type ResolvedCategorySelection,
 } from '@/lib/server/statement-propagation'
+import { refreshLinkSuggestionsForImport } from '@/lib/statement-linking'
 
 type FileImportUpdate = Database['public']['Tables']['file_imports']['Update']
 type ImportStagingRow = Database['public']['Tables']['import_staging']['Row']
 type ImportStagingUpdate = Database['public']['Tables']['import_staging']['Update']
 type ApprovalLogInsert = Database['public']['Tables']['approval_log']['Insert']
-type CategoryRow = Database['public']['Tables']['categories']['Row']
 
 function computeTxnHash(
   accountId: string,
@@ -64,7 +65,7 @@ function readStringArray(value: unknown) {
 
 function applyCategoryToOriginalData(
   originalData: Record<string, unknown>,
-  nextCategory: CategoryRow | null,
+  nextCategory: ResolvedCategorySelection | null,
 ) {
   originalData.categoryId = nextCategory?.id ?? null
   originalData.categoryName = nextCategory?.name ?? null
@@ -78,7 +79,7 @@ function learnCategoryForRow(
   row: ImportStagingRow,
   merchantName: string,
   originalData: Record<string, unknown>,
-  nextCategory: CategoryRow | null,
+  nextCategory: ResolvedCategorySelection | null,
 ) {
   if (!nextCategory) {
     return
@@ -176,7 +177,9 @@ export async function PATCH(
     const results: { id: string; success: boolean; error?: string }[] = []
     const updatedRowIds = new Set<string>()
     const skippedTargets: Array<{ rowId: string; reason: string }> = []
-    let resolvedCategory: CategoryRow | null | undefined = undefined
+    let resolvedCategory: ResolvedCategorySelection | null | undefined = undefined
+
+    let shouldRefreshLinks = false
 
     if (bulkRowIds.length > 0 && bulkStatus) {
       const bulkUpdate: ImportStagingUpdate = {
@@ -233,6 +236,10 @@ export async function PATCH(
           newCategoryGroupName,
           ...stagingFieldUpdates
         } = update.fields
+        const linkSensitiveFields = ['txn_date', 'posting_date', 'amount', 'txn_type', 'reference', 'merchant_raw', 'description']
+        if (Object.keys(stagingFieldUpdates).some((field) => linkSensitiveFields.includes(field))) {
+          shouldRefreshLinks = true
+        }
         Object.assign(updateData, stagingFieldUpdates)
         updateData.is_edited = true
 
@@ -438,6 +445,15 @@ export async function PATCH(
 
     if (updates.length > 0) {
       await updateFileImportCounters(supabase, importId)
+    }
+
+    if (shouldRefreshLinks) {
+      await refreshLinkSuggestionsForImport({
+        supabase: serviceSupabase,
+        fileImportId: importId,
+        householdId: profile.household_id,
+        actorUserId: user.id,
+      })
     }
 
     return NextResponse.json({

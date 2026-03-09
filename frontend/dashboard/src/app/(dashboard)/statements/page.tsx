@@ -162,7 +162,7 @@ export default function StatementsPage() {
         .limit(50),
     ])
 
-    setAccounts((acctRes.data as AccountOption[]) ?? [])
+    setAccounts((acctRes.data as unknown as AccountOption[]) ?? [])
     setImports((importRes.data as FileImportRow[]) ?? [])
     setLoading(false)
   }, [])

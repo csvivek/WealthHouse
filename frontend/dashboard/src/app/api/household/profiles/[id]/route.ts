@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createClient as createService } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
 
 function serviceClient() {
-  return createService<Database>(
+  return createService(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )

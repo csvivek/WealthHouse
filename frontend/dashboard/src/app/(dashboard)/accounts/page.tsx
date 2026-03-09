@@ -114,7 +114,7 @@ export default function AccountsPage() {
       .eq('household_id', profile.household_id)
       .order('created_at', { ascending: false })
 
-    setAccounts((data as AccountRow[]) ?? [])
+    setAccounts((data as unknown as AccountRow[]) ?? [])
     setLoading(false)
   }
 

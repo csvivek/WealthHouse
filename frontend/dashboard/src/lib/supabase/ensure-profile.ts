@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
 
 /**
  * Ensures a user_profiles row exists for the authenticated user.
@@ -7,7 +6,7 @@ import type { Database } from '@/types/database'
  * on_auth_user_created trigger logic as a fallback.
  */
 export async function ensureProfile(
-  supabase: SupabaseClient<Database>,
+  supabase: SupabaseClient,
   userId: string
 ) {
   // Quick check — avoids the RPC round-trip in the common case
