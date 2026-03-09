@@ -4,33 +4,16 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
-  ArrowRightLeft,
-  BriefcaseBusiness,
-  Bus,
   Check,
   CheckCircle2,
   ChevronDown,
-  CircleDollarSign,
   Copy,
-  GraduationCap,
-  HeartPulse,
-  Home,
-  Landmark,
   Loader2,
   Pencil,
-  Plane,
   Plus,
-  ReceiptText,
-  ShieldCheck,
-  ShoppingBag,
-  ShoppingBasket,
   Sparkles,
-  Ticket,
-  UtensilsCrossed,
-  Wallet,
   X,
   XCircle,
-  type LucideIcon,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -73,6 +56,8 @@ import { formatCurrency, formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
+import { CategoryBadge } from '@/components/category-badge'
+import { CategoryIcon } from '@/components/category-icon'
 
 interface ImportMeta {
   id: string
@@ -130,6 +115,11 @@ interface ReviewCategory {
   name: string
   type: 'income' | 'expense' | 'transfer'
   group_name: string | null
+  icon_key?: string | null
+  color_token?: string | null
+  color_hex?: string | null
+  domain_type?: string | null
+  payment_subtype?: string | null
 }
 
 interface Stats {
@@ -224,22 +214,6 @@ const sourceLabelMap: Record<string, string> = {
   manual_override: 'Manual',
 }
 
-const groupIconMap: Array<{ keywords: string[]; icon: LucideIcon }> = [
-  { keywords: ['salary', 'income', 'bonus'], icon: BriefcaseBusiness },
-  { keywords: ['grocer', 'supermarket', 'market'], icon: ShoppingBasket },
-  { keywords: ['eat', 'restaurant', 'food', 'dining'], icon: UtensilsCrossed },
-  { keywords: ['transport', 'bus', 'mrt', 'taxi', 'commute'], icon: Bus },
-  { keywords: ['travel', 'flight', 'hotel'], icon: Plane },
-  { keywords: ['health', 'medical', 'insurance'], icon: HeartPulse },
-  { keywords: ['home', 'housing', 'rent', 'mortgage'], icon: Home },
-  { keywords: ['education', 'school', 'learning'], icon: GraduationCap },
-  { keywords: ['shopping', 'retail'], icon: ShoppingBag },
-  { keywords: ['bill', 'utility', 'subscription'], icon: ReceiptText },
-  { keywords: ['tax', 'government'], icon: Landmark },
-  { keywords: ['security', 'protection'], icon: ShieldCheck },
-  { keywords: ['entertainment', 'fun', 'leisure'], icon: Ticket },
-  { keywords: ['transfer'], icon: ArrowRightLeft },
-]
 
 function normalizeTxnDirection(txnType: string | null | undefined): 'credit' | 'debit' {
   return String(txnType).toLowerCase() === 'credit' ? 'credit' : 'debit'
@@ -307,19 +281,6 @@ function calculateStats(rows: StagingRow[]): Stats {
       .filter((row) => normalizeTxnDirection(row.txnType) === 'credit' && row.reviewStatus !== 'rejected')
       .reduce((sum, row) => sum + Number(row.amount), 0),
   }
-}
-
-function pickCategoryIcon(category: Pick<ReviewCategory, 'name' | 'type' | 'group_name'>): LucideIcon {
-  const haystack = `${category.group_name ?? ''} ${category.name}`.toLowerCase()
-  for (const entry of groupIconMap) {
-    if (entry.keywords.some((keyword) => haystack.includes(keyword))) {
-      return entry.icon
-    }
-  }
-
-  if (category.type === 'income') return CircleDollarSign
-  if (category.type === 'transfer') return ArrowRightLeft
-  return Wallet
 }
 
 function getBulkCompatibleCategories(selectedRows: StagingRow[], categories: ReviewCategory[]) {
@@ -1132,11 +1093,10 @@ You can leave this page while the commit continues.`,
                             <div key={`${typeGroup.type}:${groupName}`}>
                               <SelectLabel className="pl-4 text-[11px]">{groupName}</SelectLabel>
                               {groupCategories.map((category) => {
-                                const Icon = pickCategoryIcon(category)
                                 return (
                                   <SelectItem key={category.id} value={String(category.id)}>
                                     <span className="flex items-center gap-2">
-                                      <Icon className="size-3.5 text-muted-foreground" />
+                                      <CategoryIcon {...category} className="size-3.5 text-muted-foreground" />
                                       <span>{category.name}</span>
                                     </span>
                                   </SelectItem>
@@ -1251,12 +1211,6 @@ You can leave this page while the commit continues.`,
                 const dupCfg = flagStatusConfig[row.flagStatus]
                 const sourceLabel = row.categoryDecisionSource ? sourceLabelMap[row.categoryDecisionSource] ?? row.categoryDecisionSource : null
                 const currentCategory = categories.find((category) => category.id === row.categoryId)
-                const CategoryIcon = pickCategoryIcon(currentCategory ?? {
-                  id: row.categoryId ?? -1,
-                  name: row.categoryName ?? 'Uncategorized',
-                  type: normalizeTxnDirection(row.txnType) === 'credit' ? 'income' : 'expense',
-                  group_name: null,
-                })
 
                 return (
                   <TableRow
@@ -1362,11 +1316,10 @@ You can leave this page while the commit continues.`,
                                       <div key={`${typeGroup.type}:${groupName}`}>
                                         <SelectLabel className="pl-4 text-[11px]">{groupName}</SelectLabel>
                                         {groupCategories.map((category) => {
-                                          const Icon = pickCategoryIcon(category)
                                           return (
                                             <SelectItem key={category.id} value={String(category.id)}>
                                               <span className="flex items-center gap-2">
-                                                <Icon className="size-3.5 text-muted-foreground" />
+                                                <CategoryIcon {...category} className="size-3.5 text-muted-foreground" />
                                                 <span>{category.name}</span>
                                               </span>
                                             </SelectItem>
@@ -1402,8 +1355,12 @@ You can leave this page while the commit continues.`,
                       ) : (
                         <div className="space-y-1">
                           <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <CategoryIcon className="size-3.5 text-muted-foreground" />
-                            <span>{row.categoryName ?? 'Uncategorized'}</span>
+                            <CategoryBadge
+                              {...(currentCategory ?? {})}
+                              name={row.categoryName}
+                              fallbackLabel="Uncategorized"
+                              className="h-5 px-1.5 text-[11px]"
+                            />
                           </span>
                           {(sourceLabel || row.categoryConfidence != null) && (
                             <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
