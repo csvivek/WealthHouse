@@ -24,6 +24,7 @@ import {
   formatDateShort,
 } from '@/lib/format'
 import { CategoryBadge } from '@/components/category-badge'
+import { AccountPortfolioSection } from '@/components/dashboard/AccountPortfolioSection'
 
 /* ------------------------------------------------------------------ */
 /*  Interfaces matching the actual database schema                     */
@@ -53,6 +54,22 @@ interface StatementTransaction {
 }
 
 interface CategoryWithHierarchy {
+interface DashboardSummary {
+  active_accounts: number
+  investment_holdings: number
+  total_card_outstanding: number
+  total_income: number
+  total_expenses: number
+  net_cash_flow: number
+}
+
+interface BreakdownTransaction {
+  month_start: string
+  income: number
+  expenses: number
+}
+
+interface Category {
   id: number
   name: string
   group_id: number | null
@@ -90,40 +107,6 @@ interface CashFlowDataPoint {
 interface AssetAllocationDataPoint {
   label: string
   value: number
-}
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-function computeCashFlowData(
-  transactions: StatementTransaction[],
-): CashFlowDataPoint[] {
-  const now = new Date()
-  const months: CashFlowDataPoint[] = []
-
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const label = d.toLocaleDateString('en-SG', { month: 'short' })
-    const year = d.getFullYear()
-    const month = d.getMonth()
-
-    let income = 0
-    let expenses = 0
-    for (const txn of transactions) {
-      const txnDate = new Date(txn.txn_date)
-      if (txnDate.getFullYear() === year && txnDate.getMonth() === month) {
-        if (txn.txn_type === 'credit') {
-          income += Math.abs(txn.amount)
-        } else if (txn.txn_type === 'debit') {
-          expenses += Math.abs(txn.amount)
-        }
-      }
-    }
-    months.push({ month: label, income, expenses })
-  }
-
-  return months
 }
 
 /* ------------------------------------------------------------------ */
@@ -395,6 +378,9 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [recentTxns, setRecentTxns] = useState<StatementTransaction[]>([])
   const [allTxns, setAllTxns] = useState<StatementTransaction[]>([])
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
+  const [breakdownTxns, setBreakdownTxns] = useState<BreakdownTransaction[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [cards, setCards] = useState<CardRow[]>([])
   const [assetBalances, setAssetBalances] = useState<AssetBalance[]>([])
 
@@ -427,6 +413,13 @@ export default function DashboardPage() {
       }
 
       const [recentRes, allRes, cardsRes, balancesRes] = await Promise.all([
+      const now = new Date()
+      const startDate = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+      const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+      const startIso = startDate.toISOString().slice(0, 10)
+      const endIso = endDate.toISOString().slice(0, 10)
+
+      const [recentRes, summaryRes, breakdownRes, catRes, cardsRes, balancesRes] = await Promise.all([
         supabase
           .from('statement_transactions')
           .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at, category:categories(id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id))')
@@ -437,6 +430,17 @@ export default function DashboardPage() {
           .from('statement_transactions')
           .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at, category:categories(id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id))')
           .in('account_id', accountIds),
+        supabase.rpc('get_account_dashboard_summary', {
+          p_account_ids: accountIds,
+          p_start_date: startIso,
+          p_end_date: endIso,
+        }),
+        supabase.rpc('get_breakdown_transactions', {
+          p_account_ids: accountIds,
+          p_start_date: startIso,
+          p_end_date: endIso,
+        }),
+        supabase.from('categories').select('id, name, icon_key, color_token, color_hex, domain_type, payment_subtype'),
         supabase
           .from('cards')
           .select('id, account_id, card_name, total_outstanding')
@@ -449,6 +453,9 @@ export default function DashboardPage() {
 
       setRecentTxns((recentRes.data as StatementTransaction[]) ?? [])
       setAllTxns((allRes.data as StatementTransaction[]) ?? [])
+      setDashboardSummary(((summaryRes.data as DashboardSummary[] | null) ?? [])[0] ?? null)
+      setBreakdownTxns((breakdownRes.data as BreakdownTransaction[]) ?? [])
+      setCategories((catRes.data as Category[]) ?? [])
       setCards((cardsRes.data as CardRow[]) ?? [])
       setAssetBalances((balancesRes.data as AssetBalance[]) ?? [])
       setLoading(false)
@@ -460,18 +467,38 @@ export default function DashboardPage() {
     () => cards.reduce((s, c) => s + (c.total_outstanding ?? 0), 0),
     [cards],
   )
+  const categoryMap = useMemo(
+    () => new Map(categories.map((c) => [c.id, c])),
+    [categories],
+  )
 
-  const monthlyCashFlow = useMemo(() => {
-    const income = allTxns
-      .filter((t) => t.txn_type === 'credit')
-      .reduce((s, t) => s + Math.abs(t.amount), 0)
-    const expenses = allTxns
-      .filter((t) => t.txn_type === 'debit')
-      .reduce((s, t) => s + Math.abs(t.amount), 0)
-    return income - expenses
-  }, [allTxns])
+  const totalCardOutstanding = useMemo(() => {
+    if (dashboardSummary) return dashboardSummary.total_card_outstanding
+    return cards.reduce((s, c) => s + (c.total_outstanding ?? 0), 0)
+  }, [dashboardSummary, cards])
 
-  const cashFlowData = useMemo(() => computeCashFlowData(allTxns), [allTxns])
+  const monthlyCashFlow = dashboardSummary?.net_cash_flow ?? 0
+
+  const cashFlowData = useMemo(() => {
+    const rowsByMonth = new Map(
+      breakdownTxns.map((row) => [
+        row.month_start.slice(0, 7),
+        { income: Number(row.income ?? 0), expenses: Number(row.expenses ?? 0) },
+      ]),
+    )
+
+    const now = new Date()
+    return Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
+      const key = d.toISOString().slice(0, 7)
+      const monthData = rowsByMonth.get(key) ?? { income: 0, expenses: 0 }
+      return {
+        month: d.toLocaleDateString('en-SG', { month: 'short' }),
+        income: monthData.income,
+        expenses: monthData.expenses,
+      }
+    })
+  }, [breakdownTxns])
 
   const assetAllocationData = useMemo<AssetAllocationDataPoint[]>(() => {
     const groups: Record<string, number> = {}
@@ -483,7 +510,7 @@ export default function DashboardPage() {
     return Object.entries(groups).map(([label, value]) => ({ label, value }))
   }, [assetBalances])
 
-  const activeAccounts = accounts.filter((a) => a.is_active).length
+  const activeAccounts = dashboardSummary?.active_accounts ?? accounts.filter((a) => a.is_active).length
 
   if (loading) {
     return (
@@ -643,6 +670,8 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      <AccountPortfolioSection />
     </div>
   )
 }
