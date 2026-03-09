@@ -24,6 +24,7 @@ import {
   formatDateShort,
 } from '@/lib/format'
 import { CategoryBadge } from '@/components/category-badge'
+import { AccountPortfolioSection } from '@/components/dashboard/AccountPortfolioSection'
 
 /* ------------------------------------------------------------------ */
 /*  Interfaces matching the actual database schema                     */
@@ -655,6 +656,8 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      <AccountPortfolioSection />
     </div>
   )
 }
