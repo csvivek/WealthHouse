@@ -5,7 +5,6 @@ import { Coins, Loader2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { cn } from '@/lib/utils'
 
 interface ExchangeAccount {
   id: string
@@ -61,8 +60,8 @@ export default function CryptoPage() {
           .in('account_id', accountIds),
       ])
 
-      setExchanges((exRes.data as ExchangeAccount[]) ?? [])
-      setHoldings((balRes.data as CryptoHolding[]) ?? [])
+      setExchanges((exRes.data as unknown as ExchangeAccount[]) ?? [])
+      setHoldings((balRes.data as unknown as CryptoHolding[]) ?? [])
       setLoading(false)
     }
     fetchData()

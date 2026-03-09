@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Save, Shield, Trash2, Download, Moon, Sun } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -102,7 +102,7 @@ export default function SettingsPage() {
   const [newSubgroupName, setNewSubgroupName] = useState('')
   const [newSubgroupGroupId, setNewSubgroupGroupId] = useState('')
 
-  const fetchTaxonomy = async () => {
+  const fetchTaxonomy = useCallback(async () => {
     const res = await fetch('/api/categories/taxonomy')
     if (!res.ok) return
     const payload = await res.json()
@@ -112,10 +112,10 @@ export default function SettingsPage() {
     setHierarchyRows(payload.hierarchy ?? [])
     setGroupTotals(payload.rollups?.groupTotals ?? [])
     setSubgroupTotals(payload.rollups?.subgroupTotals ?? [])
-  }
+  }, [])
 
   // move outside so we can call it again after saving
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -134,7 +134,7 @@ export default function SettingsPage() {
     if (profile) {
       setFullName(profile.display_name ?? '')
       setAvatarUrl(profile.avatar_url ?? '')
-        setCurrentProfile(profile as HouseholdProfile)
+      setCurrentProfile(profile as HouseholdProfile)
     }
 
     // load household info & members when profile available
@@ -156,15 +156,12 @@ export default function SettingsPage() {
     }
 
     setLoading(false)
-  }
+  }, [fetchTaxonomy])
 
   useEffect(() => {
-    async function loadProfile() {
-      await fetchProfile()
-    }
-
-    void loadProfile()
-  }, [])
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchProfile()
+  }, [fetchProfile])
 
   const handleSave = async () => {
     if (!userId) return

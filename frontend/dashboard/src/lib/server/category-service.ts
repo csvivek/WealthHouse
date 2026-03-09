@@ -3,7 +3,7 @@ import type { Database } from '@/types/database'
 
 type CategoryType = Database['public']['Enums']['category_type']
 
-type AnyDb = SupabaseClient<Database>
+type AnyDb = SupabaseClient
 
 export type CategoryDomain = 'payment' | 'receipt'
 

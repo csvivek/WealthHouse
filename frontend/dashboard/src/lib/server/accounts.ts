@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 
-export type AppSupabaseClient = SupabaseClient<Database>
+export type AppSupabaseClient = SupabaseClient
 export type AccountType = Database['public']['Enums']['account_type']
 
 interface InstitutionOptions {

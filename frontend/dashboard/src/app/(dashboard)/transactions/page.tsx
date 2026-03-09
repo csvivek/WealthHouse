@@ -126,8 +126,8 @@ export default function TransactionsPage() {
         supabase.from('categories').select('id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id)'),
       ])
 
-      setTransactions((txnRes.data as StatementTxn[]) ?? [])
-      setCategories((catRes.data as CategoryWithHierarchy[]) ?? [])
+      setTransactions((txnRes.data as unknown as StatementTxn[]) ?? [])
+      setCategories((catRes.data as unknown as CategoryWithHierarchy[]) ?? [])
       setLoading(false)
     }
     fetchData()

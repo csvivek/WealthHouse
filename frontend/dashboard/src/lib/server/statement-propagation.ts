@@ -5,6 +5,24 @@ import { resolveOrCreatePaymentCategory } from '@/lib/server/category-service'
 type CategoryType = Database['public']['Enums']['category_type']
 type ImportStagingRow = Database['public']['Tables']['import_staging']['Row']
 
+interface CategoryLookupRow {
+  id: number
+  name: string
+  type: CategoryType | null
+  group_name: string | null
+  group_id: number | null
+  subgroup_id: number | null
+  created_at: string
+}
+
+interface PaymentCategoryResult {
+  id: number
+  name: string
+  type: CategoryType | null
+  group_name: string | null
+  created_at?: string | null
+}
+
 export interface PropagationTarget {
   rowId: string
   rowIndex: number
@@ -185,112 +203,60 @@ export function buildPropagationPreview(params: {
   return preview
 }
 
+async function fetchCategoryLookupById(
+  serviceSupabase: SupabaseClient<Database>,
+  categoryId: number,
+): Promise<ResolvedCategorySelection> {
+  const { data, error } = await serviceSupabase
+    .from('categories')
+    .select('id, name, type, group_name, group_id, subgroup_id, created_at')
+    .eq('id', categoryId)
+    .single()
+
+  if (error || !data) {
+    throw error ?? new Error('Selected category was not found')
+  }
+
+  const category = data as CategoryLookupRow
+  return {
+    id: category.id,
+    name: category.name,
+    type: category.type,
+    group_name: category.group_name,
+    group_id: category.group_id,
+    subgroup_id: category.subgroup_id,
+    created_at: category.created_at,
+  }
+}
+
 export async function resolveCategorySelectionForSave(
   serviceSupabase: SupabaseClient<Database>,
   categoryId: number | null | undefined,
   newCategoryName: string | null | undefined,
   newCategoryGroupName: string | null | undefined,
   txnType: string,
-) {
+): Promise<ResolvedCategorySelection | null | undefined> {
+  const normalizedNewCategoryName = normalizeCategoryName(newCategoryName)
+  const normalizedGroupName = normalizeCategoryName(newCategoryGroupName)
   const direction = normalizeTxnDirection(txnType)
+
   const category = await resolveOrCreatePaymentCategory({
     db: serviceSupabase,
     categoryId,
-    newCategoryName,
-    groupName: newCategoryGroupName,
+    newCategoryName: normalizedNewCategoryName,
+    groupName: normalizedGroupName,
     txnType,
-  })
+  }) as PaymentCategoryResult | null | undefined
 
-  if (normalizedNewCategoryName) {
-    const newCategoryType: CategoryType = direction === 'credit' ? 'income' : 'expense'
-    let resolvedGroupId: number | null = null
-
-    if (normalizedGroupName) {
-      const { data: existingGroup, error: groupLookupError } = await serviceSupabase
-        .from('category_groups')
-        .select('id, name')
-        .ilike('name', normalizedGroupName)
-        .limit(1)
-        .maybeSingle()
-
-      if (groupLookupError) {
-        throw groupLookupError
-      }
-
-      if (existingGroup) {
-        resolvedGroupId = existingGroup.id
-      } else {
-        const { data: createdGroup, error: createGroupError } = await serviceSupabase
-          .from('category_groups')
-          .insert({ name: normalizedGroupName })
-          .select('id')
-          .single()
-
-        if (createGroupError || !createdGroup) {
-          throw createGroupError ?? new Error('Failed to create category group')
-        }
-
-        resolvedGroupId = createdGroup.id
-      }
-    }
-
-    const { data: existingCategory, error: existingCategoryError } = await serviceSupabase
-      .from('categories')
-      .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system, created_at')
-      .select('id, name, type, group_name, group_id, subgroup_id, created_at')
-      .ilike('name', normalizedNewCategoryName)
-      .eq('type', newCategoryType)
-      .limit(1)
-      .maybeSingle()
-
-    if (existingCategoryError) {
-      throw existingCategoryError
-    }
-
-    if (existingCategory) {
-      return existingCategory
-    }
-
-    const { data: createdCategory, error: createCategoryError } = await serviceSupabase
-      .from('categories')
-      .insert({
-        name: normalizedNewCategoryName,
-        type: newCategoryType,
-        group_name: normalizedGroupName,
-        group_id: resolvedGroupId,
-      })
-      .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system, created_at')
-      .select('id, name, type, group_name, group_id, subgroup_id, created_at')
-      .single()
-
-    if (createCategoryError || !createdCategory) {
-      throw createCategoryError ?? new Error('Failed to create category')
-    }
-
-    return createdCategory
-  }
-
-  if (categoryId === undefined) {
+  if (category === undefined) {
     return undefined
   }
 
-  if (categoryId === null) {
+  if (category === null) {
     return null
   }
 
-  const { data: category, error: categoryError } = await serviceSupabase
-    .from('categories')
-    .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system, created_at')
-    .select('id, name, type, group_name, group_id, subgroup_id, created_at')
-    .eq('id', categoryId)
-    .single()
-
-  if (categoryError || !category) {
-    throw categoryError ?? new Error('Selected category was not found')
-  }
-
   if (!isCategoryCompatible(txnType, category.type)) {
-  if (category && !isCategoryCompatible(txnType, category.type)) {
     throw new Error(
       direction === 'credit'
         ? 'Credit transactions can only use income or transfer categories.'
@@ -298,7 +264,7 @@ export async function resolveCategorySelectionForSave(
     )
   }
 
-  return category
+  return fetchCategoryLookupById(serviceSupabase, category.id)
 }
 
 export async function resolveCategorySelectionForPreview(
@@ -307,7 +273,7 @@ export async function resolveCategorySelectionForPreview(
   newCategoryName: string | null | undefined,
   newCategoryGroupName: string | null | undefined,
   txnType: string,
-) {
+): Promise<ResolvedCategorySelection | null | undefined> {
   const normalizedNewCategoryName = normalizeCategoryName(newCategoryName)
   const normalizedGroupName = normalizeCategoryName(newCategoryGroupName)
   const direction = normalizeTxnDirection(txnType)
@@ -316,7 +282,7 @@ export async function resolveCategorySelectionForPreview(
     const previewType: CategoryType = direction === 'credit' ? 'income' : 'expense'
     const { data: existingCategory, error: existingCategoryError } = await serviceSupabase
       .from('categories')
-      .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system, created_at')
+      .select('id, name, type, group_name, group_id, subgroup_id, created_at')
       .ilike('name', normalizedNewCategoryName)
       .eq('type', previewType)
       .limit(1)
@@ -327,7 +293,7 @@ export async function resolveCategorySelectionForPreview(
     }
 
     if (existingCategory) {
-      return existingCategory
+      return existingCategory as CategoryLookupRow
     }
 
     return {
@@ -340,5 +306,13 @@ export async function resolveCategorySelectionForPreview(
     }
   }
 
-  return resolveCategorySelectionForSave(serviceSupabase, categoryId, null, null, txnType)
+  const saved = await resolveCategorySelectionForSave(
+    serviceSupabase,
+    categoryId,
+    null,
+    null,
+    txnType,
+  )
+
+  return saved
 }

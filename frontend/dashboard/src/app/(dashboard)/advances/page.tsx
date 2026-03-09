@@ -37,7 +37,7 @@ export default function AdvancesPage() {
         .select('id, is_recoverable, expected_recovery_amount, status, due_date, notes, counterparties(name, relationship)')
         .order('created_at', { ascending: false })
 
-      setAdvances((data as AdvanceRow[]) ?? [])
+      setAdvances((data as unknown as AdvanceRow[]) ?? [])
       setLoading(false)
     }
     fetchData()

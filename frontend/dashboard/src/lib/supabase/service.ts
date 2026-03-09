@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
 
 export function createServiceSupabaseClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -9,5 +8,5 @@ export function createServiceSupabaseClient() {
     throw new Error('Supabase service role environment variables are not configured.')
   }
 
-  return createClient<Database>(url, serviceRoleKey)
+  return createClient(url, serviceRoleKey)
 }

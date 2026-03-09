@@ -1,13 +1,11 @@
 'use client'
 
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
-import { TrendingUp, DollarSign, PieChart, BarChart3, Loader2 } from 'lucide-react'
+import { DollarSign, PieChart, BarChart3, Loader2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { formatCurrency } from '@/lib/format'
-import { cn } from '@/lib/utils'
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899']
 
@@ -69,8 +67,8 @@ export default function InvestmentsPage() {
           .limit(20),
       ])
 
-      setHoldings((balRes.data as AssetHolding[]) ?? [])
-      setRecentTxns((txnRes.data as InvestmentTxn[]) ?? [])
+      setHoldings((balRes.data as unknown as AssetHolding[]) ?? [])
+      setRecentTxns((txnRes.data as unknown as InvestmentTxn[]) ?? [])
       setLoading(false)
     }
     fetchData()

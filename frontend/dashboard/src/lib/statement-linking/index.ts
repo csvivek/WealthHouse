@@ -4,7 +4,7 @@ import { buildStagingCandidatePairs } from './candidates'
 import { scoreCandidate } from './scoring'
 import type { SuggestedLink } from './types'
 
-type ServiceClient = SupabaseClient<Database>
+type ServiceClient = SupabaseClient
 type StagingLinkInsert = Database['public']['Tables']['staging_transaction_links']['Insert']
 
 const AUTO_APPROVE_THRESHOLD = 0.86
@@ -34,7 +34,7 @@ export async function refreshLinkSuggestionsForImport(params: {
       .eq('file_import_id', fileImportId),
     supabase
       .from('statement_transactions')
-      .select('id, account_id, txn_date, amount, txn_type, merchant_raw, description')
+      .select('*')
       .in('account_id', accountIds.length ? accountIds : ['00000000-0000-0000-0000-000000000000'])
       .gte('txn_date', new Date(Date.now() - (45 * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10)),
   ])

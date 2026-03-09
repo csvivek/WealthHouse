@@ -8,20 +8,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { DATE_PERIOD_LABELS, DatePeriod } from '@/lib/date-periods'
+import { DATE_PERIOD_LABELS, type DatePeriod } from '@/lib/date-periods'
+import {
+  nextFiltersForGroupChange,
+  nextFiltersForSubgroupChange,
+  type DashboardFilters,
+  type OverviewFilterOption,
+} from '@/lib/overview-filters'
 
-export interface OverviewFilterOption {
-  value: string
-  label: string
-}
-
-export interface OverviewFilters {
-  period: DatePeriod
-  accountId: string
-  categoryId: string
-  groupId: string
-  subgroupId: string
-}
+export type OverviewFilters = DashboardFilters
+export type { OverviewFilterOption }
 
 interface OverviewFilterBarProps {
   filters: OverviewFilters
@@ -69,7 +65,7 @@ export function OverviewFilterBar({
         </SelectContent>
       </Select>
 
-      <Select value={filters.groupId} onValueChange={(value) => onChange({ ...filters, groupId: value, subgroupId: 'all' })}>
+      <Select value={filters.groupId} onValueChange={(value) => onChange(nextFiltersForGroupChange(filters, value))}>
         <SelectTrigger className="w-[180px]"><SelectValue placeholder="Group" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All Groups</SelectItem>
@@ -77,7 +73,7 @@ export function OverviewFilterBar({
         </SelectContent>
       </Select>
 
-      <Select value={filters.subgroupId} onValueChange={(value) => onChange({ ...filters, subgroupId: value })}>
+      <Select value={filters.subgroupId} onValueChange={(value) => onChange(nextFiltersForSubgroupChange(filters, value))}>
         <SelectTrigger className="w-[180px]"><SelectValue placeholder="Subgroup" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All Subgroups</SelectItem>
