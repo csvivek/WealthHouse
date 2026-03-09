@@ -2316,6 +2316,59 @@ export type Database = {
         Args: Record<string, never>
         Returns: undefined
       }
+      get_account_dashboard_summary: {
+        Args: {
+          p_account_ids?: string[] | null
+          p_start_date?: string | null
+          p_end_date?: string | null
+        }
+        Returns: {
+          active_accounts: number
+          investment_holdings: number
+          total_card_outstanding: number
+          total_income: number
+          total_expenses: number
+          net_cash_flow: number
+        }[]
+      }
+      get_breakdown_transactions: {
+        Args: {
+          p_account_ids?: string[] | null
+          p_start_date?: string | null
+          p_end_date?: string | null
+        }
+        Returns: {
+          month_start: string
+          income: number
+          expenses: number
+        }[]
+      }
+      get_payment_breakdown: {
+        Args: {
+          p_account_ids?: string[] | null
+          p_start_date?: string | null
+          p_end_date?: string | null
+        }
+        Returns: {
+          category_id: number | null
+          category_name: string | null
+          total_amount: number
+          txn_count: number
+        }[]
+      }
+      get_receipt_breakdown: {
+        Args: {
+          p_account_ids?: string[] | null
+          p_start_date?: string | null
+          p_end_date?: string | null
+        }
+        Returns: {
+          category_id: number | null
+          category_name: string | null
+          total_amount: number
+          txn_count: number
+        }[]
+      }
     }
     Enums: {
       member_role: 'self' | 'spouse' | 'child' | 'parent' | 'other'
