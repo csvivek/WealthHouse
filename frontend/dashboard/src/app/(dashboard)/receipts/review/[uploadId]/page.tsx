@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { formatCurrency, formatDate } from '@/lib/format'
 import { toast } from 'sonner'
+import { CategoryBadge } from '@/components/category-badge'
 
 interface ReceiptUpload {
   id: string
@@ -67,6 +68,11 @@ interface ReceiptCategory {
   id: string
   name: string
   category_family: string | null
+  icon_key?: string | null
+  color_token?: string | null
+  color_hex?: string | null
+  domain_type?: string | null
+  payment_subtype?: string | null
 }
 
 interface ChatSuggestion {
@@ -621,16 +627,24 @@ export default function ReceiptReviewPage() {
               <Input value={staging.payment_information ?? ''} onChange={(event) => updateHeaderField('payment_information', event.target.value)} placeholder="Payment Information" />
               <Input type="number" step="0.01" value={staging.tax_amount ?? ''} onChange={(event) => updateHeaderField('tax_amount', Number(event.target.value))} placeholder="Tax Amount" />
 
-              <select
-                className="h-10 rounded-md border bg-background px-3 text-sm"
-                value={staging.receipt_category_id ?? ''}
-                onChange={(event) => updateHeaderField('receipt_category_id', event.target.value || null)}
-              >
-                <option value="">Select Header Category</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>{category.name}</option>
-                ))}
-              </select>
+              <div className="space-y-2">
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  value={staging.receipt_category_id ?? ''}
+                  onChange={(event) => updateHeaderField('receipt_category_id', event.target.value || null)}
+                >
+                  <option value="">Select Header Category</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                </select>
+                <CategoryBadge
+                  {...(categories.find((category) => category.id === staging.receipt_category_id) ?? {})}
+                  name={categories.find((category) => category.id === staging.receipt_category_id)?.name ?? null}
+                  fallbackLabel="Uncategorized"
+                  className="h-6"
+                />
+              </div>
 
               <Input value={staging.notes ?? ''} onChange={(event) => updateHeaderField('notes', event.target.value)} placeholder="Notes" />
 
@@ -690,16 +704,24 @@ export default function ReceiptReviewPage() {
                           <Input type="number" step="0.01" value={item.line_total ?? ''} onChange={(event) => updateItemField(item.id, 'line_total', Number(event.target.value))} />
                         </td>
                         <td className="py-2 pr-2">
-                          <select
-                            className="h-10 w-full rounded-md border bg-background px-2 text-sm"
-                            value={item.receipt_category_id ?? ''}
-                            onChange={(event) => updateItemField(item.id, 'receipt_category_id', event.target.value || null)}
-                          >
-                            <option value="">Select Category</option>
-                            {categories.map((category) => (
-                              <option key={category.id} value={category.id}>{category.name}</option>
-                            ))}
-                          </select>
+                          <div className="space-y-1">
+                            <select
+                              className="h-10 w-full rounded-md border bg-background px-2 text-sm"
+                              value={item.receipt_category_id ?? ''}
+                              onChange={(event) => updateItemField(item.id, 'receipt_category_id', event.target.value || null)}
+                            >
+                              <option value="">Select Category</option>
+                              {categories.map((category) => (
+                                <option key={category.id} value={category.id}>{category.name}</option>
+                              ))}
+                            </select>
+                            <CategoryBadge
+                              {...(categories.find((category) => category.id === item.receipt_category_id) ?? {})}
+                              name={categories.find((category) => category.id === item.receipt_category_id)?.name ?? null}
+                              fallbackLabel="Uncategorized"
+                              className="h-6"
+                            />
+                          </div>
                         </td>
                         <td className="py-2">
                           {Math.round((item.classification_confidence ?? 0) * 100)}%
