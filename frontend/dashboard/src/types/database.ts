@@ -1897,6 +1897,115 @@ export type Database = {
           },
         ]
       }
+
+      staging_transaction_links: {
+        Row: {
+          id: string
+          file_import_id: string
+          household_id: string
+          from_staging_id: string
+          to_staging_id: string | null
+          to_transaction_id: string | null
+          link_type: Database['public']['Enums']['link_type']
+          link_score: number
+          link_reason: Record<string, unknown>
+          status: Database['public']['Enums']['mapping_status']
+          matched_by: string
+          matched_by_user_id: string | null
+          reviewed_by: string | null
+          reviewed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          file_import_id: string
+          household_id: string
+          from_staging_id: string
+          to_staging_id?: string | null
+          to_transaction_id?: string | null
+          link_type: Database['public']['Enums']['link_type']
+          link_score?: number
+          link_reason?: Record<string, unknown>
+          status?: Database['public']['Enums']['mapping_status']
+          matched_by?: string
+          matched_by_user_id?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          file_import_id?: string
+          household_id?: string
+          from_staging_id?: string
+          to_staging_id?: string | null
+          to_transaction_id?: string | null
+          link_type?: Database['public']['Enums']['link_type']
+          link_score?: number
+          link_reason?: Record<string, unknown>
+          status?: Database['public']['Enums']['mapping_status']
+          matched_by?: string
+          matched_by_user_id?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'staging_transaction_links_file_import_id_fkey'
+            columns: ['file_import_id']
+            isOneToOne: false
+            referencedRelation: 'file_imports'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'staging_transaction_links_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'staging_transaction_links_from_staging_id_fkey'
+            columns: ['from_staging_id']
+            isOneToOne: false
+            referencedRelation: 'import_staging'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'staging_transaction_links_to_staging_id_fkey'
+            columns: ['to_staging_id']
+            isOneToOne: false
+            referencedRelation: 'import_staging'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'staging_transaction_links_to_transaction_id_fkey'
+            columns: ['to_transaction_id']
+            isOneToOne: false
+            referencedRelation: 'statement_transactions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'staging_transaction_links_matched_by_user_id_fkey'
+            columns: ['matched_by_user_id']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'staging_transaction_links_reviewed_by_fkey'
+            columns: ['reviewed_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+
       transaction_links: {
         Row: {
           id: string
@@ -1906,7 +2015,12 @@ export type Database = {
           link_score: number
           link_reason: Record<string, unknown>
           status: Database['public']['Enums']['mapping_status']
+          matched_by: string
+          matched_by_user_id: string | null
+          reviewed_by: string | null
+          reviewed_at: string | null
           created_at: string
+          updated_at: string
         }
         Insert: {
           id?: string
@@ -1916,7 +2030,12 @@ export type Database = {
           link_score?: number
           link_reason?: Record<string, unknown>
           status?: Database['public']['Enums']['mapping_status']
+          matched_by?: string
+          matched_by_user_id?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
           created_at?: string
+          updated_at?: string
         }
         Update: {
           id?: string
@@ -1926,7 +2045,12 @@ export type Database = {
           link_score?: number
           link_reason?: Record<string, unknown>
           status?: Database['public']['Enums']['mapping_status']
+          matched_by?: string
+          matched_by_user_id?: string | null
+          reviewed_by?: string | null
+          reviewed_at?: string | null
           created_at?: string
+          updated_at?: string
         }
         Relationships: [
           {
@@ -1941,6 +2065,21 @@ export type Database = {
             columns: ['to_transaction_id']
             isOneToOne: false
             referencedRelation: 'statement_transactions'
+            referencedColumns: ['id']
+          },
+
+          {
+            foreignKeyName: 'transaction_links_matched_by_user_id_fkey'
+            columns: ['matched_by_user_id']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'transaction_links_reviewed_by_fkey'
+            columns: ['reviewed_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
             referencedColumns: ['id']
           },
         ]
@@ -2201,7 +2340,7 @@ export type Database = {
       advance_status: 'pending' | 'partial' | 'settled' | 'written_off'
       match_type: 'exact' | 'fuzzy' | 'manual'
       mapping_status: 'needs_review' | 'confirmed' | 'rejected'
-      link_type: 'refund' | 'installment' | 'transfer' | 'split'
+      link_type: 'refund' | 'installment' | 'transfer' | 'split' | 'internal_transfer' | 'credit_card_payment' | 'loan_repayment'
       exception_type: 'parse_error' | 'duplicate' | 'unmatched' | 'anomaly'
       exception_status: 'open' | 'resolved' | 'dismissed'
       investment_txn_type: 'buy' | 'sell' | 'deposit' | 'withdrawal' | 'fee' | 'dividend' | 'interest' | 'transfer'

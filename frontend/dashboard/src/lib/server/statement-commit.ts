@@ -9,6 +9,7 @@ type ApprovalLogInsert = Database['public']['Tables']['approval_log']['Insert']
 type StatementImportInsert = Database['public']['Tables']['statement_imports']['Insert']
 type StatementTransactionInsert = Database['public']['Tables']['statement_transactions']['Insert']
 type StatementSummaryInsert = Database['public']['Tables']['statement_summaries']['Insert']
+type TransactionLinkInsert = Database['public']['Tables']['transaction_links']['Insert']
 
 type ServiceSupabaseClient = SupabaseClient<Database>
 
@@ -159,7 +160,53 @@ export async function processStatementCommit(params: {
     .order('row_index', { ascending: true })
 
   if (!approvedRows || approvedRows.length === 0) {
-    if (isReplacementCommit) {
+  
+  const { data: approvedLinks, error: approvedLinksError } = await supabase
+    .from('staging_transaction_links')
+    .select('*')
+    .eq('file_import_id', importId)
+    .eq('household_id', householdId)
+    .eq('status', 'confirmed')
+
+  if (approvedLinksError) {
+    await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
+    throw new StatementCommitProcessError('Failed to load approved staging links', 500)
+  }
+
+  const linkInserts: TransactionLinkInsert[] = []
+
+  for (const link of approvedLinks ?? []) {
+    const fromTransactionId = committedTransactionByStagingId.get(link.from_staging_id)
+    const toTransactionId = link.to_transaction_id ?? (link.to_staging_id ? committedTransactionByStagingId.get(link.to_staging_id) : null)
+
+    if (!fromTransactionId || !toTransactionId || fromTransactionId === toTransactionId) continue
+
+    linkInserts.push({
+      from_transaction_id: fromTransactionId,
+      to_transaction_id: toTransactionId,
+      link_type: link.link_type,
+      link_score: Number(link.link_score ?? 0),
+      link_reason: link.link_reason ?? {},
+      status: link.status,
+      matched_by: link.matched_by ?? 'system',
+      matched_by_user_id: link.matched_by_user_id,
+      reviewed_by: link.reviewed_by,
+      reviewed_at: link.reviewed_at,
+    })
+  }
+
+  if (linkInserts.length > 0) {
+    const { error: linkInsertError } = await supabase
+      .from('transaction_links')
+      .upsert(linkInserts, { onConflict: 'from_transaction_id,to_transaction_id,link_type' })
+
+    if (linkInsertError) {
+      await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
+      throw new StatementCommitProcessError(linkInsertError.message || 'Failed to persist transaction links', 500)
+    }
+  }
+
+  if (isReplacementCommit) {
       await deleteCommittedVersion(supabase, previousStatementImportIds)
     }
 
@@ -237,6 +284,7 @@ export async function processStatementCommit(params: {
 
   let committedCount = 0
   let skippedDuplicateCount = 0
+  const committedTransactionByStagingId = new Map<string, string>()
 
   for (const row of approvedRows) {
     const statementImportId = statementImportsByAccount.get(row.account_id)
@@ -299,6 +347,10 @@ export async function processStatementCommit(params: {
 
     await supabase.from('import_staging').update(committedUpdate).eq('id', row.id)
 
+    if (inserted?.id) {
+      committedTransactionByStagingId.set(row.id, inserted.id)
+    }
+
     recommittedRowIds.push(row.id)
     committedCount += 1
   }
@@ -324,6 +376,52 @@ export async function processStatementCommit(params: {
         await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
         throw new StatementCommitProcessError(summaryError.message || 'Failed to create statement summary', 500)
       }
+    }
+  }
+
+
+  const { data: approvedLinks, error: approvedLinksError } = await supabase
+    .from('staging_transaction_links')
+    .select('*')
+    .eq('file_import_id', importId)
+    .eq('household_id', householdId)
+    .eq('status', 'confirmed')
+
+  if (approvedLinksError) {
+    await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
+    throw new StatementCommitProcessError('Failed to load approved staging links', 500)
+  }
+
+  const linkInserts: TransactionLinkInsert[] = []
+
+  for (const link of approvedLinks ?? []) {
+    const fromTransactionId = committedTransactionByStagingId.get(link.from_staging_id)
+    const toTransactionId = link.to_transaction_id ?? (link.to_staging_id ? committedTransactionByStagingId.get(link.to_staging_id) : null)
+
+    if (!fromTransactionId || !toTransactionId || fromTransactionId === toTransactionId) continue
+
+    linkInserts.push({
+      from_transaction_id: fromTransactionId,
+      to_transaction_id: toTransactionId,
+      link_type: link.link_type,
+      link_score: Number(link.link_score ?? 0),
+      link_reason: link.link_reason ?? {},
+      status: link.status,
+      matched_by: link.matched_by ?? 'system',
+      matched_by_user_id: link.matched_by_user_id,
+      reviewed_by: link.reviewed_by,
+      reviewed_at: link.reviewed_at,
+    })
+  }
+
+  if (linkInserts.length > 0) {
+    const { error: linkInsertError } = await supabase
+      .from('transaction_links')
+      .upsert(linkInserts, { onConflict: 'from_transaction_id,to_transaction_id,link_type' })
+
+    if (linkInsertError) {
+      await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
+      throw new StatementCommitProcessError(linkInsertError.message || 'Failed to persist transaction links', 500)
     }
   }
 

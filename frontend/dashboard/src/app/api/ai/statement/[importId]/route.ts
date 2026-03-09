@@ -52,7 +52,7 @@ export async function GET(
       return NextResponse.json({ error: 'Import not found' }, { status: 404 })
     }
 
-    const [rowsResult, categoriesResult, committedImportsResult] = await Promise.all([
+    const [rowsResult, categoriesResult, committedImportsResult, linksResult] = await Promise.all([
       supabase
         .from('import_staging')
         .select('*')
@@ -69,6 +69,10 @@ export async function GET(
         .from('statement_imports')
         .select('id', { count: 'exact' })
         .eq('file_import_id', importId),
+      supabase
+        .from('staging_transaction_links')
+        .select('*')
+        .eq('file_import_id', importId),
     ])
 
     if (rowsResult.error) {
@@ -81,6 +85,10 @@ export async function GET(
 
     if (committedImportsResult.error) {
       return NextResponse.json({ error: 'Failed to fetch committed import metadata' }, { status: 500 })
+    }
+
+    if (linksResult.error) {
+      return NextResponse.json({ error: 'Failed to fetch link suggestions' }, { status: 500 })
     }
 
     const stagingRows: ImportStagingRow[] = rowsResult.data ?? []
@@ -102,6 +110,26 @@ export async function GET(
         existing.examples.push(row.merchant_raw)
       }
       similarPreviewMap.set(similarMerchantKey, existing)
+    }
+
+    const linksByStagingId = new Map<string, Array<{ id: string; fromStagingId: string; toStagingId: string | null; toTransactionId: string | null; linkType: string; linkScore: number; linkReason: Record<string, unknown>; status: string; matchedBy: string; reviewedBy: string | null; reviewedAt: string | null }>>()
+    for (const link of linksResult.data ?? []) {
+      const key = link.from_staging_id
+      const existing = linksByStagingId.get(key) ?? []
+      existing.push({
+        id: link.id,
+        fromStagingId: link.from_staging_id,
+        toStagingId: link.to_staging_id,
+        toTransactionId: link.to_transaction_id,
+        linkType: link.link_type,
+        linkScore: Number(link.link_score ?? 0),
+        linkReason: link.link_reason ?? {},
+        status: link.status,
+        matchedBy: link.matched_by,
+        reviewedBy: link.reviewed_by,
+        reviewedAt: link.reviewed_at,
+      })
+      linksByStagingId.set(key, existing)
     }
 
     const stats = {
@@ -191,6 +219,7 @@ export async function GET(
           similarMerchantCount: similarPreview ? Math.max(similarPreview.count - 1, 0) : 0,
           similarMerchantExamples: similarPreview?.examples.filter((example) => example !== row.merchant_raw) ?? [],
           searchSummary: readString(originalData.searchSummary),
+          links: (linksByStagingId.get(row.id) ?? []).sort((a, b) => b.linkScore - a.linkScore),
         }
       }),
     })
