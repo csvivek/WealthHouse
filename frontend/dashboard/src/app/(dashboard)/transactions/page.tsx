@@ -56,16 +56,21 @@ interface StatementTxn {
   category_id: number | null
   account_id: string
   confidence: number
+  category: CategoryWithHierarchy | null
 }
 
-interface Category {
+interface CategoryWithHierarchy {
   id: number
   name: string
+  group_id: number | null
+  subgroup_id: number | null
   icon_key: string | null
   color_token: string | null
   color_hex: string | null
   domain_type: string | null
   payment_subtype: string | null
+  category_group: { id: number; name: string } | null
+  category_subgroup: { id: number; name: string; group_id: number } | null
 }
 
 interface AccountInfo {
@@ -76,11 +81,13 @@ interface AccountInfo {
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<StatementTxn[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
+  const [categories, setCategories] = useState<CategoryWithHierarchy[]>([])
   const [accounts, setAccounts] = useState<AccountInfo[]>([])
   const [loading, setLoading] = useState(true)
 
   const [search, setSearch] = useState('')
+  const [groupFilter, setGroupFilter] = useState('all')
+  const [subgroupFilter, setSubgroupFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [accountFilter, setAccountFilter] = useState('all')
   const [dateRange, setDateRange] = useState('90_days')
@@ -113,24 +120,49 @@ export default function TransactionsPage() {
       const [txnRes, catRes] = await Promise.all([
         supabase
           .from('statement_transactions')
-          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, description, category_id, account_id, confidence')
+          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, description, category_id, account_id, confidence, category:categories(id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id))')
           .in('account_id', accountIds)
           .order('txn_date', { ascending: false }),
-        supabase.from('categories').select('id, name, group_name, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system'),
-        supabase.from('categories').select('id, name, icon_key, color_token, color_hex, domain_type, payment_subtype'),
+        supabase.from('categories').select('id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id)'),
       ])
 
       setTransactions((txnRes.data as StatementTxn[]) ?? [])
-      setCategories((catRes.data as Category[]) ?? [])
+      setCategories((catRes.data as CategoryWithHierarchy[]) ?? [])
       setLoading(false)
     }
     fetchData()
   }, [])
 
-  const categoryMap = useMemo(
-    () => Object.fromEntries(categories.map(c => [c.id, c])),
-    [categories]
-  )
+  const categoryMap = useMemo(() => Object.fromEntries(categories.map(c => [c.id, c])), [categories])
+  const groupOptions = useMemo(() => {
+    const byId = new Map<number, string>()
+    for (const category of categories) {
+      const group = category.category_group
+      if (group) byId.set(group.id, group.name)
+    }
+    return Array.from(byId.entries()).sort((a, b) => a[1].localeCompare(b[1]))
+  }, [categories])
+
+  const subgroupOptions = useMemo(() => {
+    const byId = new Map<number, { name: string; group_id: number }>()
+    for (const category of categories) {
+      const subgroup = category.category_subgroup
+      if (!subgroup) continue
+      if (groupFilter !== 'all' && String(subgroup.group_id) !== groupFilter) continue
+      byId.set(subgroup.id, { name: subgroup.name, group_id: subgroup.group_id })
+    }
+    return Array.from(byId.entries()).sort((a, b) => a[1].name.localeCompare(b[1].name))
+  }, [categories, groupFilter])
+
+  const categoryOptions = useMemo(() => {
+    return categories
+      .filter((category) => {
+        if (groupFilter !== 'all' && String(category.group_id) !== groupFilter) return false
+        if (subgroupFilter !== 'all' && String(category.subgroup_id) !== subgroupFilter) return false
+        return true
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [categories, groupFilter, subgroupFilter])
   const accountMap = useMemo(
     () => Object.fromEntries(accounts.map(a => [a.id, a])),
     [accounts]
@@ -144,13 +176,16 @@ export default function TransactionsPage() {
       .filter(t => {
         const merchant = t.merchant_normalized ?? t.merchant_raw ?? t.description ?? ''
         if (search && !merchant.toLowerCase().includes(search.toLowerCase())) return false
-        if (categoryFilter !== 'all' && String(t.category_id) !== categoryFilter) return false
+        const txnCategory = t.category
+        if (groupFilter !== 'all' && String(txnCategory?.group_id ?? '') !== groupFilter) return false
+        if (subgroupFilter !== 'all' && String(txnCategory?.subgroup_id ?? '') !== subgroupFilter) return false
+        if (categoryFilter !== 'all' && String(txnCategory?.id ?? '') !== categoryFilter) return false
         if (accountFilter !== 'all' && t.account_id !== accountFilter) return false
         if (t.txn_date < rangeStart || t.txn_date > rangeEnd) return false
         return true
       })
       .sort((a, b) => b.txn_date.localeCompare(a.txn_date))
-  }, [transactions, search, categoryFilter, accountFilter, dateRange])
+  }, [transactions, search, groupFilter, subgroupFilter, categoryFilter, accountFilter, dateRange])
 
   if (loading) {
     return (
@@ -174,13 +209,52 @@ export default function TransactionsPage() {
             className="pl-9"
           />
         </div>
-        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+        <Select
+          value={groupFilter}
+          onValueChange={(value) => {
+            setGroupFilter(value)
+            setSubgroupFilter('all')
+            setCategoryFilter('all')
+          }}
+        >
           <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Group" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Groups</SelectItem>
+            {groupOptions.map(([groupId, groupName]) => (
+              <SelectItem key={groupId} value={String(groupId)}>
+                {groupName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={subgroupFilter}
+          onValueChange={(value) => {
+            setSubgroupFilter(value)
+            setCategoryFilter('all')
+          }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Subgroup" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Subgroups</SelectItem>
+            {subgroupOptions.map(([subgroupId, subgroup]) => (
+              <SelectItem key={subgroupId} value={String(subgroupId)}>
+                {subgroup.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <SelectTrigger className="w-[170px]">
             <SelectValue placeholder="Category" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Categories</SelectItem>
-            {categories.map(cat => (
+            {categoryOptions.map(cat => (
               <SelectItem key={cat.id} value={String(cat.id)}>
                 {cat.name}
               </SelectItem>
@@ -230,7 +304,7 @@ export default function TransactionsPage() {
               </thead>
               <tbody>
                 {filtered.map(txn => {
-                  const category = txn.category_id != null ? categoryMap[txn.category_id] : undefined
+                  const category = txn.category ?? (txn.category_id != null ? categoryMap[txn.category_id] : undefined)
                   const account = accountMap[txn.account_id]
                   const isCredit = txn.txn_type === 'credit'
                   const merchantName = txn.merchant_normalized ?? txn.merchant_raw ?? txn.description ?? 'Unknown'

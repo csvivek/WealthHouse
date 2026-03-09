@@ -4,7 +4,6 @@ import { useRef, useEffect, useState, useMemo } from 'react'
 import * as d3 from 'd3'
 import {
   TrendingUp,
-  TrendingDown,
   Wallet,
   ArrowDownUp,
   CreditCard,
@@ -50,16 +49,21 @@ interface StatementTransaction {
   description: string | null
   currency: string
   created_at: string
+  category: CategoryWithHierarchy | null
 }
 
-interface Category {
+interface CategoryWithHierarchy {
   id: number
   name: string
+  group_id: number | null
+  subgroup_id: number | null
   icon_key: string | null
   color_token: string | null
   color_hex: string | null
   domain_type: string | null
   payment_subtype: string | null
+  category_group: { id: number; name: string } | null
+  category_subgroup: { id: number; name: string; group_id: number } | null
 }
 
 interface CardRow {
@@ -391,7 +395,6 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [recentTxns, setRecentTxns] = useState<StatementTransaction[]>([])
   const [allTxns, setAllTxns] = useState<StatementTransaction[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
   const [cards, setCards] = useState<CardRow[]>([])
   const [assetBalances, setAssetBalances] = useState<AssetBalance[]>([])
 
@@ -423,19 +426,17 @@ export default function DashboardPage() {
         return
       }
 
-      const [recentRes, allRes, catRes, cardsRes, balancesRes] = await Promise.all([
+      const [recentRes, allRes, cardsRes, balancesRes] = await Promise.all([
         supabase
           .from('statement_transactions')
-          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
+          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at, category:categories(id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id))')
           .in('account_id', accountIds)
           .order('txn_date', { ascending: false })
           .limit(8),
         supabase
           .from('statement_transactions')
-          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
+          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at, category:categories(id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id))')
           .in('account_id', accountIds),
-        supabase.from('categories').select('id, name, group_name, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system'),
-        supabase.from('categories').select('id, name, icon_key, color_token, color_hex, domain_type, payment_subtype'),
         supabase
           .from('cards')
           .select('id, account_id, card_name, total_outstanding')
@@ -448,18 +449,12 @@ export default function DashboardPage() {
 
       setRecentTxns((recentRes.data as StatementTransaction[]) ?? [])
       setAllTxns((allRes.data as StatementTransaction[]) ?? [])
-      setCategories((catRes.data as Category[]) ?? [])
       setCards((cardsRes.data as CardRow[]) ?? [])
       setAssetBalances((balancesRes.data as AssetBalance[]) ?? [])
       setLoading(false)
     }
     fetchData()
   }, [])
-
-  const categoryMap = useMemo(
-    () => new Map(categories.map((c) => [c.id, c])),
-    [categories],
-  )
 
   const totalCardOutstanding = useMemo(
     () => cards.reduce((s, c) => s + (c.total_outstanding ?? 0), 0),
@@ -613,10 +608,7 @@ export default function DashboardPage() {
           ) : (
             <div className="space-y-1">
               {recentTxns.map((txn) => {
-                const category =
-                  txn.category_id != null
-                    ? categoryMap.get(txn.category_id)
-                    : undefined
+                const category = txn.category
                 const isCredit = txn.txn_type === 'credit'
                 const merchantName =
                   txn.merchant_normalized ??
