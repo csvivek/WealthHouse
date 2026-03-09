@@ -60,7 +60,7 @@ export async function GET(
         .order('row_index', { ascending: true }),
       supabase
         .from('categories')
-        .select('id, name, type, group_name')
+        .select('id, name, type, group_name, group_id, subgroup_id')
         .order('type', { ascending: true })
         .order('group_name', { ascending: true })
         .order('name', { ascending: true }),
@@ -143,6 +143,8 @@ export async function GET(
         name: category.name,
         type: (category.type as CategoryType | null) ?? 'expense',
         group_name: category.group_name,
+        group_id: category.group_id,
+        subgroup_id: category.subgroup_id,
       })),
       stats,
       rows: stagingRows.map((row) => {

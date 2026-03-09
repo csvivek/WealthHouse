@@ -30,6 +30,8 @@ export interface ResolvedCategorySelection {
   name: string
   type: CategoryType | null
   group_name: string | null
+  group_id?: number | null
+  subgroup_id?: number | null
   created_at?: string
 }
 
@@ -195,10 +197,40 @@ export async function resolveCategorySelectionForSave(
 
   if (normalizedNewCategoryName) {
     const newCategoryType: CategoryType = direction === 'credit' ? 'income' : 'expense'
+    let resolvedGroupId: number | null = null
+
+    if (normalizedGroupName) {
+      const { data: existingGroup, error: groupLookupError } = await serviceSupabase
+        .from('category_groups')
+        .select('id, name')
+        .ilike('name', normalizedGroupName)
+        .limit(1)
+        .maybeSingle()
+
+      if (groupLookupError) {
+        throw groupLookupError
+      }
+
+      if (existingGroup) {
+        resolvedGroupId = existingGroup.id
+      } else {
+        const { data: createdGroup, error: createGroupError } = await serviceSupabase
+          .from('category_groups')
+          .insert({ name: normalizedGroupName })
+          .select('id')
+          .single()
+
+        if (createGroupError || !createdGroup) {
+          throw createGroupError ?? new Error('Failed to create category group')
+        }
+
+        resolvedGroupId = createdGroup.id
+      }
+    }
 
     const { data: existingCategory, error: existingCategoryError } = await serviceSupabase
       .from('categories')
-      .select('id, name, type, group_name, created_at')
+      .select('id, name, type, group_name, group_id, subgroup_id, created_at')
       .ilike('name', normalizedNewCategoryName)
       .eq('type', newCategoryType)
       .limit(1)
@@ -218,8 +250,9 @@ export async function resolveCategorySelectionForSave(
         name: normalizedNewCategoryName,
         type: newCategoryType,
         group_name: normalizedGroupName,
+        group_id: resolvedGroupId,
       })
-      .select('id, name, type, group_name, created_at')
+      .select('id, name, type, group_name, group_id, subgroup_id, created_at')
       .single()
 
     if (createCategoryError || !createdCategory) {
@@ -239,7 +272,7 @@ export async function resolveCategorySelectionForSave(
 
   const { data: category, error: categoryError } = await serviceSupabase
     .from('categories')
-    .select('id, name, type, group_name, created_at')
+    .select('id, name, type, group_name, group_id, subgroup_id, created_at')
     .eq('id', categoryId)
     .single()
 
@@ -293,6 +326,8 @@ export async function resolveCategorySelectionForPreview(
       name: normalizedNewCategoryName,
       type: previewType,
       group_name: normalizedGroupName,
+      group_id: null,
+      subgroup_id: null,
     }
   }
 
