@@ -53,8 +53,10 @@ interface StatementTransaction {
   description: string | null
   currency: string
   created_at: string
+  category: CategoryWithHierarchy | null
 }
 
+interface CategoryWithHierarchy {
 interface DashboardSummary {
   active_accounts: number
   investment_holdings: number
@@ -80,6 +82,8 @@ interface Category {
   color_hex: string | null
   domain_type: string | null
   payment_subtype: string | null
+  category_group: { id: number; name: string } | null
+  category_subgroup: { id: number; name: string; group_id: number } | null
 }
 
 interface ReceiptRow {
@@ -471,6 +475,7 @@ export default function DashboardPage() {
         return
       }
 
+      const [recentRes, allRes, cardsRes, balancesRes] = await Promise.all([
       const now = new Date()
       const startDate = new Date(now.getFullYear(), now.getMonth() - 5, 1)
       const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0)
@@ -480,10 +485,14 @@ export default function DashboardPage() {
       const [recentRes, summaryRes, breakdownRes, catRes, cardsRes, balancesRes] = await Promise.all([
         supabase
           .from('statement_transactions')
-          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
+          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at, category:categories(id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id))')
           .in('account_id', accountIds)
           .order('txn_date', { ascending: false })
           .limit(8),
+        supabase
+          .from('statement_transactions')
+          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at, category:categories(id, name, group_id, subgroup_id, icon_key, color_token, color_hex, domain_type, payment_subtype, category_group:category_groups(id, name), category_subgroup:category_subgroups(id, name, group_id))')
+          .in('account_id', accountIds),
         supabase.rpc('get_account_dashboard_summary', {
           p_account_ids: accountIds,
           p_start_date: startIso,
@@ -506,6 +515,7 @@ export default function DashboardPage() {
       ])
 
       setRecentTxns((recentRes.data as StatementTransaction[]) ?? [])
+      setAllTxns((allRes.data as StatementTransaction[]) ?? [])
       setDashboardSummary(((summaryRes.data as DashboardSummary[] | null) ?? [])[0] ?? null)
       setBreakdownTxns((breakdownRes.data as BreakdownTransaction[]) ?? [])
       setCategories((catRes.data as Category[]) ?? [])
@@ -526,6 +536,10 @@ export default function DashboardPage() {
   const cashFlowData = useMemo(() => computeCashFlowData(allTxns), [allTxns])
   }, [])
 
+  const totalCardOutstanding = useMemo(
+    () => cards.reduce((s, c) => s + (c.total_outstanding ?? 0), 0),
+    [cards],
+  )
   const categoryMap = useMemo(
     () => new Map(categories.map((c) => [c.id, c])),
     [categories],
