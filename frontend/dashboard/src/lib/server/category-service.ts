@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { resolveDatePeriodRange, type DatePeriod } from '@/lib/date-periods'
+import { resolveCategoryStyle } from '@/lib/server/category-style'
 
 type CategoryType = Database['public']['Enums']['category_type']
 
@@ -13,20 +15,43 @@ export interface CategoryListFilters {
   search?: string
   status?: 'all' | 'active' | 'inactive'
   paymentSubtype?: 'all' | 'expense' | 'transfer' | 'income'
+  period?: DatePeriod
   sortBy?: 'name' | 'created_at' | 'type' | 'sort_order'
   sortDir?: 'asc' | 'desc'
+}
+
+interface CategoryListRow {
+  id: string | number
+  name: string
+  type: string | null
+  status: 'active' | 'inactive'
+  domain: CategoryDomain
+  mappedCount: number
+  created_at?: string
+  updated_at?: string
+  icon_key?: string | null
+  color_token?: string | null
+  color_hex?: string | null
 }
 
 function normalizeName(name: string) {
   return name.trim().replace(/\s+/g, ' ').slice(0, 80)
 }
 
+function incrementCount(map: Map<string, number>, key: string | number | null | undefined) {
+  if (key === null || key === undefined) return
+  const normalized = String(key)
+  map.set(normalized, (map.get(normalized) ?? 0) + 1)
+}
+
 export async function listCategories(db: AnyDb, filters: CategoryListFilters) {
   const sortBy = filters.sortBy ?? 'name'
   const sortDir = filters.sortDir ?? 'asc'
+  const period = filters.period ?? 'all_history'
+  const { start, end } = resolveDatePeriodRange(period)
 
   if (filters.domain === 'payment') {
-    let query = db.from('categories').select('id, name, type, group_name, created_at')
+    let query = db.from('categories').select('id, name, type, group_name, created_at, icon_key, color_token, color_hex')
 
     if (filters.search?.trim()) {
       query = query.ilike('name', `%${filters.search.trim()}%`)
@@ -40,14 +65,58 @@ export async function listCategories(db: AnyDb, filters: CategoryListFilters) {
     const { data, error } = await query
     if (error) throw new Error(error.message)
 
-    return (data ?? []).map((row) => ({ ...row, status: 'active' as const, domain: 'payment' as const }))
+    const paymentCountsById = new Map<string, number>()
+    let paymentTxnQuery = db
+      .from('statement_transactions')
+      .select('category_id, account_id')
+      .not('category_id', 'is', null)
+
+    if (filters.householdId) {
+      const { data: householdAccounts, error: householdAccountsError } = await db
+        .from('accounts')
+        .select('id')
+        .eq('household_id', filters.householdId)
+
+      if (householdAccountsError) throw new Error(householdAccountsError.message)
+
+      const accountIds = (householdAccounts ?? [])
+        .map((account) => (account as { id?: string | null }).id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+
+      if (accountIds.length === 0) {
+        paymentTxnQuery = paymentTxnQuery.eq('account_id', '__no_matching_household_accounts__')
+      } else {
+        paymentTxnQuery = paymentTxnQuery.in('account_id', accountIds)
+      }
+    }
+    if (start) {
+      paymentTxnQuery = paymentTxnQuery.gte('txn_date', start)
+    }
+    if (end) {
+      paymentTxnQuery = paymentTxnQuery.lte('txn_date', end)
+    }
+
+    const { data: paymentTxnRows, error: paymentTxnError } = await paymentTxnQuery
+    if (paymentTxnError) throw new Error(paymentTxnError.message)
+
+    for (const row of paymentTxnRows ?? []) {
+      incrementCount(paymentCountsById, row.category_id as number | null | undefined)
+    }
+
+    return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      ...row,
+      type: (row.type as string | null) ?? null,
+      status: 'active' as const,
+      domain: 'payment' as const,
+      mappedCount: paymentCountsById.get(String(row.id)) ?? 0,
+    })) as CategoryListRow[]
   }
 
   if (!filters.householdId) throw new Error('householdId is required for receipt category queries')
 
   let query = db
     .from('receipt_categories')
-    .select('id, household_id, name, category_family, sort_order, is_active, created_at, updated_at, description')
+    .select('id, household_id, name, category_family, sort_order, is_active, created_at, updated_at, description, icon_key, color_token, color_hex')
     .or(`household_id.is.null,household_id.eq.${filters.householdId}`)
 
   if (filters.search?.trim()) {
@@ -63,12 +132,34 @@ export async function listCategories(db: AnyDb, filters: CategoryListFilters) {
   const { data, error } = await query
   if (error) throw new Error(error.message)
 
-  return (data ?? []).map((row) => ({
+  const receiptCountsById = new Map<string, number>()
+  let receiptTxnQuery = db
+    .from('receipt_staging_transactions')
+    .select('receipt_category_id')
+    .eq('household_id', filters.householdId)
+    .not('receipt_category_id', 'is', null)
+
+  if (start) {
+    receiptTxnQuery = receiptTxnQuery.gte('txn_date', start)
+  }
+  if (end) {
+    receiptTxnQuery = receiptTxnQuery.lte('txn_date', end)
+  }
+
+  const { data: receiptTxnRows, error: receiptTxnError } = await receiptTxnQuery
+  if (receiptTxnError) throw new Error(receiptTxnError.message)
+
+  for (const row of receiptTxnRows ?? []) {
+    incrementCount(receiptCountsById, row.receipt_category_id as string | null | undefined)
+  }
+
+  return ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
     ...row,
-    type: row.category_family,
+    type: (row.category_family as string | null) ?? null,
     status: row.is_active ? 'active' : 'inactive',
     domain: 'receipt' as const,
-  }))
+    mappedCount: receiptCountsById.get(String(row.id)) ?? 0,
+  })) as CategoryListRow[]
 }
 
 export async function resolveOrCreateReceiptCategory(params: {
@@ -83,7 +174,7 @@ export async function resolveOrCreateReceiptCategory(params: {
 
   const { data: categories, error } = await params.db
     .from('receipt_categories')
-    .select('id, household_id, name, category_family, sort_order, is_active')
+    .select('id, household_id, name, category_family, sort_order, is_active, icon_key, color_token, color_hex')
     .or(`household_id.is.null,household_id.eq.${params.householdId}`)
     .order('sort_order', { ascending: true })
     .order('name', { ascending: true })
@@ -106,6 +197,7 @@ export async function resolveOrCreateReceiptCategory(params: {
   const maxSort = list
     .filter((cat) => cat.household_id === params.householdId)
     .reduce((acc, cat) => Math.max(acc, Number(cat.sort_order) || 0), 100)
+  const inferredStyle = resolveCategoryStyle({ name: targetName })
 
   const { data: created, error: createError } = await params.db
     .from('receipt_categories')
@@ -113,12 +205,15 @@ export async function resolveOrCreateReceiptCategory(params: {
       household_id: params.householdId,
       name: targetName,
       category_family: 'custom',
+      icon_key: inferredStyle.icon_key,
+      color_token: inferredStyle.color_token,
+      color_hex: null,
       sort_order: maxSort + 10,
       is_active: true,
       description: 'Created from receipt category workflow.',
       updated_at: new Date().toISOString(),
     })
-    .select('id, household_id, name, category_family, sort_order, is_active')
+    .select('id, household_id, name, category_family, sort_order, is_active, icon_key, color_token, color_hex')
     .single()
 
   if (createError || !created) throw new Error(createError?.message || 'Failed to create category')
@@ -151,7 +246,12 @@ export async function resolveOrCreatePaymentCategory(params: {
 
     const { data: created, error: createError } = await params.db
       .from('categories')
-      .insert({ name: normalizedName, type: inferredType, group_name: params.groupName || null })
+      .insert({
+        name: normalizedName,
+        type: inferredType,
+        group_name: params.groupName || null,
+        ...resolveCategoryStyle({ name: normalizedName }),
+      })
       .select('id, name, type, group_name, created_at')
       .single()
 

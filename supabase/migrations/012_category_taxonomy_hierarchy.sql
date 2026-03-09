@@ -6,8 +6,7 @@ CREATE TABLE IF NOT EXISTS public.category_groups (
   domain text,
   subtype text,
   sort_order integer NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (lower(name))
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS public.category_subgroups (
@@ -17,9 +16,14 @@ CREATE TABLE IF NOT EXISTS public.category_subgroups (
   domain text,
   subtype text,
   sort_order integer NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (group_id, lower(name))
+  created_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS category_groups_name_ci_uq
+  ON public.category_groups (lower(name));
+
+CREATE UNIQUE INDEX IF NOT EXISTS category_subgroups_group_name_ci_uq
+  ON public.category_subgroups (group_id, lower(name));
 
 ALTER TABLE public.categories
   ADD COLUMN IF NOT EXISTS group_id bigint REFERENCES public.category_groups(id),
@@ -31,7 +35,7 @@ WITH seeded_groups AS (
   FROM public.categories c
   WHERE c.group_name IS NOT NULL
     AND btrim(c.group_name) <> ''
-  ON CONFLICT (lower(name)) DO NOTHING
+  ON CONFLICT DO NOTHING
   RETURNING id, name
 )
 UPDATE public.categories c

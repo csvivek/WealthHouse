@@ -31,6 +31,12 @@ Household-centric schema (actual Supabase tables):
 - Integrity: `audit_log`, `data_quarantine`, `reconciliation_runs`, `exceptions`
 - NOT YET: `budgets`, `financial_goals`, `properties`, `mortgages`, `documents`, `notifications` (Coming Soon placeholders)
 
+## Migration Source Of Truth
+
+- Canonical migration directory is root: `supabase/migrations`.
+- Legacy directory `frontend/dashboard/supabase/migrations` is retained only for historical reference.
+- New migrations must be added only under `supabase/migrations` to avoid version-number drift and partial schema rollout.
+
 ## AI Agent Behavior
 
 - **Transaction Categorization**: Auto-categorize with confidence score. If < 90%, ask the user to confirm/correct.

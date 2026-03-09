@@ -1380,6 +1380,59 @@ export type Database = {
           },
         ]
       }
+      receipt_categories: {
+        Row: {
+          id: string
+          household_id: string | null
+          name: string
+          category_family: string | null
+          description: string | null
+          is_active: boolean
+          sort_order: number
+          icon_key: string
+          color_token: string
+          color_hex: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id?: string | null
+          name: string
+          category_family?: string | null
+          description?: string | null
+          is_active?: boolean
+          sort_order?: number
+          icon_key?: string
+          color_token?: string
+          color_hex?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          household_id?: string | null
+          name?: string
+          category_family?: string | null
+          description?: string | null
+          is_active?: boolean
+          sort_order?: number
+          icon_key?: string
+          color_token?: string
+          color_hex?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'receipt_categories_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       category_groups: {
         Row: {
           id: number
