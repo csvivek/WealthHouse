@@ -4,7 +4,6 @@ import { useRef, useEffect, useState, useMemo } from 'react'
 import * as d3 from 'd3'
 import {
   TrendingUp,
-  TrendingDown,
   Wallet,
   ArrowDownUp,
   CreditCard,
@@ -25,6 +24,7 @@ import {
   formatDateShort,
 } from '@/lib/format'
 import { CategoryBadge } from '@/components/category-badge'
+import { AccountPortfolioSection } from '@/components/dashboard/AccountPortfolioSection'
 
 /* ------------------------------------------------------------------ */
 /*  Interfaces matching the actual database schema                     */
@@ -651,6 +651,8 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      <AccountPortfolioSection />
     </div>
   )
 }
