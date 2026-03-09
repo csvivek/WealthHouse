@@ -7,6 +7,7 @@ import {
   upsertReceiptItemKnowledge,
   upsertReceiptMerchantKnowledge,
 } from '@/lib/receipts/knowledge'
+import { resolveOrCreateReceiptCategory } from '@/lib/server/category-service'
 
 interface ApplySuggestionPayload {
   action?: 'set_field' | 'set_item_category' | 'set_header_category'
@@ -25,15 +26,6 @@ interface HouseholdContext {
   householdId: string
 }
 
-interface CategoryRow {
-  id: string
-  household_id: string | null
-  name: string
-  category_family: string | null
-  sort_order: number
-}
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const ALLOWED_HEADER_FIELDS = new Set([
   'merchant_name',
@@ -66,21 +58,6 @@ function normalizeText(value: unknown) {
   return value.trim().replace(/\s+/g, ' ')
 }
 
-function categoryByName(categories: CategoryRow[], name: string) {
-  const normalized = name.trim().toLowerCase()
-  return categories.find((category) => category.name.trim().toLowerCase() === normalized) ?? null
-}
-
-function categoryById(categories: CategoryRow[], id: string) {
-  return categories.find((category) => category.id === id) ?? null
-}
-
-function normalizeCategoryName(raw: string) {
-  const cleaned = normalizeText(raw)
-  if (!cleaned) return null
-  return cleaned.slice(0, 80)
-}
-
 async function getHouseholdContext(): Promise<{ ok: true; value: HouseholdContext } | { ok: false; error: NextResponse }> {
   const supabase = await createServerSupabaseClient()
   const {
@@ -101,117 +78,7 @@ async function getHouseholdContext(): Promise<{ ok: true; value: HouseholdContex
     return { ok: false, error: NextResponse.json({ error: 'No profile found' }, { status: 404 }) }
   }
 
-  return {
-    ok: true,
-    value: {
-      userId: user.id,
-      householdId: profile.household_id,
-    },
-  }
-}
-
-async function loadVisibleCategories(db: any, householdId: string) {
-  const { data, error } = await db
-    .from('receipt_categories')
-    .select('id, household_id, name, category_family, sort_order')
-    .or(`household_id.is.null,household_id.eq.${householdId}`)
-    .eq('is_active', true)
-    .order('sort_order', { ascending: true })
-    .order('name', { ascending: true })
-
-  if (error) {
-    throw new Error(error.message)
-  }
-
-  return (data ?? []) as CategoryRow[]
-}
-
-async function createCategory(params: {
-  db: any
-  householdId: string
-  categoryName: string
-  categories: CategoryRow[]
-}) {
-  const householdSortOrder = params.categories
-    .filter((category) => category.household_id === params.householdId)
-    .reduce((max, category) => Math.max(max, category.sort_order || 100), 100)
-
-  const { data, error } = await params.db
-    .from('receipt_categories')
-    .insert({
-      household_id: params.householdId,
-      name: params.categoryName,
-      category_family: 'custom',
-      description: 'Created from receipt chat correction.',
-      sort_order: householdSortOrder + 10,
-      is_active: true,
-      updated_at: new Date().toISOString(),
-    })
-    .select('id, household_id, name, category_family, sort_order')
-    .single()
-
-  if (!error && data) {
-    return data as CategoryRow
-  }
-
-  if (!error) {
-    throw new Error('Failed to create receipt category')
-  }
-
-  if (!/duplicate key/i.test(error.message)) {
-    throw new Error(error.message)
-  }
-
-  const freshCategories = await loadVisibleCategories(params.db, params.householdId)
-  const existing = categoryByName(freshCategories, params.categoryName)
-  if (!existing) {
-    throw new Error('Category creation failed due to conflict and could not be recovered')
-  }
-
-  return existing
-}
-
-async function resolveOrCreateCategory(params: {
-  db: any
-  householdId: string
-  suggestion: ApplySuggestionPayload
-}): Promise<{ category: CategoryRow; created: boolean; categories: CategoryRow[] }> {
-  const categories = await loadVisibleCategories(params.db, params.householdId)
-
-  const targetCategoryId = normalizeText(params.suggestion.targetCategoryId)
-  const targetCategoryName = normalizeCategoryName(
-    params.suggestion.targetCategoryName || (typeof params.suggestion.value === 'string' ? params.suggestion.value : ''),
-  )
-
-  if (targetCategoryId && UUID_REGEX.test(targetCategoryId)) {
-    const matchedById = categoryById(categories, targetCategoryId)
-    if (matchedById) {
-      return { category: matchedById, created: false, categories }
-    }
-  }
-
-  if (targetCategoryName) {
-    const matchedByName = categoryByName(categories, targetCategoryName)
-    if (matchedByName) {
-      return { category: matchedByName, created: false, categories }
-    }
-
-    if (!params.suggestion.createCategoryIfMissing) {
-      throw new Error(`Receipt category "${targetCategoryName}" does not exist.`)
-    }
-
-    const created = await createCategory({
-      db: params.db,
-      householdId: params.householdId,
-      categoryName: targetCategoryName,
-      categories,
-    })
-
-    const refreshed = await loadVisibleCategories(params.db, params.householdId)
-    return { category: created, created: true, categories: refreshed }
-  }
-
-  throw new Error('Category resolution failed: missing category id/name in suggestion payload.')
+  return { ok: true, value: { userId: user.id, householdId: profile.household_id } }
 }
 
 function suggestionKind(suggestion: ApplySuggestionPayload) {
@@ -292,10 +159,12 @@ export async function POST(
         return NextResponse.json({ error: 'itemId is required for item category updates' }, { status: 400 })
       }
 
-      const { category, created, categories } = await resolveOrCreateCategory({
+      const { category, created, categories } = await resolveOrCreateReceiptCategory({
         db,
         householdId: ctx.value.householdId,
-        suggestion,
+        targetCategoryId: suggestion.targetCategoryId,
+        targetCategoryName: suggestion.targetCategoryName || (typeof suggestion.value === 'string' ? suggestion.value : null),
+        createIfMissing: suggestion.createCategoryIfMissing,
       })
 
       const { data: stagingItem, error: stagingItemError } = await db
@@ -376,10 +245,12 @@ export async function POST(
     }
 
     if (kind === 'set_header_category') {
-      const { category, created, categories } = await resolveOrCreateCategory({
+      const { category, created, categories } = await resolveOrCreateReceiptCategory({
         db,
         householdId: ctx.value.householdId,
-        suggestion,
+        targetCategoryId: suggestion.targetCategoryId,
+        targetCategoryName: suggestion.targetCategoryName || (typeof suggestion.value === 'string' ? suggestion.value : null),
+        createIfMissing: suggestion.createCategoryIfMissing,
       })
 
       const nowIso = new Date().toISOString()
