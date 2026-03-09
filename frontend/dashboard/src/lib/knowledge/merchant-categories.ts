@@ -17,6 +17,7 @@ export interface MerchantKnowledgeRecord {
   aliases: string[]
   business_type: string | null
   approved_category_id: number | null
+  // Denormalized display value only. Category linkage is ID-first.
   approved_category_name: string
   confidence: number
   decision_source: MerchantDecisionSource
@@ -41,7 +42,7 @@ export interface MerchantKnowledgeMatch {
 
 interface RememberMerchantCategoryParams {
   merchant: string
-  categoryName: string
+  categoryName?: string
   categoryId?: number | null
   canonicalMerchantName?: string | null
   familyName?: string | null
@@ -50,6 +51,11 @@ interface RememberMerchantCategoryParams {
   decisionSource?: MerchantDecisionSource
   aliases?: string[]
   notes?: string | null
+}
+
+export interface MerchantCategoryBackfillCandidate {
+  id: number
+  name: string
 }
 
 export function normalizeMerchantName(value?: string | null) {
@@ -79,6 +85,10 @@ export function buildMerchantFamilyName(normalizedName?: string | null) {
 
 function normalizeAliasList(values?: string[] | null) {
   return Array.from(new Set((values ?? []).map((value) => normalizeMerchantName(value)).filter(Boolean)))
+}
+
+function normalizeCategoryToken(value?: string | null) {
+  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
 function coerceLegacyRecord(key: string, entry: LegacyMerchantCategoryEntry): MerchantKnowledgeRecord | null {
@@ -120,7 +130,10 @@ function toMerchantKnowledgeMap(raw: unknown): MerchantKnowledgeMap {
     const record = value as Partial<MerchantKnowledgeRecord> & LegacyMerchantCategoryEntry
     const normalized = normalizeMerchantName(record.normalized_merchant_name || key)
 
-    if (record.approved_category_name && normalized) {
+    const hasCategoryId = typeof record.approved_category_id === 'number'
+    const hasCategoryName = typeof record.approved_category_name === 'string' && Boolean(record.approved_category_name.trim())
+
+    if ((hasCategoryId || hasCategoryName) && normalized) {
       map[normalized] = {
         canonical_merchant_name: record.canonical_merchant_name?.trim() || record.merchant?.trim() || key,
         normalized_merchant_name: normalized,
@@ -129,7 +142,7 @@ function toMerchantKnowledgeMap(raw: unknown): MerchantKnowledgeMap {
         business_type: record.business_type?.trim() || null,
         approved_category_id:
           typeof record.approved_category_id === 'number' ? record.approved_category_id : null,
-        approved_category_name: record.approved_category_name.trim(),
+        approved_category_name: record.approved_category_name?.trim() || '',
         confidence: typeof record.confidence === 'number' ? record.confidence : 1,
         decision_source: (record.decision_source as MerchantDecisionSource) || 'manual_override',
         usage_count: typeof record.usage_count === 'number' ? record.usage_count : 1,
@@ -201,12 +214,53 @@ export function getLearnedMerchantCategoryName(merchant?: string | null, descrip
   return findMerchantKnowledgeMatch(merchant, description)?.record.approved_category_name ?? null
 }
 
+export function backfillMerchantKnowledgeCategoryIds(candidates: MerchantCategoryBackfillCandidate[]) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return { updated: 0, totalMissing: 0 }
+  }
+
+  const normalizedIdLookup = new Map<string, number>()
+  for (const category of candidates) {
+    if (typeof category.id !== 'number') continue
+    const normalizedName = normalizeCategoryToken(category.name)
+    if (!normalizedName || normalizedIdLookup.has(normalizedName)) continue
+    normalizedIdLookup.set(normalizedName, category.id)
+  }
+
+  const map = loadMerchantKnowledgeMap()
+  let updated = 0
+  let totalMissing = 0
+
+  for (const key of Object.keys(map)) {
+    const record = map[key]
+    if (typeof record.approved_category_id === 'number') continue
+    totalMissing += 1
+
+    const fallbackId = normalizedIdLookup.get(normalizeCategoryToken(record.approved_category_name))
+    if (typeof fallbackId !== 'number') continue
+
+    map[key] = {
+      ...record,
+      approved_category_id: fallbackId,
+      last_reviewed_date: new Date().toISOString(),
+    }
+    updated += 1
+  }
+
+  if (updated > 0) {
+    saveMerchantKnowledgeMap(map)
+  }
+
+  return { updated, totalMissing }
+}
+
 export function rememberMerchantCategory(params: RememberMerchantCategoryParams | string, categoryName?: string) {
   const input: RememberMerchantCategoryParams =
     typeof params === 'string' ? { merchant: params, categoryName: categoryName || '' } : params
 
   const normalized = normalizeMerchantName(input.merchant)
-  if (!normalized || !input.categoryName.trim()) {
+  const nextCategoryName = input.categoryName?.trim() || ''
+  if (!normalized) {
     return null
   }
 
@@ -220,6 +274,12 @@ export function rememberMerchantCategory(params: RememberMerchantCategoryParams 
     input.merchant,
   ]).filter((alias) => alias !== normalized)
 
+  const nextCategoryId =
+    typeof input.categoryId === 'number' ? input.categoryId : existing?.approved_category_id ?? null
+  if (nextCategoryId === null) {
+    return null
+  }
+
   const nextRecord: MerchantKnowledgeRecord = {
     canonical_merchant_name:
       input.canonicalMerchantName?.trim() || existing?.canonical_merchant_name || input.merchant.trim(),
@@ -227,9 +287,8 @@ export function rememberMerchantCategory(params: RememberMerchantCategoryParams 
     family_name: buildMerchantFamilyName(input.familyName || normalized),
     aliases,
     business_type: input.businessType?.trim() || existing?.business_type || null,
-    approved_category_id:
-      typeof input.categoryId === 'number' ? input.categoryId : existing?.approved_category_id ?? null,
-    approved_category_name: input.categoryName.trim(),
+    approved_category_id: nextCategoryId,
+    approved_category_name: nextCategoryName || existing?.approved_category_name || '',
     confidence: input.confidence ?? 1,
     decision_source: input.decisionSource ?? 'manual_override',
     usage_count: (existing?.usage_count ?? 0) + 1,

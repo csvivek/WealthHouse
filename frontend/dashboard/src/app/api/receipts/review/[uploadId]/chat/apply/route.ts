@@ -67,8 +67,8 @@ function normalizeText(value: unknown) {
 }
 
 function categoryByName(categories: CategoryRow[], name: string) {
-  const normalized = name.trim().toLowerCase()
-  return categories.find((category) => category.name.trim().toLowerCase() === normalized) ?? null
+  const normalized = name.trim().toLowerCase().replace(/\s+/g, ' ')
+  return categories.find((category) => category.name.trim().toLowerCase().replace(/\s+/g, ' ') === normalized) ?? null
 }
 
 function categoryById(categories: CategoryRow[], id: string) {
@@ -190,6 +190,7 @@ async function resolveOrCreateCategory(params: {
     }
   }
 
+  // Name matching is migration fallback only for older payloads that do not include IDs.
   if (targetCategoryName) {
     const matchedByName = categoryByName(categories, targetCategoryName)
     if (matchedByName) {
