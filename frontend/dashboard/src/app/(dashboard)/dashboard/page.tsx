@@ -27,6 +27,7 @@ import { OverviewFilterBar, type OverviewFilters } from '@/components/dashboard/
 import { OverviewTabs, type OverviewTabValue } from '@/components/dashboard/OverviewTabs'
 import { resolveDatePeriodRange } from '@/lib/date-periods'
 import { CategoryBadge } from '@/components/category-badge'
+import { AccountPortfolioSection } from '@/components/dashboard/AccountPortfolioSection'
 
 /* ------------------------------------------------------------------ */
 /*  Interfaces matching the actual database schema                     */
@@ -52,6 +53,21 @@ interface StatementTransaction {
   description: string | null
   currency: string
   created_at: string
+}
+
+interface DashboardSummary {
+  active_accounts: number
+  investment_holdings: number
+  total_card_outstanding: number
+  total_income: number
+  total_expenses: number
+  net_cash_flow: number
+}
+
+interface BreakdownTransaction {
+  month_start: string
+  income: number
+  expenses: number
 }
 
 interface Category {
@@ -99,40 +115,6 @@ interface CashFlowDataPoint {
 interface AssetAllocationDataPoint {
   label: string
   value: number
-}
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-function computeCashFlowData(
-  transactions: StatementTransaction[],
-): CashFlowDataPoint[] {
-  const now = new Date()
-  const months: CashFlowDataPoint[] = []
-
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const label = d.toLocaleDateString('en-SG', { month: 'short' })
-    const year = d.getFullYear()
-    const month = d.getMonth()
-
-    let income = 0
-    let expenses = 0
-    for (const txn of transactions) {
-      const txnDate = new Date(txn.txn_date)
-      if (txnDate.getFullYear() === year && txnDate.getMonth() === month) {
-        if (txn.txn_type === 'credit') {
-          income += Math.abs(txn.amount)
-        } else if (txn.txn_type === 'debit') {
-          expenses += Math.abs(txn.amount)
-        }
-      }
-    }
-    months.push({ month: label, income, expenses })
-  }
-
-  return months
 }
 
 /* ------------------------------------------------------------------ */
@@ -413,6 +395,8 @@ export default function DashboardPage() {
   const [recentTxns, setRecentTxns] = useState<StatementTransaction[]>([])
   const [allTxns, setAllTxns] = useState<StatementTransaction[]>([])
   const [receipts, setReceipts] = useState<ReceiptRow[]>([])
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
+  const [breakdownTxns, setBreakdownTxns] = useState<BreakdownTransaction[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [cards, setCards] = useState<CardRow[]>([])
   const [assetBalances, setAssetBalances] = useState<AssetBalance[]>([])
@@ -481,6 +465,50 @@ export default function DashboardPage() {
       setAllTxns(paymentRows)
       setRecentTxns(paymentRows.slice(0, 8))
       setReceipts((receiptsRes.data as ReceiptRow[]) ?? [])
+
+      if (accountIds.length === 0) {
+        setLoading(false)
+        return
+      }
+
+      const now = new Date()
+      const startDate = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+      const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+      const startIso = startDate.toISOString().slice(0, 10)
+      const endIso = endDate.toISOString().slice(0, 10)
+
+      const [recentRes, summaryRes, breakdownRes, catRes, cardsRes, balancesRes] = await Promise.all([
+        supabase
+          .from('statement_transactions')
+          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
+          .in('account_id', accountIds)
+          .order('txn_date', { ascending: false })
+          .limit(8),
+        supabase.rpc('get_account_dashboard_summary', {
+          p_account_ids: accountIds,
+          p_start_date: startIso,
+          p_end_date: endIso,
+        }),
+        supabase.rpc('get_breakdown_transactions', {
+          p_account_ids: accountIds,
+          p_start_date: startIso,
+          p_end_date: endIso,
+        }),
+        supabase.from('categories').select('id, name, icon_key, color_token, color_hex, domain_type, payment_subtype'),
+        supabase
+          .from('cards')
+          .select('id, account_id, card_name, total_outstanding')
+          .in('account_id', accountIds),
+        supabase
+          .from('asset_balances')
+          .select('id, account_id, asset_id, balance, assets(symbol, name, asset_type)')
+          .in('account_id', accountIds),
+      ])
+
+      setRecentTxns((recentRes.data as StatementTransaction[]) ?? [])
+      setDashboardSummary(((summaryRes.data as DashboardSummary[] | null) ?? [])[0] ?? null)
+      setBreakdownTxns((breakdownRes.data as BreakdownTransaction[]) ?? [])
+      setCategories((catRes.data as Category[]) ?? [])
       setCards((cardsRes.data as CardRow[]) ?? [])
       setAssetBalances((balancesRes.data as AssetBalance[]) ?? [])
       setLoading(false)
@@ -496,6 +524,41 @@ export default function DashboardPage() {
     return income - expenses
   }, [allTxns])
   const cashFlowData = useMemo(() => computeCashFlowData(allTxns), [allTxns])
+  }, [])
+
+  const categoryMap = useMemo(
+    () => new Map(categories.map((c) => [c.id, c])),
+    [categories],
+  )
+
+  const totalCardOutstanding = useMemo(() => {
+    if (dashboardSummary) return dashboardSummary.total_card_outstanding
+    return cards.reduce((s, c) => s + (c.total_outstanding ?? 0), 0)
+  }, [dashboardSummary, cards])
+
+  const monthlyCashFlow = dashboardSummary?.net_cash_flow ?? 0
+
+  const cashFlowData = useMemo(() => {
+    const rowsByMonth = new Map(
+      breakdownTxns.map((row) => [
+        row.month_start.slice(0, 7),
+        { income: Number(row.income ?? 0), expenses: Number(row.expenses ?? 0) },
+      ]),
+    )
+
+    const now = new Date()
+    return Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1)
+      const key = d.toISOString().slice(0, 7)
+      const monthData = rowsByMonth.get(key) ?? { income: 0, expenses: 0 }
+      return {
+        month: d.toLocaleDateString('en-SG', { month: 'short' }),
+        income: monthData.income,
+        expenses: monthData.expenses,
+      }
+    })
+  }, [breakdownTxns])
+
   const assetAllocationData = useMemo<AssetAllocationDataPoint[]>(() => {
     const groups: Record<string, number> = {}
     for (const ab of assetBalances) {
@@ -506,16 +569,7 @@ export default function DashboardPage() {
     return Object.entries(groups).map(([label, value]) => ({ label, value }))
   }, [assetBalances])
 
-  const accountOptions = useMemo(() => accounts.map((a) => ({ value: a.id, label: a.nickname ?? a.product_name })), [accounts])
-  const categoryOptions = useMemo(() => categories.map((c) => ({ value: String(c.id), label: c.name })), [categories])
-  const groupOptions = useMemo(() => {
-    const uniq = new Set<string>()
-    return categories.filter((c) => c.group_id != null).map((c) => ({ value: String(c.group_id), label: `Group ${c.group_id}` })).filter((o) => !uniq.has(o.value) && !!uniq.add(o.value))
-  }, [categories])
-  const subgroupOptions = useMemo(() => {
-    const uniq = new Set<string>()
-    return categories.filter((c) => c.subgroup_id != null).filter((c) => filters.groupId === 'all' || String(c.group_id) === filters.groupId).map((c) => ({ value: String(c.subgroup_id), label: `Subgroup ${c.subgroup_id}` })).filter((o) => !uniq.has(o.value) && !!uniq.add(o.value))
-  }, [categories, filters.groupId])
+  const activeAccounts = dashboardSummary?.active_accounts ?? accounts.filter((a) => a.is_active).length
 
   if (loading) return <div className="flex h-[60vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
 
@@ -570,13 +624,41 @@ export default function DashboardPage() {
               {recentTxns.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No transactions yet</p> : <div className="space-y-1">{recentTxns.map((txn) => {
                 const category = txn.category_id != null ? categoryMap.get(txn.category_id) : undefined
                 const isCredit = txn.txn_type === 'credit'
-                const merchantName = txn.merchant_normalized ?? txn.merchant_raw ?? txn.description ?? 'Unknown'
-                return <div key={txn.id} className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/50"><div className="min-w-0"><p className="font-medium truncate">{merchantName}</p><p className="text-xs text-muted-foreground"><CategoryBadge {...(category ?? {})} name={category?.name ?? null} fallbackLabel="Uncategorized" className="h-5 px-1.5 text-[11px]" /> · {formatDateShort(txn.txn_date)}</p></div><span className={cn('shrink-0 font-medium tabular-nums', isCredit ? 'text-emerald-500' : 'text-foreground')}>{isCredit ? '+' : '-'}{formatCurrency(Math.abs(txn.amount))}</span></div>
-              })}</div>}
-            </CardContent>
-          </Card>
-        </>
-      )}
+                const merchantName =
+                  txn.merchant_normalized ??
+                  txn.merchant_raw ??
+                  txn.description ??
+                  'Unknown'
+                return (
+                  <div
+                    key={txn.id}
+                    className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/50"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{merchantName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        <CategoryBadge {...(category ?? {})} name={category?.name ?? null} fallbackLabel="Uncategorized" className="h-5 px-1.5 text-[11px]" /> ·{' '}
+                        {formatDateShort(txn.txn_date)}
+                      </p>
+                    </div>
+                    <span
+                      className={cn(
+                        'shrink-0 font-medium tabular-nums',
+                        isCredit ? 'text-emerald-500' : 'text-foreground',
+                      )}
+                    >
+                      {isCredit ? '+' : '-'}
+                      {formatCurrency(Math.abs(txn.amount))}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <AccountPortfolioSection />
     </div>
   )
 }
