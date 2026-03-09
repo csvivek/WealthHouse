@@ -365,7 +365,7 @@ export async function routeParsedTransactions(params: {
 }) {
   const { data: availableCategoriesData } = await params.supabase
     .from('categories')
-    .select('id, name, type, group_name')
+    .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system')
     .order('id', { ascending: true })
 
   const availableCategories = (availableCategoriesData as AvailableCategory[] | null) ?? []

@@ -111,7 +111,7 @@ export default function TransactionsPage() {
           .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, description, category_id, account_id, confidence')
           .in('account_id', accountIds)
           .order('txn_date', { ascending: false }),
-        supabase.from('categories').select('id, name, group_name'),
+        supabase.from('categories').select('id, name, group_name, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system'),
       ])
 
       setTransactions((txnRes.data as StatementTxn[]) ?? [])

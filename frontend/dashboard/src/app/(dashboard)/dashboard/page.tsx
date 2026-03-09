@@ -429,7 +429,7 @@ export default function DashboardPage() {
           .from('statement_transactions')
           .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
           .in('account_id', accountIds),
-        supabase.from('categories').select('id, name, group_name'),
+        supabase.from('categories').select('id, name, group_name, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system'),
         supabase
           .from('cards')
           .select('id, account_id, card_name, total_outstanding')
