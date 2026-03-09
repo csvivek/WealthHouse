@@ -60,6 +60,7 @@ export async function GET(
         .order('row_index', { ascending: true }),
       supabase
         .from('categories')
+        .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system')
         .select('id, name, type, group_name, group_id, subgroup_id')
         .order('type', { ascending: true })
         .order('group_name', { ascending: true })

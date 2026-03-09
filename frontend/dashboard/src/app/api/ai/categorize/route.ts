@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch available categories
-    const { data: categories } = await supabase.from('categories').select('id, name')
+    const { data: categories } = await supabase.from('categories').select('id, name, icon_key, color_token, color_hex')
 
     const result = await categorizeTransaction(
       merchantName,

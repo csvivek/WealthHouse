@@ -1288,6 +1288,20 @@ export type Database = {
           created_at: string
           type: Database['public']['Enums']['category_type'] | null
           group_name: string | null
+          domain_type: Database['public']['Enums']['category_domain_type']
+          payment_subtype: Database['public']['Enums']['category_payment_subtype'] | null
+          icon_key: string
+          color_token: string
+          color_hex: string | null
+          is_active: boolean
+          is_archived: boolean
+          is_system: boolean
+          description: string | null
+          display_order: number | null
+          parent_category_id: number | null
+          merged_into_category_id: number | null
+          created_by: string | null
+          updated_by: string | null
           group_id: number | null
           subgroup_id: number | null
         }
@@ -1297,6 +1311,20 @@ export type Database = {
           created_at?: string
           type?: Database['public']['Enums']['category_type'] | null
           group_name?: string | null
+          domain_type?: Database['public']['Enums']['category_domain_type']
+          payment_subtype?: Database['public']['Enums']['category_payment_subtype'] | null
+          icon_key?: string
+          color_token?: string
+          color_hex?: string | null
+          is_active?: boolean
+          is_archived?: boolean
+          is_system?: boolean
+          description?: string | null
+          display_order?: number | null
+          parent_category_id?: number | null
+          merged_into_category_id?: number | null
+          created_by?: string | null
+          updated_by?: string | null
           group_id?: number | null
           subgroup_id?: number | null
         }
@@ -1306,6 +1334,20 @@ export type Database = {
           created_at?: string
           type?: Database['public']['Enums']['category_type'] | null
           group_name?: string | null
+          domain_type?: Database['public']['Enums']['category_domain_type']
+          payment_subtype?: Database['public']['Enums']['category_payment_subtype'] | null
+          icon_key?: string
+          color_token?: string
+          color_hex?: string | null
+          is_active?: boolean
+          is_archived?: boolean
+          is_system?: boolean
+          description?: string | null
+          display_order?: number | null
+          parent_category_id?: number | null
+          merged_into_category_id?: number | null
+          created_by?: string | null
+          updated_by?: string | null
           group_id?: number | null
           subgroup_id?: number | null
         }
@@ -1351,7 +1393,36 @@ export type Database = {
           sort_order?: number
           created_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: 'categories_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'categories_merged_into_category_id_fkey'
+            columns: ['merged_into_category_id']
+            isOneToOne: false
+            referencedRelation: 'categories'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'categories_parent_category_id_fkey'
+            columns: ['parent_category_id']
+            isOneToOne: false
+            referencedRelation: 'categories'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'categories_updated_by_fkey'
+            columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
       }
       category_subgroups: {
         Row: {
@@ -2125,6 +2196,8 @@ export type Database = {
       ledger_status: 'active' | 'voided' | 'pending'
       receipt_status: 'pending_confirm' | 'confirmed' | 'rejected' | 'duplicate'
       category_type: 'income' | 'expense' | 'transfer'
+      category_domain_type: 'receipt' | 'payment'
+      category_payment_subtype: 'expense' | 'transfer' | 'income'
       advance_status: 'pending' | 'partial' | 'settled' | 'written_off'
       match_type: 'exact' | 'fuzzy' | 'manual'
       mapping_status: 'needs_review' | 'confirmed' | 'rejected'

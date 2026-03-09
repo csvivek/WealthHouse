@@ -236,6 +236,7 @@ export async function resolveCategorySelectionForSave(
 
     const { data: existingCategory, error: existingCategoryError } = await serviceSupabase
       .from('categories')
+      .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system, created_at')
       .select('id, name, type, group_name, group_id, subgroup_id, created_at')
       .ilike('name', normalizedNewCategoryName)
       .eq('type', newCategoryType)
@@ -258,6 +259,7 @@ export async function resolveCategorySelectionForSave(
         group_name: normalizedGroupName,
         group_id: resolvedGroupId,
       })
+      .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system, created_at')
       .select('id, name, type, group_name, group_id, subgroup_id, created_at')
       .single()
 
@@ -278,6 +280,7 @@ export async function resolveCategorySelectionForSave(
 
   const { data: category, error: categoryError } = await serviceSupabase
     .from('categories')
+    .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system, created_at')
     .select('id, name, type, group_name, group_id, subgroup_id, created_at')
     .eq('id', categoryId)
     .single()
@@ -313,7 +316,7 @@ export async function resolveCategorySelectionForPreview(
     const previewType: CategoryType = direction === 'credit' ? 'income' : 'expense'
     const { data: existingCategory, error: existingCategoryError } = await serviceSupabase
       .from('categories')
-      .select('id, name, type, group_name, created_at')
+      .select('id, name, type, group_name, domain_type, payment_subtype, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system, created_at')
       .ilike('name', normalizedNewCategoryName)
       .eq('type', previewType)
       .limit(1)
