@@ -5,6 +5,7 @@ import type { AvailableCategory } from '@/lib/knowledge/categories'
 import { normalizeMerchantName } from '@/lib/knowledge/merchant-categories'
 import { resolveMerchantCategory, type MerchantIntelligenceResult } from '@/lib/knowledge/merchant-intelligence'
 import { normalizeAccountType } from '@/lib/server/accounts'
+import { refreshLinkSuggestionsForImport } from '@/lib/statement-linking'
 
 export interface AccountInstitution {
   name: string
@@ -670,6 +671,13 @@ export async function stageRoutedTransactions(params: {
 
       throw new Error('Failed to stage parsed transactions')
     }
+
+    await refreshLinkSuggestionsForImport({
+      supabase: params.supabase,
+      fileImportId: fileImport.id,
+      householdId: params.householdId,
+      actorUserId: params.userId,
+    })
   }
 
   const uniqueMatchedAccounts = Array.from(

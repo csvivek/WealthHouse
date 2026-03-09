@@ -8,6 +8,7 @@ import {
   buildPropagationPreview,
   resolveCategorySelectionForSave,
 } from '@/lib/server/statement-propagation'
+import { refreshLinkSuggestionsForImport } from '@/lib/statement-linking'
 
 type FileImportUpdate = Database['public']['Tables']['file_imports']['Update']
 type ImportStagingRow = Database['public']['Tables']['import_staging']['Row']
@@ -178,6 +179,8 @@ export async function PATCH(
     const skippedTargets: Array<{ rowId: string; reason: string }> = []
     let resolvedCategory: CategoryRow | null | undefined = undefined
 
+    let shouldRefreshLinks = false
+
     if (bulkRowIds.length > 0 && bulkStatus) {
       const bulkUpdate: ImportStagingUpdate = {
         review_status: bulkStatus,
@@ -233,6 +236,10 @@ export async function PATCH(
           newCategoryGroupName,
           ...stagingFieldUpdates
         } = update.fields
+        const linkSensitiveFields = ['txn_date', 'posting_date', 'amount', 'txn_type', 'reference', 'merchant_raw', 'description']
+        if (Object.keys(stagingFieldUpdates).some((field) => linkSensitiveFields.includes(field))) {
+          shouldRefreshLinks = true
+        }
         Object.assign(updateData, stagingFieldUpdates)
         updateData.is_edited = true
 
@@ -438,6 +445,15 @@ export async function PATCH(
 
     if (updates.length > 0) {
       await updateFileImportCounters(supabase, importId)
+    }
+
+    if (shouldRefreshLinks) {
+      await refreshLinkSuggestionsForImport({
+        supabase: serviceSupabase,
+        fileImportId: importId,
+        householdId: profile.household_id,
+        actorUserId: user.id,
+      })
     }
 
     return NextResponse.json({

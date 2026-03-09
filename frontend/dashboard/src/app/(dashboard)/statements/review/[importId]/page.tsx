@@ -55,6 +55,7 @@ import {
 import { formatCurrency, formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
 import { CategoryBadge } from '@/components/category-badge'
 import { CategoryIcon } from '@/components/category-icon'
@@ -73,6 +74,20 @@ interface ImportMeta {
   hasCommittedVersion: boolean
   isRevision: boolean
   canReopen: boolean
+}
+
+interface StagingLink {
+  id: string
+  fromStagingId: string
+  toStagingId: string | null
+  toTransactionId: string | null
+  linkType: string
+  linkScore: number
+  linkReason: Record<string, unknown>
+  status: 'needs_review' | 'confirmed' | 'rejected'
+  matchedBy: string
+  reviewedBy: string | null
+  reviewedAt: string | null
 }
 
 interface StagingRow {
@@ -108,6 +123,7 @@ interface StagingRow {
   similarMerchantCount: number
   similarMerchantExamples: string[]
   searchSummary: string | null
+  links: StagingLink[]
 }
 
 interface ReviewCategory {
@@ -318,6 +334,7 @@ export default function ReviewPage() {
   const [bulkCategoryValue, setBulkCategoryValue] = useState<string>('')
   const [propagationDialog, setPropagationDialog] = useState<PendingPropagationDialog | null>(null)
   const [selectedPropagationIds, setSelectedPropagationIds] = useState<Set<string>>(new Set())
+  const [linkSheetRowId, setLinkSheetRowId] = useState<string | null>(null)
 
   const [actionLoading, setActionLoading] = useState(false)
   const [commitLoading, setCommitLoading] = useState(false)
@@ -772,6 +789,27 @@ export default function ReviewPage() {
   }
 
 
+
+  async function updateLinkStatus(linkIds: string[], action: 'approve' | 'reject') {
+    if (linkIds.length === 0) return
+    try {
+      const res = await fetch(`/api/ai/statement/${importId}/links`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, linkIds }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        toast.error(data.error || 'Failed to update link status')
+        return
+      }
+      toast.success(action === 'approve' ? 'Link approved' : 'Link rejected')
+      await fetchReviewData()
+    } catch {
+      toast.error('Failed to update link status')
+    }
+  }
+
   async function handleCommit() {
     if (stats.approved === 0) {
       toast.error('No approved rows to commit')
@@ -1200,6 +1238,7 @@ You can leave this page while the commit continues.`,
                 <TableHead>Type</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Link Status</TableHead>
                 <TableHead>Flags</TableHead>
                 {!isReadOnly && <TableHead className="w-24">Actions</TableHead>}
               </TableRow>
@@ -1527,7 +1566,7 @@ You can leave this page while the commit continues.`,
               })}
               {filteredRows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={isReadOnly ? 9 : 10} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={isReadOnly ? 10 : 11} className="py-8 text-center text-muted-foreground">
                     No rows match the current filter.
                   </TableCell>
                 </TableRow>
@@ -1556,6 +1595,38 @@ You can leave this page while the commit continues.`,
           </CardContent>
         </Card>
       )}
+
+      <Sheet open={Boolean(linkSheetRowId)} onOpenChange={(open) => { if (!open) setLinkSheetRowId(null) }}>
+        <SheetContent className="w-[540px] sm:max-w-[540px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Link Suggestions</SheetTitle>
+            <SheetDescription>Approve or reject staged internal transaction links.</SheetDescription>
+          </SheetHeader>
+          {(() => {
+            const row = rows.find((item) => item.id === linkSheetRowId)
+            if (!row) return <p className="mt-4 text-sm text-muted-foreground">No row selected.</p>
+            if (!row.links?.length) return <p className="mt-4 text-sm text-muted-foreground">No suggestions available.</p>
+            return (
+              <div className="mt-4 space-y-3">
+                {row.links.map((link) => (
+                  <div key={link.id} className="rounded-md border p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Badge>{link.linkType}</Badge>
+                      <span className="text-xs text-muted-foreground">score {link.linkScore.toFixed(2)}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">target: {link.toStagingId ?? link.toTransactionId ?? 'n/a'}</div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" onClick={() => void updateLinkStatus([link.id], 'approve')}>Approve</Button>
+                      <Button size="sm" variant="outline" onClick={() => void updateLinkStatus([link.id], 'reject')}>Reject</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
+        </SheetContent>
+      </Sheet>
+
     </div>
   )
 }
