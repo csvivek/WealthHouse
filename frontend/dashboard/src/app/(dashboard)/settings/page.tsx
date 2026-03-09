@@ -38,6 +38,36 @@ interface HouseholdProfile {
   email?: string | null
 }
 
+interface CategoryGroup {
+  id: number
+  name: string
+  domain: string | null
+  subtype: string | null
+}
+
+interface CategorySubgroup {
+  id: number
+  group_id: number
+  name: string
+  domain: string | null
+  subtype: string | null
+}
+
+interface TaxonomyCategory {
+  id: number
+  name: string
+  type: string | null
+  group_id: number | null
+  subgroup_id: number | null
+}
+
+interface TaxonomyHierarchyRow {
+  domain: string | null
+  group_name: string | null
+  subgroup_name: string | null
+  category_name: string
+}
+
 export default function SettingsPage() {
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
@@ -61,6 +91,28 @@ export default function SettingsPage() {
   const [editRole, setEditRole] = useState<HouseholdRole>('member')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [savingMember, setSavingMember] = useState(false)
+  const [groups, setGroups] = useState<CategoryGroup[]>([])
+  const [subgroups, setSubgroups] = useState<CategorySubgroup[]>([])
+  const [managedCategories, setManagedCategories] = useState<TaxonomyCategory[]>([])
+  const [hierarchyRows, setHierarchyRows] = useState<TaxonomyHierarchyRow[]>([])
+  const [groupTotals, setGroupTotals] = useState<Array<{ group_name: string; transaction_total: number }>>([])
+  const [subgroupTotals, setSubgroupTotals] = useState<Array<{ group_name: string; subgroup_name: string; transaction_total: number }>>([])
+
+  const [newGroupName, setNewGroupName] = useState('')
+  const [newSubgroupName, setNewSubgroupName] = useState('')
+  const [newSubgroupGroupId, setNewSubgroupGroupId] = useState('')
+
+  const fetchTaxonomy = async () => {
+    const res = await fetch('/api/categories/taxonomy')
+    if (!res.ok) return
+    const payload = await res.json()
+    setGroups(payload.groups ?? [])
+    setSubgroups(payload.subgroups ?? [])
+    setManagedCategories(payload.categories ?? [])
+    setHierarchyRows(payload.hierarchy ?? [])
+    setGroupTotals(payload.rollups?.groupTotals ?? [])
+    setSubgroupTotals(payload.rollups?.subgroupTotals ?? [])
+  }
 
   // move outside so we can call it again after saving
   const fetchProfile = async () => {
@@ -99,6 +151,8 @@ export default function SettingsPage() {
         const j = await res2.json()
         setHousehold((j.profiles || []) as HouseholdProfile[])
       }
+
+      await fetchTaxonomy()
     }
 
     setLoading(false)
@@ -207,7 +261,146 @@ export default function SettingsPage() {
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
+          <TabsTrigger value="taxonomy">Taxonomy</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="taxonomy" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Category Management</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Tabs defaultValue="categories" className="space-y-4">
+                <TabsList>
+                  <TabsTrigger value="categories">Categories</TabsTrigger>
+                  <TabsTrigger value="groups">Groups</TabsTrigger>
+                  <TabsTrigger value="subgroups">Subgroups</TabsTrigger>
+                  <TabsTrigger value="hierarchy">Hierarchy</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="categories">
+                  <div className="text-sm text-muted-foreground mb-2">{managedCategories.length} categories mapped into reporting taxonomy.</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="py-2 pr-3">Category</th>
+                          <th className="py-2 pr-3">Type</th>
+                          <th className="py-2">Group/Subgroup</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {managedCategories.map((category) => {
+                          const group = groups.find((groupItem) => groupItem.id === category.group_id)
+                          const subgroup = subgroups.find((subgroupItem) => subgroupItem.id === category.subgroup_id)
+                          return (
+                            <tr key={category.id} className="border-b last:border-0">
+                              <td className="py-2 pr-3">{category.name}</td>
+                              <td className="py-2 pr-3">{category.type ?? 'expense'}</td>
+                              <td className="py-2">{group?.name ?? '—'} / {subgroup?.name ?? '—'}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="groups" className="space-y-3">
+                  <div className="flex gap-2">
+                    <Input placeholder="New group name" value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} />
+                    <Button
+                      onClick={async () => {
+                        const res = await fetch('/api/categories/taxonomy', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ entityType: 'group', name: newGroupName }),
+                        })
+                        if (res.ok) {
+                          setNewGroupName('')
+                          await fetchTaxonomy()
+                        }
+                      }}
+                    >
+                      Add Group
+                    </Button>
+                  </div>
+                  <ul className="space-y-2 text-sm">
+                    {groups.map((group) => (
+                      <li key={group.id} className="border rounded-md px-3 py-2 flex items-center justify-between">
+                        <span>{group.name}</span>
+                        <Badge variant="outline">{groupTotals.find((row) => row.group_name === group.name)?.transaction_total ?? 0}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                </TabsContent>
+
+                <TabsContent value="subgroups" className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <Input placeholder="New subgroup name" value={newSubgroupName} onChange={(event) => setNewSubgroupName(event.target.value)} />
+                    <Select value={newSubgroupGroupId} onValueChange={setNewSubgroupGroupId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Parent group" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {groups.map((group) => <SelectItem key={group.id} value={String(group.id)}>{group.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      onClick={async () => {
+                        if (!newSubgroupGroupId) return
+                        const res = await fetch('/api/categories/taxonomy', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ entityType: 'subgroup', name: newSubgroupName, groupId: Number(newSubgroupGroupId) }),
+                        })
+                        if (res.ok) {
+                          setNewSubgroupName('')
+                          await fetchTaxonomy()
+                        }
+                      }}
+                    >
+                      Add Subgroup
+                    </Button>
+                  </div>
+                  <ul className="space-y-2 text-sm">
+                    {subgroups.map((subgroup) => (
+                      <li key={subgroup.id} className="border rounded-md px-3 py-2 flex items-center justify-between">
+                        <span>{groups.find((group) => group.id === subgroup.group_id)?.name ?? 'Unknown'} / {subgroup.name}</span>
+                        <Badge variant="outline">{subgroupTotals.find((row) => row.subgroup_name === subgroup.name)?.transaction_total ?? 0}</Badge>
+                      </li>
+                    ))}
+                  </ul>
+                </TabsContent>
+
+                <TabsContent value="hierarchy">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="py-2 pr-3">Domain</th>
+                          <th className="py-2 pr-3">Group</th>
+                          <th className="py-2 pr-3">Subgroup</th>
+                          <th className="py-2">Category</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hierarchyRows.map((row, index) => (
+                          <tr key={`${row.category_name}-${index}`} className="border-b last:border-0">
+                            <td className="py-2 pr-3">{row.domain ?? '—'}</td>
+                            <td className="py-2 pr-3">{row.group_name ?? '—'}</td>
+                            <td className="py-2 pr-3">{row.subgroup_name ?? '—'}</td>
+                            <td className="py-2">{row.category_name}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Profile Tab */}
         <TabsContent value="profile">

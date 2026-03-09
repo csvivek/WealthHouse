@@ -7,6 +7,7 @@ import {
   upsertReceiptItemKnowledge,
   upsertReceiptMerchantKnowledge,
 } from '@/lib/receipts/knowledge'
+import { resolveOrCreateReceiptCategory } from '@/lib/server/category-service'
 
 interface ApplySuggestionPayload {
   action?: 'set_field' | 'set_item_category' | 'set_header_category'
@@ -25,15 +26,6 @@ interface HouseholdContext {
   householdId: string
 }
 
-interface CategoryRow {
-  id: string
-  household_id: string | null
-  name: string
-  category_family: string | null
-  sort_order: number
-}
-
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const ALLOWED_HEADER_FIELDS = new Set([
   'merchant_name',
@@ -67,8 +59,8 @@ function normalizeText(value: unknown) {
 }
 
 function categoryByName(categories: CategoryRow[], name: string) {
-  const normalized = name.trim().toLowerCase()
-  return categories.find((category) => category.name.trim().toLowerCase() === normalized) ?? null
+  const normalized = name.trim().toLowerCase().replace(/\s+/g, ' ')
+  return categories.find((category) => category.name.trim().toLowerCase().replace(/\s+/g, ' ') === normalized) ?? null
 }
 
 function categoryById(categories: CategoryRow[], id: string) {
@@ -190,6 +182,7 @@ async function resolveOrCreateCategory(params: {
     }
   }
 
+  // Name matching is migration fallback only for older payloads that do not include IDs.
   if (targetCategoryName) {
     const matchedByName = categoryByName(categories, targetCategoryName)
     if (matchedByName) {
@@ -212,6 +205,7 @@ async function resolveOrCreateCategory(params: {
   }
 
   throw new Error('Category resolution failed: missing category id/name in suggestion payload.')
+  return { ok: true, value: { userId: user.id, householdId: profile.household_id } }
 }
 
 function suggestionKind(suggestion: ApplySuggestionPayload) {
@@ -292,10 +286,12 @@ export async function POST(
         return NextResponse.json({ error: 'itemId is required for item category updates' }, { status: 400 })
       }
 
-      const { category, created, categories } = await resolveOrCreateCategory({
+      const { category, created, categories } = await resolveOrCreateReceiptCategory({
         db,
         householdId: ctx.value.householdId,
-        suggestion,
+        targetCategoryId: suggestion.targetCategoryId,
+        targetCategoryName: suggestion.targetCategoryName || (typeof suggestion.value === 'string' ? suggestion.value : null),
+        createIfMissing: suggestion.createCategoryIfMissing,
       })
 
       const { data: stagingItem, error: stagingItemError } = await db
@@ -376,10 +372,12 @@ export async function POST(
     }
 
     if (kind === 'set_header_category') {
-      const { category, created, categories } = await resolveOrCreateCategory({
+      const { category, created, categories } = await resolveOrCreateReceiptCategory({
         db,
         householdId: ctx.value.householdId,
-        suggestion,
+        targetCategoryId: suggestion.targetCategoryId,
+        targetCategoryName: suggestion.targetCategoryName || (typeof suggestion.value === 'string' ? suggestion.value : null),
+        createIfMissing: suggestion.createCategoryIfMissing,
       })
 
       const nowIso = new Date().toISOString()

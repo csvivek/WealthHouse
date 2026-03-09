@@ -24,6 +24,7 @@ import {
   formatCurrencyCompact,
   formatDateShort,
 } from '@/lib/format'
+import { CategoryBadge } from '@/components/category-badge'
 
 /* ------------------------------------------------------------------ */
 /*  Interfaces matching the actual database schema                     */
@@ -54,7 +55,11 @@ interface StatementTransaction {
 interface Category {
   id: number
   name: string
-  group_name: string | null
+  icon_key: string | null
+  color_token: string | null
+  color_hex: string | null
+  domain_type: string | null
+  payment_subtype: string | null
 }
 
 interface CardRow {
@@ -430,6 +435,7 @@ export default function DashboardPage() {
           .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
           .in('account_id', accountIds),
         supabase.from('categories').select('id, name, group_name, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system'),
+        supabase.from('categories').select('id, name, icon_key, color_token, color_hex, domain_type, payment_subtype'),
         supabase
           .from('cards')
           .select('id, account_id, card_name, total_outstanding')
@@ -625,7 +631,7 @@ export default function DashboardPage() {
                     <div className="min-w-0">
                       <p className="font-medium truncate">{merchantName}</p>
                       <p className="text-xs text-muted-foreground">
-                        {category?.name ?? 'Uncategorized'} ·{' '}
+                        <CategoryBadge {...(category ?? {})} name={category?.name ?? null} fallbackLabel="Uncategorized" className="h-5 px-1.5 text-[11px]" /> ·{' '}
                         {formatDateShort(txn.txn_date)}
                       </p>
                     </div>

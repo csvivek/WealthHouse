@@ -15,6 +15,7 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { CategoryBadge } from '@/components/category-badge'
 
 function getDaysAgo(days: number) {
   const d = new Date()
@@ -60,7 +61,11 @@ interface StatementTxn {
 interface Category {
   id: number
   name: string
-  group_name: string | null
+  icon_key: string | null
+  color_token: string | null
+  color_hex: string | null
+  domain_type: string | null
+  payment_subtype: string | null
 }
 
 interface AccountInfo {
@@ -112,6 +117,7 @@ export default function TransactionsPage() {
           .in('account_id', accountIds)
           .order('txn_date', { ascending: false }),
         supabase.from('categories').select('id, name, group_name, icon_key, color_token, color_hex, display_order, is_active, is_archived, is_system'),
+        supabase.from('categories').select('id, name, icon_key, color_token, color_hex, domain_type, payment_subtype'),
       ])
 
       setTransactions((txnRes.data as StatementTxn[]) ?? [])
@@ -175,7 +181,9 @@ export default function TransactionsPage() {
           <SelectContent>
             <SelectItem value="all">All Categories</SelectItem>
             {categories.map(cat => (
-              <SelectItem key={cat.id} value={String(cat.id)}>{cat.name}</SelectItem>
+              <SelectItem key={cat.id} value={String(cat.id)}>
+                {cat.name}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -233,7 +241,9 @@ export default function TransactionsPage() {
                         {formatDate(txn.txn_date)}
                       </td>
                       <td className="py-3 pr-4 font-medium">{merchantName}</td>
-                      <td className="py-3 pr-4">{category?.name ?? '—'}</td>
+                      <td className="py-3 pr-4">
+                        {category ? <CategoryBadge {...category} /> : '—'}
+                      </td>
                       <td className="py-3 pr-4 text-muted-foreground">
                         {account?.nickname ?? account?.product_name ?? '—'}
                       </td>

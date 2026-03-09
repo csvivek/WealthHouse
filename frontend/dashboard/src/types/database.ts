@@ -1302,6 +1302,8 @@ export type Database = {
           merged_into_category_id: number | null
           created_by: string | null
           updated_by: string | null
+          group_id: number | null
+          subgroup_id: number | null
         }
         Insert: {
           id?: number
@@ -1323,6 +1325,8 @@ export type Database = {
           merged_into_category_id?: number | null
           created_by?: string | null
           updated_by?: string | null
+          group_id?: number | null
+          subgroup_id?: number | null
         }
         Update: {
           id?: number
@@ -1344,6 +1348,50 @@ export type Database = {
           merged_into_category_id?: number | null
           created_by?: string | null
           updated_by?: string | null
+          group_id?: number | null
+          subgroup_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'categories_group_id_fkey'
+            columns: ['group_id']
+            isOneToOne: false
+            referencedRelation: 'category_groups'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'categories_subgroup_id_fkey'
+            columns: ['subgroup_id']
+            isOneToOne: false
+            referencedRelation: 'category_subgroups'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      category_groups: {
+        Row: {
+          id: number
+          name: string
+          domain: string | null
+          subtype: string | null
+          sort_order: number
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          name: string
+          domain?: string | null
+          subtype?: string | null
+          sort_order?: number
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          name?: string
+          domain?: string | null
+          subtype?: string | null
+          sort_order?: number
+          created_at?: string
         }
         Relationships: [
           {
@@ -1372,6 +1420,44 @@ export type Database = {
             columns: ['updated_by']
             isOneToOne: false
             referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      category_subgroups: {
+        Row: {
+          id: number
+          group_id: number
+          name: string
+          domain: string | null
+          subtype: string | null
+          sort_order: number
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          group_id: number
+          name: string
+          domain?: string | null
+          subtype?: string | null
+          sort_order?: number
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          group_id?: number
+          name?: string
+          domain?: string | null
+          subtype?: string | null
+          sort_order?: number
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'category_subgroups_group_id_fkey'
+            columns: ['group_id']
+            isOneToOne: false
+            referencedRelation: 'category_groups'
             referencedColumns: ['id']
           },
         ]
@@ -2035,7 +2121,56 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      v_category_group_child_counts: {
+        Row: {
+          group_id: number | null
+          group_name: string | null
+          subgroup_count: number | null
+          category_count: number | null
+        }
+      }
+      v_category_group_transaction_totals: {
+        Row: {
+          group_id: number | null
+          group_name: string | null
+          domain: string | null
+          subtype: string | null
+          transaction_count: number | null
+          transaction_total: number | null
+        }
+      }
+      v_category_subgroup_child_counts: {
+        Row: {
+          subgroup_id: number | null
+          group_id: number | null
+          subgroup_name: string | null
+          category_count: number | null
+        }
+      }
+      v_category_subgroup_transaction_totals: {
+        Row: {
+          subgroup_id: number | null
+          group_id: number | null
+          group_name: string | null
+          subgroup_name: string | null
+          domain: string | null
+          subtype: string | null
+          transaction_count: number | null
+          transaction_total: number | null
+        }
+      }
+      v_category_taxonomy_hierarchy: {
+        Row: {
+          domain: string | null
+          group_id: number | null
+          group_name: string | null
+          subgroup_id: number | null
+          subgroup_name: string | null
+          category_id: number | null
+          category_name: string | null
+          category_type: Database['public']['Enums']['category_type'] | null
+        }
+      }
     }
     Functions: {
       ensure_user_profile: {
