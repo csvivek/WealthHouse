@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
+import { resolveOrCreatePaymentCategory } from '@/lib/server/category-service'
 
 type CategoryType = Database['public']['Enums']['category_type']
 type ImportStagingRow = Database['public']['Tables']['import_staging']['Row']
@@ -189,65 +190,16 @@ export async function resolveCategorySelectionForSave(
   newCategoryGroupName: string | null | undefined,
   txnType: string,
 ) {
-  const normalizedNewCategoryName = normalizeCategoryName(newCategoryName)
-  const normalizedGroupName = normalizeCategoryName(newCategoryGroupName)
   const direction = normalizeTxnDirection(txnType)
+  const category = await resolveOrCreatePaymentCategory({
+    db: serviceSupabase,
+    categoryId,
+    newCategoryName,
+    groupName: newCategoryGroupName,
+    txnType,
+  })
 
-  if (normalizedNewCategoryName) {
-    const newCategoryType: CategoryType = direction === 'credit' ? 'income' : 'expense'
-
-    const { data: existingCategory, error: existingCategoryError } = await serviceSupabase
-      .from('categories')
-      .select('id, name, type, group_name, created_at')
-      .ilike('name', normalizedNewCategoryName)
-      .eq('type', newCategoryType)
-      .limit(1)
-      .maybeSingle()
-
-    if (existingCategoryError) {
-      throw existingCategoryError
-    }
-
-    if (existingCategory) {
-      return existingCategory
-    }
-
-    const { data: createdCategory, error: createCategoryError } = await serviceSupabase
-      .from('categories')
-      .insert({
-        name: normalizedNewCategoryName,
-        type: newCategoryType,
-        group_name: normalizedGroupName,
-      })
-      .select('id, name, type, group_name, created_at')
-      .single()
-
-    if (createCategoryError || !createdCategory) {
-      throw createCategoryError ?? new Error('Failed to create category')
-    }
-
-    return createdCategory
-  }
-
-  if (categoryId === undefined) {
-    return undefined
-  }
-
-  if (categoryId === null) {
-    return null
-  }
-
-  const { data: category, error: categoryError } = await serviceSupabase
-    .from('categories')
-    .select('id, name, type, group_name, created_at')
-    .eq('id', categoryId)
-    .single()
-
-  if (categoryError || !category) {
-    throw categoryError ?? new Error('Selected category was not found')
-  }
-
-  if (!isCategoryCompatible(txnType, category.type)) {
+  if (category && !isCategoryCompatible(txnType, category.type)) {
     throw new Error(
       direction === 'credit'
         ? 'Credit transactions can only use income or transfer categories.'
@@ -271,7 +223,6 @@ export async function resolveCategorySelectionForPreview(
 
   if (normalizedNewCategoryName) {
     const previewType: CategoryType = direction === 'credit' ? 'income' : 'expense'
-
     const { data: existingCategory, error: existingCategoryError } = await serviceSupabase
       .from('categories')
       .select('id, name, type, group_name, created_at')
@@ -296,11 +247,5 @@ export async function resolveCategorySelectionForPreview(
     }
   }
 
-  return resolveCategorySelectionForSave(
-    serviceSupabase,
-    categoryId,
-    null,
-    null,
-    txnType,
-  )
+  return resolveCategorySelectionForSave(serviceSupabase, categoryId, null, null, txnType)
 }
