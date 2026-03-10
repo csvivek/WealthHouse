@@ -1,5 +1,572 @@
 {
   "schemaVersion": "1.0.0",
-  "lastUpdatedAt": "1970-01-01T00:00:00.000Z",
-  "bugs": []
+  "lastUpdatedAt": "2026-03-10T00:34:13.160Z",
+  "bugs": [
+    {
+      "id": "BUG-0001",
+      "title": "Marker detected in agents/documentation-agent/README.md",
+      "status": "Under Investigation",
+      "severity": "medium",
+      "description": "- `bug-registry.json` (canonical)",
+      "reproductionNotes": "Inspect merged patch context and execute impacted flow.",
+      "owner": null,
+      "relatedPRs": [
+        27
+      ],
+      "relatedIssues": [],
+      "relatedCommits": [
+        "ecb7c8add3b82473a5e6bd7e273cfdcb9762e172",
+        "00758a319d9bd6080283cd26fb15884304d16f82",
+        "5f37465d963f536105fb9aaf65b3a2b56e39a726",
+        "b3bdf8791148e126ecdcc98c408da08716de6c89",
+        "5f3a1eb6eb6dccf6097cf73e628d032f459fc252",
+        "62c902f7cf9fa2bd14dff9086171366902a96a33",
+        "bcd7fdb1fe04c6447198be990e210915e313523f",
+        "a83e972389105d632881dbfb9ee039a20787a3a9"
+      ],
+      "affectedFiles": [
+        "agents/documentation-agent/README.md"
+      ],
+      "affectedModules": [],
+      "history": [
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "created",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        }
+      ],
+      "createdAt": "2026-03-10T00:34:13.160Z",
+      "updatedAt": "2026-03-10T00:34:13.160Z",
+      "lastReviewedAt": "2026-03-10T00:34:13.160Z"
+    },
+    {
+      "id": "BUG-0002",
+      "title": "Marker detected in agents/documentation-agent/run.mjs",
+      "status": "Under Investigation",
+      "severity": "medium",
+      "description": "const bugRegistryPath = path.join(docsRoot, 'bug-registry.json')",
+      "reproductionNotes": "Inspect merged patch context and execute impacted flow.",
+      "owner": null,
+      "relatedPRs": [
+        27
+      ],
+      "relatedIssues": [],
+      "relatedCommits": [
+        "ecb7c8add3b82473a5e6bd7e273cfdcb9762e172",
+        "00758a319d9bd6080283cd26fb15884304d16f82",
+        "5f37465d963f536105fb9aaf65b3a2b56e39a726",
+        "b3bdf8791148e126ecdcc98c408da08716de6c89",
+        "5f3a1eb6eb6dccf6097cf73e628d032f459fc252",
+        "62c902f7cf9fa2bd14dff9086171366902a96a33",
+        "bcd7fdb1fe04c6447198be990e210915e313523f",
+        "a83e972389105d632881dbfb9ee039a20787a3a9"
+      ],
+      "affectedFiles": [
+        "agents/documentation-agent/run.mjs"
+      ],
+      "affectedModules": [],
+      "history": [
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "created",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        }
+      ],
+      "createdAt": "2026-03-10T00:34:13.160Z",
+      "updatedAt": "2026-03-10T00:34:13.160Z",
+      "lastReviewedAt": "2026-03-10T00:34:13.160Z"
+    },
+    {
+      "id": "BUG-0003",
+      "title": "Marker detected in agents/documentation-agent/wiki-seed/Bug-Register.md",
+      "status": "Under Investigation",
+      "severity": "medium",
+      "description": "# Bug Register",
+      "reproductionNotes": "Inspect merged patch context and execute impacted flow.",
+      "owner": null,
+      "relatedPRs": [
+        27
+      ],
+      "relatedIssues": [],
+      "relatedCommits": [
+        "ecb7c8add3b82473a5e6bd7e273cfdcb9762e172",
+        "00758a319d9bd6080283cd26fb15884304d16f82",
+        "5f37465d963f536105fb9aaf65b3a2b56e39a726",
+        "b3bdf8791148e126ecdcc98c408da08716de6c89",
+        "5f3a1eb6eb6dccf6097cf73e628d032f459fc252",
+        "62c902f7cf9fa2bd14dff9086171366902a96a33",
+        "bcd7fdb1fe04c6447198be990e210915e313523f",
+        "a83e972389105d632881dbfb9ee039a20787a3a9"
+      ],
+      "affectedFiles": [
+        "agents/documentation-agent/wiki-seed/Bug-Register.md"
+      ],
+      "affectedModules": [],
+      "history": [
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "created",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        },
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "reobserved",
+          "byPr": 27
+        }
+      ],
+      "createdAt": "2026-03-10T00:34:13.160Z",
+      "updatedAt": "2026-03-10T00:34:13.160Z",
+      "lastReviewedAt": "2026-03-10T00:34:13.160Z"
+    },
+    {
+      "id": "BUG-0004",
+      "title": "Marker detected in agents/documentation-agent/wiki-seed/Home.md",
+      "status": "Under Investigation",
+      "severity": "medium",
+      "description": "- [Bug Register](Bug-Register)",
+      "reproductionNotes": "Inspect merged patch context and execute impacted flow.",
+      "owner": null,
+      "relatedPRs": [
+        27
+      ],
+      "relatedIssues": [],
+      "relatedCommits": [
+        "ecb7c8add3b82473a5e6bd7e273cfdcb9762e172",
+        "00758a319d9bd6080283cd26fb15884304d16f82",
+        "5f37465d963f536105fb9aaf65b3a2b56e39a726",
+        "b3bdf8791148e126ecdcc98c408da08716de6c89",
+        "5f3a1eb6eb6dccf6097cf73e628d032f459fc252",
+        "62c902f7cf9fa2bd14dff9086171366902a96a33",
+        "bcd7fdb1fe04c6447198be990e210915e313523f",
+        "a83e972389105d632881dbfb9ee039a20787a3a9"
+      ],
+      "affectedFiles": [
+        "agents/documentation-agent/wiki-seed/Home.md"
+      ],
+      "affectedModules": [],
+      "history": [
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "created",
+          "byPr": 27
+        }
+      ],
+      "createdAt": "2026-03-10T00:34:13.160Z",
+      "updatedAt": "2026-03-10T00:34:13.160Z",
+      "lastReviewedAt": "2026-03-10T00:34:13.160Z"
+    },
+    {
+      "id": "BUG-0005",
+      "title": "Marker detected in docs/review-agent/README.md",
+      "status": "Under Investigation",
+      "severity": "medium",
+      "description": "- `bug-registry.json` is the canonical bug registry.",
+      "reproductionNotes": "Inspect merged patch context and execute impacted flow.",
+      "owner": null,
+      "relatedPRs": [
+        27
+      ],
+      "relatedIssues": [],
+      "relatedCommits": [
+        "ecb7c8add3b82473a5e6bd7e273cfdcb9762e172",
+        "00758a319d9bd6080283cd26fb15884304d16f82",
+        "5f37465d963f536105fb9aaf65b3a2b56e39a726",
+        "b3bdf8791148e126ecdcc98c408da08716de6c89",
+        "5f3a1eb6eb6dccf6097cf73e628d032f459fc252",
+        "62c902f7cf9fa2bd14dff9086171366902a96a33",
+        "bcd7fdb1fe04c6447198be990e210915e313523f",
+        "a83e972389105d632881dbfb9ee039a20787a3a9"
+      ],
+      "affectedFiles": [
+        "docs/review-agent/README.md"
+      ],
+      "affectedModules": [],
+      "history": [
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "created",
+          "byPr": 27
+        }
+      ],
+      "createdAt": "2026-03-10T00:34:13.160Z",
+      "updatedAt": "2026-03-10T00:34:13.160Z",
+      "lastReviewedAt": "2026-03-10T00:34:13.160Z"
+    },
+    {
+      "id": "BUG-0006",
+      "title": "Marker detected in docs/review-agent/SCHEMAS.md",
+      "status": "Under Investigation",
+      "severity": "medium",
+      "description": "- `bug-registry.json`: canonical bug source-of-truth (`bugs[]` keyed by stable `id`).",
+      "reproductionNotes": "Inspect merged patch context and execute impacted flow.",
+      "owner": null,
+      "relatedPRs": [
+        27
+      ],
+      "relatedIssues": [],
+      "relatedCommits": [
+        "ecb7c8add3b82473a5e6bd7e273cfdcb9762e172",
+        "00758a319d9bd6080283cd26fb15884304d16f82",
+        "5f37465d963f536105fb9aaf65b3a2b56e39a726",
+        "b3bdf8791148e126ecdcc98c408da08716de6c89",
+        "5f3a1eb6eb6dccf6097cf73e628d032f459fc252",
+        "62c902f7cf9fa2bd14dff9086171366902a96a33",
+        "bcd7fdb1fe04c6447198be990e210915e313523f",
+        "a83e972389105d632881dbfb9ee039a20787a3a9"
+      ],
+      "affectedFiles": [
+        "docs/review-agent/SCHEMAS.md"
+      ],
+      "affectedModules": [],
+      "history": [
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "created",
+          "byPr": 27
+        }
+      ],
+      "createdAt": "2026-03-10T00:34:13.160Z",
+      "updatedAt": "2026-03-10T00:34:13.160Z",
+      "lastReviewedAt": "2026-03-10T00:34:13.160Z"
+    },
+    {
+      "id": "BUG-0007",
+      "title": "Marker detected in docs/review-agent/bug-registry.json",
+      "status": "Under Investigation",
+      "severity": "medium",
+      "description": "\"bugs\": []",
+      "reproductionNotes": "Inspect merged patch context and execute impacted flow.",
+      "owner": null,
+      "relatedPRs": [
+        27
+      ],
+      "relatedIssues": [],
+      "relatedCommits": [
+        "ecb7c8add3b82473a5e6bd7e273cfdcb9762e172",
+        "00758a319d9bd6080283cd26fb15884304d16f82",
+        "5f37465d963f536105fb9aaf65b3a2b56e39a726",
+        "b3bdf8791148e126ecdcc98c408da08716de6c89",
+        "5f3a1eb6eb6dccf6097cf73e628d032f459fc252",
+        "62c902f7cf9fa2bd14dff9086171366902a96a33",
+        "bcd7fdb1fe04c6447198be990e210915e313523f",
+        "a83e972389105d632881dbfb9ee039a20787a3a9"
+      ],
+      "affectedFiles": [
+        "docs/review-agent/bug-registry.json"
+      ],
+      "affectedModules": [],
+      "history": [
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "created",
+          "byPr": 27
+        }
+      ],
+      "createdAt": "2026-03-10T00:34:13.160Z",
+      "updatedAt": "2026-03-10T00:34:13.160Z",
+      "lastReviewedAt": "2026-03-10T00:34:13.160Z"
+    },
+    {
+      "id": "BUG-0008",
+      "title": "Marker detected in docs/review-agent/schemas/review-agent.schema.json",
+      "status": "Under Investigation",
+      "severity": "medium",
+      "description": "\"Bug\": {",
+      "reproductionNotes": "Inspect merged patch context and execute impacted flow.",
+      "owner": null,
+      "relatedPRs": [
+        27
+      ],
+      "relatedIssues": [],
+      "relatedCommits": [
+        "ecb7c8add3b82473a5e6bd7e273cfdcb9762e172",
+        "00758a319d9bd6080283cd26fb15884304d16f82",
+        "5f37465d963f536105fb9aaf65b3a2b56e39a726",
+        "b3bdf8791148e126ecdcc98c408da08716de6c89",
+        "5f3a1eb6eb6dccf6097cf73e628d032f459fc252",
+        "62c902f7cf9fa2bd14dff9086171366902a96a33",
+        "bcd7fdb1fe04c6447198be990e210915e313523f",
+        "a83e972389105d632881dbfb9ee039a20787a3a9"
+      ],
+      "affectedFiles": [
+        "docs/review-agent/schemas/review-agent.schema.json"
+      ],
+      "affectedModules": [],
+      "history": [
+        {
+          "at": "2026-03-10T00:34:13.160Z",
+          "action": "created",
+          "byPr": 27
+        }
+      ],
+      "createdAt": "2026-03-10T00:34:13.160Z",
+      "updatedAt": "2026-03-10T00:34:13.160Z",
+      "lastReviewedAt": "2026-03-10T00:34:13.160Z"
+    }
+  ]
 }

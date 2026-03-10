@@ -1,0 +1,90 @@
+{
+  "generatedAt": "2026-03-10T00:34:13.448Z",
+  "runId": "22881420966",
+  "trigger": {
+    "pr": 27,
+    "branch": "main"
+  },
+  "updates": {
+    "machineFiles": [
+      "docs/review-agent/bug-registry.json",
+      "docs/review-agent/review-history.json",
+      "docs/review-agent/change-log.json",
+      "docs/review-agent/module-impact-index.json"
+    ],
+    "wikiUpdated": false,
+    "wikiPages": []
+  },
+  "bugs": {
+    "created": [
+      "BUG-0001",
+      "BUG-0002",
+      "BUG-0003",
+      "BUG-0004",
+      "BUG-0005",
+      "BUG-0006",
+      "BUG-0007",
+      "BUG-0008"
+    ],
+    "updated": [
+      "BUG-0001",
+      "BUG-0001",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0002",
+      "BUG-0003",
+      "BUG-0003",
+      "BUG-0003"
+    ],
+    "fixed": []
+  },
+  "warnings": [
+    "Wiki sync warning: Wiki clone failed: Cloning into '/home/runner/work/WealthHouse/WealthHouse/.tmp-wiki'...\nremote: Repository not found.\nfatal: repository 'https://github.com/csvivek/WealthHouse.wiki.git/' not found\n"
+  ]
+}
