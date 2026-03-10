@@ -1,0 +1,32 @@
+{
+  "defaultBranch": "main",
+  "wikiBranch": "master",
+  "severityThresholds": {
+    "highRiskScore": 7,
+    "mediumRiskScore": 4
+  },
+  "paths": {
+    "machineDocsRoot": "docs/review-agent",
+    "auditLogsRoot": "docs/review-agent/audit-logs"
+  },
+  "modulePatterns": {
+    "statements": ["statement", "statements"],
+    "receipts": ["receipt", "receipts"],
+    "category-knowledge": ["category", "categories", "knowledge"],
+    "internal-transfers": ["transfer", "internal-transfer"],
+    "ledger": ["ledger", "journal", "integrity"],
+    "household-profiles": ["household", "profile"],
+    "supabase-migrations": ["supabase/migrations", "migration"]
+  },
+  "riskPatterns": {
+    "duplicate-insert-risk": ["insert", "upsert", "create"],
+    "category-mapping-inconsistency": ["category", "taxonomy", "mapping"],
+    "broken-review-flow": ["review", "approve"],
+    "import-approval-bypass": ["import", "approval", "bypass"],
+    "statement-receipt-reconciliation-drift": ["reconcile", "statement", "receipt"],
+    "supabase-migration-sequencing": ["supabase/migrations", "migration"],
+    "missing-api-validation": ["src/app/api", "route.ts"],
+    "server-client-misuse": ["use client", "server"],
+    "non-atomic-multi-step-writes": ["transaction", "commit", "batch"]
+  }
+}
