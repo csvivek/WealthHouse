@@ -1,0 +1,48 @@
+name: documentation-agent
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: read
+  issues: read
+  actions: read
+
+jobs:
+  post-merge-governance:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run documentation governance agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node agents/documentation-agent/run.mjs
+
+      - name: Commit machine-readable documentation updates
+        run: |
+          git config user.name "wealthhouse-documentation-agent"
+          git config user.email "wealthhouse-documentation-agent@users.noreply.github.com"
+          git add docs/review-agent
+          if ! git diff --cached --quiet; then
+            git commit -m "docs: post-merge governance sync for PR #${{ github.event.pull_request.number }}"
+            git push
+          fi
+
+      - name: Upload audit logs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-agent-audit-pr-${{ github.event.pull_request.number }}
+          path: docs/review-agent/audit-logs/*.json
+          if-no-files-found: warn
