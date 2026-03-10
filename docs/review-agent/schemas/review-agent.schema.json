@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wealthhouse.local/schemas/review-agent.schema.json",
+  "title": "WealthHouse Documentation Agent Machine Data",
+  "type": "object",
+  "definitions": {
+    "Bug": {
+      "type": "object",
+      "required": ["id", "title", "status", "severity", "createdAt", "updatedAt", "relatedPRs", "affectedModules"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "status": {"enum": ["Open", "Under Investigation", "Fix Proposed", "Fixed", "Verified", "Closed"]},
+        "severity": {"enum": ["low", "medium", "high", "critical"]},
+        "description": {"type": "string"},
+        "reproductionNotes": {"type": "string"},
+        "owner": {"type": ["string", "null"]},
+        "relatedPRs": {"type": "array", "items": {"type": "integer"}},
+        "relatedIssues": {"type": "array", "items": {"type": "integer"}},
+        "relatedCommits": {"type": "array", "items": {"type": "string"}},
+        "affectedFiles": {"type": "array", "items": {"type": "string"}},
+        "affectedModules": {"type": "array", "items": {"type": "string"}},
+        "history": {"type": "array", "items": {"type": "object"}},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"},
+        "lastReviewedAt": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}
