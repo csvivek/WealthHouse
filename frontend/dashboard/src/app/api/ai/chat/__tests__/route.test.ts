@@ -28,7 +28,7 @@ function createSupabaseMock(params: {
   user: { id: string } | null
   householdId?: string | null
   accounts?: Array<{ id: string; product_name: string; account_type: string; currency: string }>
-  transactions?: Array<{ merchant_normalized: string | null; merchant_raw: string | null; amount: number; txn_date: string }>
+  transactions?: Array<{ merchant_normalized: string | null; merchant_raw: string | null; amount: number; txn_date: string; merchant?: { name: string | null } | null }>
   balances?: Array<{ balance: number; assets: { symbol: string } | null }>
 }) {
   return {
@@ -153,6 +153,45 @@ describe('POST /api/ai/chat', () => {
           { merchant_display: 'ntuc', amount: 34.5, txn_date: '2026-03-01' },
         ],
         holdings: [{ symbol: 'BTC', balance: 2.5 }],
+      },
+    )
+  })
+
+  it('prefers canonical merchant names over normalized/raw fallbacks in chat context', async () => {
+    mockedCreateServerSupabaseClient.mockResolvedValueOnce(
+      createSupabaseMock({
+        user: { id: 'user-1' },
+        householdId: 'hh-1',
+        accounts: [
+          { id: 'acc-1', product_name: 'DBS Savings', account_type: 'bank', currency: 'SGD' },
+        ],
+        transactions: [
+          {
+            merchant_normalized: 'starbucks sg',
+            merchant_raw: 'STARBUCKS - Plaza Sing',
+            merchant: { name: 'Starbucks' },
+            amount: 8.2,
+            txn_date: '2026-03-02',
+          },
+        ],
+      }) as never,
+    )
+    mockedGetFinancialAdvice.mockResolvedValueOnce('Advice output')
+
+    const response = await POST(createRequest({ message: 'Summarize spending' }))
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload).toEqual({ response: 'Advice output' })
+    expect(mockedGetFinancialAdvice).toHaveBeenCalledWith(
+      'Summarize spending',
+      [],
+      {
+        accounts: [{ name: 'DBS Savings', type: 'bank', currency: 'SGD' }],
+        recentTransactions: [
+          { merchant_display: 'Starbucks', amount: 8.2, txn_date: '2026-03-02' },
+        ],
+        holdings: [],
       },
     )
   })

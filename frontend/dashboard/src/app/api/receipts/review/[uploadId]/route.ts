@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { resolveEffectiveReceiptGroups } from '@/lib/server/category-groups'
+import { listTags, searchOrCreateInlineTag, validateTagOwnership } from '@/lib/server/tag-service'
 
 async function getHouseholdContext() {
   const supabase = await createServerSupabaseClient()
@@ -40,7 +42,7 @@ export async function GET(
     const { uploadId } = await params
     const db = ctx.supabase as any
 
-    const [uploadResult, stagingResult, duplicateResult, categoriesResult] = await Promise.all([
+    const [uploadResult, stagingResult, duplicateResult, categoriesResult, tagsResult] = await Promise.all([
       db
         .from('receipt_uploads')
         .select('*')
@@ -66,6 +68,13 @@ export async function GET(
         .eq('is_active', true)
         .order('sort_order', { ascending: true })
         .order('name', { ascending: true }),
+      listTags(db, {
+        householdId: ctx.householdId,
+        status: 'active',
+        source: 'all',
+        sortBy: 'name',
+        sortDir: 'asc',
+      }),
     ])
 
     if (uploadResult.error || !uploadResult.data) {
@@ -115,12 +124,33 @@ export async function GET(
       classificationRuns = stagingRunResult.data ?? []
     }
 
+    const categoryRows = (categoriesResult.data ?? []).map((category: any) => ({
+      id: String(category.id),
+      name: String(category.name),
+      category_family: typeof category.category_family === 'string' ? category.category_family : null,
+      sort_order: typeof category.sort_order === 'number' ? category.sort_order : 0,
+    }))
+    const effectiveGroups = await resolveEffectiveReceiptGroups(db, ctx.householdId, categoryRows)
+
     return NextResponse.json({
       upload: uploadResult.data,
       staging,
       items,
       duplicates: duplicateResult.data ?? [],
-      categories: categoriesResult.data ?? [],
+      tags: tagsResult.map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        color_token: tag.color_token,
+        color_hex: tag.color_hex,
+        icon_key: tag.icon_key,
+        source: tag.source,
+      })),
+      categories: (categoriesResult.data ?? []).map((category: any) => ({
+        ...category,
+        effective_group_id: effectiveGroups.get(String(category.id))?.id ?? null,
+        effective_group_name: effectiveGroups.get(String(category.id))?.name ?? null,
+        effective_group_sort_order: effectiveGroups.get(String(category.id))?.sort_order ?? null,
+      })),
       classificationRuns,
     })
   } catch (error) {
@@ -144,7 +174,7 @@ export async function PATCH(
 
     const { data: staging, error: stagingError } = await db
       .from('receipt_staging_transactions')
-      .select('id, household_id')
+      .select('id, household_id, tag_ids_json')
       .eq('upload_id', uploadId)
       .eq('household_id', ctx.householdId)
       .single()
@@ -175,12 +205,32 @@ export async function PATCH(
         'notes',
         'receipt_category_id',
         'classification_source',
+        'tag_ids_json',
       ]
 
       for (const field of allowedFields) {
         if (Object.hasOwn(header, field)) {
           updatePayload[field] = header[field]
         }
+      }
+
+      if (typeof header.inline_tag_name === 'string' && header.inline_tag_name.trim().length > 0) {
+        const createdTag = await searchOrCreateInlineTag({
+          db,
+          householdId: ctx.householdId,
+          actorUserId: ctx.user.id,
+          name: header.inline_tag_name,
+        })
+        const existingIds = Array.isArray(updatePayload.tag_ids_json)
+          ? (updatePayload.tag_ids_json as unknown[]).filter((value): value is string => typeof value === 'string')
+          : Array.isArray(staging.tag_ids_json)
+            ? (staging.tag_ids_json as unknown[]).filter((value): value is string => typeof value === 'string')
+            : []
+        updatePayload.tag_ids_json = Array.from(new Set([...existingIds, createdTag.id]))
+      }
+
+      if (Array.isArray(updatePayload.tag_ids_json)) {
+        await validateTagOwnership(db, ctx.householdId, updatePayload.tag_ids_json.filter((value): value is string => typeof value === 'string'))
       }
 
       if (Object.hasOwn(header, 'user_confirmed_low_confidence')) {

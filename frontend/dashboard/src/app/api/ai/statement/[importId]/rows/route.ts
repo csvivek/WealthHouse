@@ -10,6 +10,7 @@ import {
   type ResolvedCategorySelection,
 } from '@/lib/server/statement-propagation'
 import { refreshLinkSuggestionsForImport } from '@/lib/statement-linking'
+import { dedupeTagIds, searchOrCreateInlineTag, validateTagOwnership } from '@/lib/server/tag-service'
 
 type FileImportUpdate = Database['public']['Tables']['file_imports']['Update']
 type ImportStagingRow = Database['public']['Tables']['import_staging']['Row']
@@ -54,6 +55,8 @@ interface RowUpdate {
     categoryId?: number | null
     newCategoryName?: string | null
     newCategoryGroupName?: string | null
+    tagIds?: string[]
+    inlineTagName?: string | null
   }
   reviewStatus?: 'approved' | 'rejected' | 'pending'
   applyToRowIds?: string[]
@@ -234,6 +237,8 @@ export async function PATCH(
           categoryId,
           newCategoryName,
           newCategoryGroupName,
+          tagIds,
+          inlineTagName,
           ...stagingFieldUpdates
         } = update.fields
         const linkSensitiveFields = ['txn_date', 'posting_date', 'amount', 'txn_type', 'reference', 'merchant_raw', 'description']
@@ -294,6 +299,19 @@ export async function PATCH(
             decisionSource: 'manual_override',
           })
         }
+
+        let nextTagIds = Array.isArray(tagIds) ? dedupeTagIds(tagIds) : readStringArray(originalData.tagIds)
+        if (typeof inlineTagName === 'string' && inlineTagName.trim().length > 0) {
+          const tag = await searchOrCreateInlineTag({
+            db: serviceSupabase,
+            householdId: profile.household_id,
+            actorUserId: user.id,
+            name: inlineTagName,
+          })
+          nextTagIds = dedupeTagIds([...nextTagIds, tag.id])
+        }
+        await validateTagOwnership(serviceSupabase, profile.household_id, nextTagIds)
+        originalData.tagIds = nextTagIds
 
         updateData.original_data = originalData
 
@@ -413,6 +431,7 @@ export async function PATCH(
             ...update.fields,
             categoryId: nextCategory === undefined ? categoryId : nextCategory?.id ?? null,
             createdCategoryId: nextCategory && nextCategory.id !== categoryId ? nextCategory.id : null,
+            tagIds: nextTagIds,
             applyToRowIds,
             skippedTargets,
           },

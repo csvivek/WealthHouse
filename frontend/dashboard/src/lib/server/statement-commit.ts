@@ -1,6 +1,10 @@
 import { SupabaseClient } from '@supabase/supabase-js'
+import { deriveMerchantDisplayName } from '@/lib/merchants/normalization'
+import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { logAudit } from '@/lib/integrity/audit'
+import { resolveMerchantReference } from '@/lib/server/merchant-service'
+import { isStatementLinkingSchemaNotReadyError, statementLinkingSchemaNotReadyWarning } from '@/lib/statement-linking/config'
 import type { Database } from '@/types/database'
 
 type FileImportUpdate = Database['public']['Tables']['file_imports']['Update']
@@ -10,6 +14,7 @@ type StatementImportInsert = Database['public']['Tables']['statement_imports']['
 type StatementTransactionInsert = Database['public']['Tables']['statement_transactions']['Insert']
 type StatementSummaryInsert = Database['public']['Tables']['statement_summaries']['Insert']
 type TransactionLinkInsert = Database['public']['Tables']['transaction_links']['Insert']
+type FileImportRow = Database['public']['Tables']['file_imports']['Row']
 
 type ServiceSupabaseClient = SupabaseClient
 
@@ -20,6 +25,7 @@ export interface StatementCommitResult {
   rejectedCount: number
   status: 'committed'
   replacementCommit: boolean
+  warnings: string[]
 }
 
 export class StatementCommitProcessError extends Error {
@@ -38,6 +44,61 @@ function readString(value: unknown) {
 
 function readNumber(value: unknown) {
   return typeof value === 'number' ? value : null
+}
+
+function readStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : []
+}
+
+function coerceDateOnly(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const raw = value.trim()
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw
+  }
+
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toISOString().slice(0, 10)
+}
+
+function buildStatementSummaryInsert(params: {
+  statementImportId: string
+  accountId: string
+  fileImport: Pick<FileImportRow, 'statement_date' | 'statement_period_end' | 'statement_period_start'>
+  summary: Record<string, unknown>
+}) {
+  const warnings: string[] = []
+  const statementDate =
+    coerceDateOnly(params.fileImport.statement_date) ??
+    coerceDateOnly(params.fileImport.statement_period_end) ??
+    coerceDateOnly(params.fileImport.statement_period_start)
+
+  if (!statementDate) {
+    warnings.push('Statement committed, but statement summary was skipped because no valid statement date was available.')
+    return { summaryInsert: null, warnings }
+  }
+
+  let paymentDueDate = coerceDateOnly(params.summary.payment_due_date)
+  if (params.summary.payment_due_date != null && !paymentDueDate) {
+    warnings.push('Statement committed, but payment due date was skipped because it was invalid.')
+  } else if (paymentDueDate && paymentDueDate <= statementDate) {
+    warnings.push('Statement committed, but payment due date was skipped because it was earlier than or equal to the statement date.')
+    paymentDueDate = null
+  }
+
+  const summaryInsert: StatementSummaryInsert = {
+    statement_import_id: params.statementImportId,
+    account_id: params.accountId,
+    statement_date: statementDate,
+    credit_limit: readNumber(params.summary.credit_limit),
+    minimum_payment: readNumber(params.summary.minimum_payment),
+    payment_due_date: paymentDueDate,
+    grand_total: readNumber(params.summary.grand_total),
+  }
+
+  return { summaryInsert, warnings }
 }
 
 function resolveFinalTxnType(row: { txn_type: string; merchant_raw: string; description: string | null; original_data: Record<string, unknown> }) {
@@ -114,6 +175,7 @@ export async function processStatementCommit(params: {
 }): Promise<StatementCommitResult> {
   const { importId, householdId, userId } = params
   const supabase = createServiceSupabaseClient()
+  const warnings: string[] = []
 
   const { data: fileImport, error: fiError } = await supabase
     .from('file_imports')
@@ -181,6 +243,7 @@ export async function processStatementCommit(params: {
       rejectedCount: fileImport.rejected_rows || 0,
       status: 'committed',
       replacementCommit: isReplacementCommit,
+      warnings,
     }
   }
 
@@ -203,6 +266,7 @@ export async function processStatementCommit(params: {
   const statementImportsByAccount = new Map<string, string>()
   const newStatementImportIds: string[] = []
   const recommittedRowIds: string[] = []
+  const merchantResolutionCache = new Map<string, Awaited<ReturnType<typeof resolveMerchantReference>>>()
 
   for (const [accountId, rows] of rowsByAccount.entries()) {
     const firstRow = rows[0]
@@ -245,6 +309,34 @@ export async function processStatementCommit(params: {
     if (!statementImportId) continue
 
     const originalData = (row.original_data || {}) as Record<string, unknown>
+    const merchantKey = row.merchant_raw.trim().toLowerCase()
+    let merchantResolution = merchantResolutionCache.get(merchantKey)
+    if (merchantResolution === undefined) {
+      try {
+        merchantResolution = row.merchant_raw.trim()
+          ? await resolveMerchantReference({
+              db: supabase as never,
+              householdId,
+              rawName: row.merchant_raw,
+              sourceType: 'statement',
+              actorUserId: userId,
+            })
+          : null
+      } catch (error) {
+        if (!isMerchantSchemaNotReadyError(error)) {
+          throw error
+        }
+
+        merchantResolution = null
+      }
+      merchantResolutionCache.set(merchantKey, merchantResolution)
+    }
+
+    const merchantDisplayName =
+      merchantResolution?.merchant.name ??
+      deriveMerchantDisplayName(row.merchant_raw) ??
+      readString(row.merchant_raw)
+
     const transactionInsert: StatementTransactionInsert = {
       statement_import_id: statementImportId,
       account_id: row.account_id,
@@ -252,6 +344,8 @@ export async function processStatementCommit(params: {
       txn_date: row.txn_date,
       posting_date: row.posting_date,
       merchant_raw: row.merchant_raw,
+      merchant_id: merchantResolution?.merchant.id ?? null,
+      merchant_normalized: merchantDisplayName,
       description: row.description,
       amount: row.amount,
       txn_type: resolveFinalTxnType({
@@ -303,6 +397,24 @@ export async function processStatementCommit(params: {
 
     if (inserted?.id) {
       committedTransactionByStagingId.set(row.id, inserted.id)
+      const tagIds = Array.from(new Set(readStringArray(originalData.tagIds)))
+      if (tagIds.length > 0) {
+        const { error: tagError } = await supabase.from('statement_transaction_tags').upsert(
+          tagIds.map((tagId) => ({
+            household_id: householdId,
+            statement_transaction_id: inserted.id,
+            tag_id: tagId,
+            created_by: userId,
+          })),
+          { onConflict: 'statement_transaction_id,tag_id' },
+        )
+
+        if (tagError) {
+          console.error('Failed to persist statement tags:', tagError)
+          await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
+          throw new StatementCommitProcessError(tagError.message || 'Failed to persist statement tags', 500)
+        }
+      }
     }
 
     recommittedRowIds.push(row.id)
@@ -314,21 +426,21 @@ export async function processStatementCommit(params: {
     const onlyStatementImportId = statementImportsByAccount.get(onlyAccountId)
     const summary = fileImport.summary_json as Record<string, unknown>
     if (onlyStatementImportId) {
-      const summaryInsert: StatementSummaryInsert = {
-        statement_import_id: onlyStatementImportId,
-        account_id: onlyAccountId,
-        statement_date: fileImport.statement_date ?? new Date().toISOString().split('T')[0],
-        credit_limit: summary.credit_limit as number | null,
-        minimum_payment: summary.minimum_payment as number | null,
-        payment_due_date: summary.payment_due_date as string | null,
-        grand_total: summary.grand_total as number | null,
-      }
+      const normalizedSummary = buildStatementSummaryInsert({
+        statementImportId: onlyStatementImportId,
+        accountId: onlyAccountId,
+        fileImport,
+        summary,
+      })
+      warnings.push(...normalizedSummary.warnings)
 
-      const { error: summaryError } = await supabase.from('statement_summaries').insert(summaryInsert)
-      if (summaryError) {
-        console.error('Failed to insert statement summary:', summaryError)
-        await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
-        throw new StatementCommitProcessError(summaryError.message || 'Failed to create statement summary', 500)
+      if (normalizedSummary.summaryInsert) {
+        const { error: summaryError } = await supabase.from('statement_summaries').insert(normalizedSummary.summaryInsert)
+        if (summaryError) {
+          console.error('Failed to insert statement summary:', summaryError)
+          await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
+          throw new StatementCommitProcessError(summaryError.message || 'Failed to create statement summary', 500)
+        }
       }
     }
   }
@@ -342,8 +454,12 @@ export async function processStatementCommit(params: {
     .eq('status', 'confirmed')
 
   if (approvedLinksError) {
-    await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
-    throw new StatementCommitProcessError('Failed to load approved staging links', 500)
+    if (isStatementLinkingSchemaNotReadyError(approvedLinksError)) {
+      warnings.push(statementLinkingSchemaNotReadyWarning())
+    } else {
+      await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
+      throw new StatementCommitProcessError('Failed to load approved staging links', 500)
+    }
   }
 
   const linkInserts: TransactionLinkInsert[] = []
@@ -415,6 +531,7 @@ export async function processStatementCommit(params: {
       statementImportIds,
       replacementCommit: isReplacementCommit,
       replacedStatementImportIds: previousStatementImportIds,
+      warnings,
     },
   }
 
@@ -431,6 +548,7 @@ export async function processStatementCommit(params: {
       file_import_id: importId,
       statement_import_ids: statementImportIds,
       replacement_commit: isReplacementCommit,
+      warnings,
     },
     source: 'statement_import',
     user_id: userId,
@@ -443,5 +561,6 @@ export async function processStatementCommit(params: {
     rejectedCount,
     status: 'committed',
     replacementCommit: isReplacementCommit,
+    warnings,
   }
 }

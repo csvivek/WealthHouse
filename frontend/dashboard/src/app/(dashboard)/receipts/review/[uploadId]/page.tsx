@@ -11,6 +11,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { formatCurrency, formatDate } from '@/lib/format'
 import { toast } from 'sonner'
 import { CategoryBadge } from '@/components/category-badge'
+import { TagBadge, type TagPresentation } from '@/components/tag-badge'
+import { TagSelector } from '@/components/tag-selector'
 
 interface ReceiptUpload {
   id: string
@@ -41,6 +43,14 @@ interface StagingHeader {
   receipt_category_id: string | null
   is_mixed_basket: boolean
   user_confirmed_low_confidence: boolean
+  tag_ids_json: string[]
+  tag_suggestions_json: Array<{
+    tagId: string | null
+    name: string
+    confidence: number
+    reason: string
+    source: string
+  }>
 }
 
 interface StagingItem {
@@ -159,6 +169,7 @@ export default function ReceiptReviewPage() {
   const [items, setItems] = useState<StagingItem[]>([])
   const [duplicates, setDuplicates] = useState<DuplicateCandidate[]>([])
   const [categories, setCategories] = useState<ReceiptCategory[]>([])
+  const [tags, setTags] = useState<TagPresentation[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [applyingSuggestionKey, setApplyingSuggestionKey] = useState<string | null>(null)
@@ -187,6 +198,7 @@ export default function ReceiptReviewPage() {
         items: StagingItem[]
         duplicates: DuplicateCandidate[]
         categories: ReceiptCategory[]
+        tags: TagPresentation[]
       }
 
       setUpload(payload.upload)
@@ -194,6 +206,7 @@ export default function ReceiptReviewPage() {
       setItems(payload.items ?? [])
       setDuplicates(payload.duplicates ?? [])
       setCategories(payload.categories ?? [])
+      setTags(payload.tags ?? [])
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load review data')
     } finally {
@@ -382,6 +395,7 @@ export default function ReceiptReviewPage() {
             currency: staging.currency,
             notes: staging.notes,
             receipt_category_id: staging.receipt_category_id,
+            tag_ids_json: staging.tag_ids_json,
             classification_source: staging.classification_source,
             user_confirmed_low_confidence: staging.user_confirmed_low_confidence,
           },
@@ -447,6 +461,25 @@ export default function ReceiptReviewPage() {
     } finally {
       setApproving(false)
     }
+  }
+
+  async function createInlineTag(name: string) {
+    const response = await fetch('/api/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) {
+      throw new Error(payload?.error || 'Failed to create tag')
+    }
+    const tag = payload?.tag as TagPresentation | undefined
+    if (tag) {
+      setTags((current) => [...current, tag].sort((left, right) => left.name.localeCompare(right.name)))
+      setStaging((current) => current ? { ...current, tag_ids_json: Array.from(new Set([...current.tag_ids_json, String(tag.id)])) } : current)
+      return tag
+    }
+    return null
   }
 
   async function handleChatSend() {
@@ -647,6 +680,32 @@ export default function ReceiptReviewPage() {
               </div>
 
               <Input value={staging.notes ?? ''} onChange={(event) => updateHeaderField('notes', event.target.value)} placeholder="Notes" />
+
+              <div className="space-y-2 md:col-span-2 xl:col-span-3">
+                <TagSelector
+                  availableTags={tags}
+                  selectedTagIds={staging.tag_ids_json ?? []}
+                  onChange={(tagIds) => setStaging((current) => current ? { ...current, tag_ids_json: tagIds } : current)}
+                  onCreateTag={createInlineTag}
+                  title="Receipt Tags"
+                  triggerLabel="Choose receipt tags"
+                />
+                {staging.tag_suggestions_json?.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {staging.tag_suggestions_json.map((tag) => (
+                      <Badge key={`${tag.name}:${tag.source}`} variant="outline" className="text-xs">
+                        Suggested: {tag.name}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-1">
+                  {(staging.tag_ids_json ?? []).map((tagId) => {
+                    const tag = tags.find((candidate) => candidate.id === tagId)
+                    return tag ? <TagBadge key={tagId} {...tag} className="text-[11px]" /> : null
+                  })}
+                </div>
+              </div>
 
               <div className="rounded-md border px-3 py-2 text-sm">
                 <p className="font-medium">Classification</p>

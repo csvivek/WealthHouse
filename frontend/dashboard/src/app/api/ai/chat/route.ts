@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getFinancialAdvice } from '@/lib/ai/advisor'
+import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import type { Database } from '@/types/database'
 
@@ -21,7 +22,15 @@ type AccountRow = Pick<
 type StatementTransactionRow = Pick<
   Database['public']['Tables']['statement_transactions']['Row'],
   'merchant_normalized' | 'merchant_raw' | 'amount' | 'txn_date'
->
+> & {
+  merchant?: { name: string | null } | { name: string | null }[] | null
+}
+
+function merchantNameFromJoin(value: StatementTransactionRow['merchant']) {
+  if (!value) return null
+  if (Array.isArray(value)) return value[0]?.name ?? null
+  return value.name ?? null
+}
 
 interface AssetBalanceWithSymbol {
   balance: number
@@ -98,22 +107,33 @@ export async function POST(request: NextRequest) {
       const accountIds = accounts.map((account) => account.id)
 
       if (accountIds.length > 0) {
-        const [txnRes, balanceRes] = await Promise.all([
+        const buildTransactionQuery = (includeMerchantJoin: boolean) =>
           supabase
             .from('statement_transactions')
-            .select('merchant_normalized, merchant_raw, amount, txn_date')
+            .select(
+              includeMerchantJoin
+                ? 'merchant_normalized, merchant_raw, amount, txn_date, merchant:merchants(name)'
+                : 'merchant_normalized, merchant_raw, amount, txn_date',
+            )
             .in('account_id', accountIds)
             .order('txn_date', { ascending: false })
-            .limit(20),
+            .limit(20)
+
+        let [txnRes, balanceRes] = await Promise.all([
+          buildTransactionQuery(true),
           supabase
             .from('asset_balances')
             .select('balance, assets(symbol)')
             .in('account_id', accountIds),
         ])
 
+        if (isMerchantSchemaNotReadyError(txnRes.error, 'merchants')) {
+          txnRes = await buildTransactionQuery(false)
+        }
+
         const txnRows = (txnRes.data as StatementTransactionRow[] | null) ?? []
         recentTransactions = txnRows.map((row) => ({
-          merchant_display: row.merchant_normalized ?? row.merchant_raw,
+          merchant_display: merchantNameFromJoin(row.merchant) ?? row.merchant_normalized ?? row.merchant_raw,
           amount: row.amount,
           txn_date: row.txn_date,
         }))

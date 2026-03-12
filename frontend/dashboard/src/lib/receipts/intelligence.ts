@@ -14,6 +14,7 @@ import {
   normalizeMerchantName,
   parseNumeric,
 } from '@/lib/receipts/normalization'
+import { suggestTags } from '@/lib/tags/suggestions'
 import type {
   ReceiptClassificationItemResult,
   ReceiptClassificationResult,
@@ -556,6 +557,18 @@ export async function classifyReceiptStaging(params: {
     clampConfidence(header.extraction_confidence, 0.5),
   )
 
+  const tagSuggestions = await suggestTags({
+    db: params.supabase,
+    householdId: header.household_id,
+    merchantName: header.merchant_name,
+    categoryName: resolvedCategory?.name ?? null,
+    description: header.receipt_reference,
+    sourceText: [header.merchant_name, header.receipt_reference, ...items.map((item) => item.item_name)].filter(Boolean).join(' '),
+    receiptItems: items.map((item) => item.item_name).filter((item): item is string => typeof item === 'string' && item.trim().length > 0),
+    domain: 'receipt',
+  })
+  const tagIds = tagSuggestions.flatMap((tag) => (tag.tagId ? [tag.tagId] : []))
+
   const { data: runData, error: runError } = await params.supabase
     .from('receipt_classification_runs')
     .insert({
@@ -575,6 +588,8 @@ export async function classifyReceiptStaging(params: {
         categoryId: resolvedCategory?.id ?? null,
         categoryName: resolvedCategory?.name ?? null,
         isMixedBasket: dominant.isMixedBasket,
+        tagIds,
+        tagSuggestions,
       },
       created_by: params.actorUserId ?? null,
     })
@@ -614,6 +629,8 @@ export async function classifyReceiptStaging(params: {
       classification_confidence: finalConfidence,
       classification_version: RECEIPT_CLASSIFICATION_VERSION,
       is_mixed_basket: dominant.isMixedBasket,
+      tag_ids_json: tagIds,
+      tag_suggestions_json: tagSuggestions,
       updated_at: new Date().toISOString(),
     })
     .eq('id', header.id)
@@ -666,6 +683,8 @@ export async function classifyReceiptStaging(params: {
     isMixedBasket: dominant.isMixedBasket,
     rationale: headerCandidate?.rationale || null,
     webSummary,
+    tagIds,
+    tagSuggestions,
     version: RECEIPT_CLASSIFICATION_VERSION,
     itemResults: normalizedItemResults,
   }

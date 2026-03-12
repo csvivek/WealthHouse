@@ -57,8 +57,14 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
+import {
+  isPaymentCategoryTypeCompatible,
+  normalizeTxnDirection,
+} from '@/lib/transactions/category-compatibility'
 import { CategoryBadge } from '@/components/category-badge'
 import { CategoryIcon } from '@/components/category-icon'
+import { TagBadge } from '@/components/tag-badge'
+import { TagSelector } from '@/components/tag-selector'
 
 interface ImportMeta {
   id: string
@@ -71,6 +77,11 @@ interface ImportMeta {
   cardInfo: Record<string, unknown> | null
   currency: string | null
   createdAt: string
+  uploadedBy: {
+    id: string
+    displayName: string | null
+    email: string | null
+  }
   hasCommittedVersion: boolean
   isRevision: boolean
   canReopen: boolean
@@ -116,6 +127,14 @@ interface StagingRow {
   categoryName: string | null
   categoryConfidence: number | null
   categoryDecisionSource: string | null
+  tagIds: string[]
+  tagSuggestions: Array<{
+    tagId: string | null
+    name: string
+    confidence: number
+    reason: string
+    source: string
+  }>
   merchantCanonicalName: string | null
   merchantBusinessType: string | null
   merchantAliases: string[]
@@ -159,9 +178,19 @@ interface EditDraft {
   currency?: string
   reference?: string | null
   categoryId?: number | null
+  tagIds?: string[]
   createCategoryMode?: boolean
   newCategoryName?: string
   newCategoryGroupName?: string
+}
+
+interface ReviewTag {
+  id: string
+  name: string
+  color_token?: string | null
+  color_hex?: string | null
+  icon_key?: string | null
+  source?: string | null
 }
 
 interface PropagationPreviewTarget {
@@ -204,8 +233,6 @@ interface PendingPropagationDialog {
 
 type FilterStatus = 'all' | 'pending' | 'approved' | 'rejected' | 'committed' | 'already_imported' | 'duplicate'
 
-type CategoryCompatibility = ReviewCategory['type'][]
-
 const CREATE_CATEGORY_VALUE = '__create_category__'
 const UNCATEGORIZED_VALUE = 'uncategorized'
 
@@ -231,16 +258,8 @@ const sourceLabelMap: Record<string, string> = {
 }
 
 
-function normalizeTxnDirection(txnType: string | null | undefined): 'credit' | 'debit' {
-  return String(txnType).toLowerCase() === 'credit' ? 'credit' : 'debit'
-}
-
-function getCompatibleCategoryTypes(txnType: string | null | undefined): CategoryCompatibility {
-  return normalizeTxnDirection(txnType) === 'credit' ? ['income', 'transfer'] : ['expense', 'transfer']
-}
-
 function isCategoryCompatible(category: ReviewCategory, txnType: string | null | undefined) {
-  return getCompatibleCategoryTypes(txnType).includes(category.type ?? 'expense')
+  return isPaymentCategoryTypeCompatible(category.type, txnType)
 }
 
 function getCompatibleCategories(categories: ReviewCategory[], txnType: string | null | undefined) {
@@ -325,6 +344,7 @@ export default function ReviewPage() {
   const [importMeta, setImportMeta] = useState<ImportMeta | null>(null)
   const [rows, setRows] = useState<StagingRow[]>([])
   const [categories, setCategories] = useState<ReviewCategory[]>([])
+  const [tags, setTags] = useState<ReviewTag[]>([])
 
   const [filter, setFilter] = useState<FilterStatus>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -332,6 +352,7 @@ export default function ReviewPage() {
   const [editDraft, setEditDraft] = useState<EditDraft>({})
   const [savedRowIds, setSavedRowIds] = useState<Record<string, number>>({})
   const [bulkCategoryValue, setBulkCategoryValue] = useState<string>('')
+  const [bulkTagIds, setBulkTagIds] = useState<string[]>([])
   const [propagationDialog, setPropagationDialog] = useState<PendingPropagationDialog | null>(null)
   const [selectedPropagationIds, setSelectedPropagationIds] = useState<Set<string>>(new Set())
   const [linkSheetRowId, setLinkSheetRowId] = useState<string | null>(null)
@@ -345,15 +366,17 @@ export default function ReviewPage() {
     try {
       const res = await fetch(`/api/ai/statement/${importId}`)
       if (!res.ok) {
-        toast.error('Failed to load review data')
+        const payload = await res.json().catch(() => null)
+        toast.error(payload?.error || 'Failed to load review data')
         return
       }
       const data = await res.json()
       setImportMeta(data.import)
       setRows(data.rows)
       setCategories(data.categories ?? [])
-    } catch {
-      toast.error('Failed to load review data')
+      setTags(data.tags ?? [])
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load review data')
     } finally {
       setLoading(false)
     }
@@ -598,6 +621,81 @@ export default function ReviewPage() {
     }
   }
 
+  async function createInlineTag(name: string) {
+    const response = await fetch('/api/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) {
+      throw new Error(payload?.error || 'Failed to create tag')
+    }
+    const tag = payload?.tag as ReviewTag | undefined
+    if (tag) {
+      setTags((previous) => [...previous, tag].sort((left, right) => left.name.localeCompare(right.name)))
+      return tag
+    }
+    return null
+  }
+
+  async function applyBulkTags(mode: 'add' | 'remove') {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) {
+      toast.error('No rows selected')
+      return
+    }
+    if (bulkTagIds.length === 0) {
+      toast.error('Choose at least one tag')
+      return
+    }
+
+    setActionLoading(true)
+    try {
+      const updates = ids.map((id) => {
+        const row = rows.find((candidate) => candidate.id === id)
+        const nextTagIds = mode === 'add'
+          ? Array.from(new Set([...(row?.tagIds ?? []), ...bulkTagIds]))
+          : (row?.tagIds ?? []).filter((tagId) => !bulkTagIds.includes(tagId))
+
+        return {
+          id,
+          fields: {
+            tagIds: nextTagIds,
+          },
+        }
+      })
+
+      const res = await fetch(`/api/ai/statement/${importId}/rows`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        toast.error(data?.error || 'Failed to update selected rows')
+        return
+      }
+
+      setRows((previous) => previous.map((row) => {
+        if (!ids.includes(row.id)) return row
+        return {
+          ...row,
+          tagIds: mode === 'add'
+            ? Array.from(new Set([...row.tagIds, ...bulkTagIds]))
+            : row.tagIds.filter((tagId) => !bulkTagIds.includes(tagId)),
+          isEdited: true,
+        }
+      }))
+      markRowsSaved(ids)
+      toast.success(mode === 'add' ? `Added tags to ${ids.length} row(s)` : `Removed tags from ${ids.length} row(s)`)
+    } catch {
+      toast.error('Failed to update selected rows')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   function startEdit(row: StagingRow) {
     setEditingRowId(row.id)
     setEditDraft({
@@ -609,6 +707,7 @@ export default function ReviewPage() {
       currency: row.currency,
       reference: row.reference,
       categoryId: row.categoryId,
+      tagIds: row.tagIds,
       createCategoryMode: false,
       newCategoryName: '',
       newCategoryGroupName: row.categoryName ? '' : row.originalData.categoryGroupName as string | undefined,
@@ -673,6 +772,9 @@ export default function ReviewPage() {
           reference: isPrimaryRow && Object.prototype.hasOwnProperty.call(fields, 'reference')
             ? (fields.reference as string | null)
             : candidate.reference,
+          tagIds: isPrimaryRow && Array.isArray(fields.tagIds)
+            ? fields.tagIds.filter((value): value is string => typeof value === 'string')
+            : candidate.tagIds,
           categoryId: resolvedCategory === undefined ? candidate.categoryId : resolvedCategory?.id ?? null,
           categoryName: resolvedCategory === undefined ? candidate.categoryName : resolvedCategory?.name ?? null,
           categoryDecisionSource: resolvedCategory === undefined ? candidate.categoryDecisionSource : 'manual_override',
@@ -714,6 +816,7 @@ export default function ReviewPage() {
     if (editDraft.txnType !== undefined && editDraft.txnType !== row.txnType) fields.txn_type = editDraft.txnType
     if (editDraft.currency !== undefined && editDraft.currency !== row.currency) fields.currency = editDraft.currency
     if (editDraft.reference !== undefined && editDraft.reference !== row.reference) fields.reference = editDraft.reference || null
+    if (editDraft.tagIds !== undefined && JSON.stringify(editDraft.tagIds) !== JSON.stringify(row.tagIds)) fields.tagIds = editDraft.tagIds
 
     if (editDraft.createCategoryMode) {
       const newCategoryName = editDraft.newCategoryName?.trim()
@@ -903,6 +1006,9 @@ You can leave this page while the commit continues.`,
               {importMeta.fileName}
               {importMeta.institutionCode && ` · ${importMeta.institutionCode}`}
               {importMeta.statementDate && ` · ${formatDate(importMeta.statementDate)}`}
+              {(importMeta.uploadedBy.displayName || importMeta.uploadedBy.email) && (
+                ` · Uploaded by ${importMeta.uploadedBy.displayName || importMeta.uploadedBy.email}`
+              )}
             </p>
           </div>
         </div>
@@ -944,6 +1050,17 @@ You can leave this page while the commit continues.`,
           <CardContent className="flex items-center gap-3 py-3 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin text-indigo-500" />
             Background commit is running for this import. You can leave this page and the app will notify you when it finishes.
+          </CardContent>
+        </Card>
+      )}
+
+      {latestImportJob?.status === 'succeeded' && (latestImportJob.result?.warnings?.length ?? 0) > 0 && (
+        <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20">
+          <CardContent className="space-y-1 py-3 text-sm text-amber-800 dark:text-amber-200">
+            <p className="font-medium">The last background commit completed with warnings:</p>
+            {(latestImportJob.result?.warnings ?? []).map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
           </CardContent>
         </Card>
       )}
@@ -1156,6 +1273,36 @@ You can leave this page while the commit continues.`,
                 >
                   <Check className="size-3" />
                   Apply Category
+                </Button>
+                <div className="min-w-[220px]">
+                  <TagSelector
+                    availableTags={tags}
+                    selectedTagIds={bulkTagIds}
+                    onChange={setBulkTagIds}
+                    onCreateTag={createInlineTag}
+                    title="Bulk Statement Tags"
+                    triggerLabel="Choose tags"
+                    emptyLabel="No bulk tags selected"
+                    disabled={actionLoading}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() => void applyBulkTags('add')}
+                  disabled={actionLoading}
+                >
+                  Add Tags
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={() => void applyBulkTags('remove')}
+                  disabled={actionLoading}
+                >
+                  Remove Tags
                 </Button>
                 <Button
                   size="sm"
@@ -1390,6 +1537,14 @@ You can leave this page while the commit continues.`,
                               </p>
                             </div>
                           )}
+                          <TagSelector
+                            availableTags={tags}
+                            selectedTagIds={editDraft.tagIds ?? []}
+                            onChange={(tagIds) => setEditDraft((draft) => ({ ...draft, tagIds }))}
+                            onCreateTag={createInlineTag}
+                            title="Edit Statement Row Tags"
+                            triggerLabel="Choose tags"
+                          />
                         </div>
                       ) : (
                         <div className="space-y-1">
@@ -1411,6 +1566,21 @@ You can leave this page while the commit continues.`,
                           {row.similarMerchantCount > 0 && (
                             <span className="block text-[11px] text-muted-foreground">
                               {row.similarMerchantCount} related row{row.similarMerchantCount !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {row.tagIds.length > 0 ? (
+                              row.tagIds.map((tagId) => {
+                                const tag = tags.find((candidate) => candidate.id === tagId)
+                                return tag ? <TagBadge key={tag.id} {...tag} className="text-[11px]" /> : null
+                              })
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground">No tags</span>
+                            )}
+                          </div>
+                          {row.tagSuggestions.length > 0 && (
+                            <span className="block text-[11px] text-muted-foreground">
+                              Suggested: {row.tagSuggestions.map((tag) => tag.name).join(', ')}
                             </span>
                           )}
                         </div>

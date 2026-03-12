@@ -69,6 +69,73 @@ export type Database = {
           },
         ]
       }
+      household_user_invites: {
+        Row: {
+          id: string
+          household_id: string
+          email: string
+          normalized_email: string
+          display_name: string | null
+          role: string
+          invited_by: string
+          accepted_user_id: string | null
+          accepted_at: string | null
+          revoked_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          email: string
+          normalized_email: string
+          display_name?: string | null
+          role?: string
+          invited_by: string
+          accepted_user_id?: string | null
+          accepted_at?: string | null
+          revoked_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          household_id?: string
+          email?: string
+          normalized_email?: string
+          display_name?: string | null
+          role?: string
+          invited_by?: string
+          accepted_user_id?: string | null
+          accepted_at?: string | null
+          revoked_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'household_user_invites_accepted_user_id_fkey'
+            columns: ['accepted_user_id']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'household_user_invites_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'household_user_invites_invited_by_fkey'
+            columns: ['invited_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       user_profiles: {
         Row: {
           id: string
@@ -1071,6 +1138,110 @@ export type Database = {
           },
         ]
       }
+      tags: {
+        Row: {
+          id: string
+          household_id: string
+          name: string
+          normalized_name: string
+          color_token: string | null
+          color_hex: string | null
+          icon_key: string | null
+          description: string | null
+          source: Database['public']['Enums']['tag_source']
+          source_member_id: string | null
+          is_active: boolean
+          merged_into_tag_id: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          name: string
+          normalized_name?: string
+          color_token?: string | null
+          color_hex?: string | null
+          icon_key?: string | null
+          description?: string | null
+          source?: Database['public']['Enums']['tag_source']
+          source_member_id?: string | null
+          is_active?: boolean
+          merged_into_tag_id?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          household_id?: string
+          name?: string
+          normalized_name?: string
+          color_token?: string | null
+          color_hex?: string | null
+          icon_key?: string | null
+          description?: string | null
+          source?: Database['public']['Enums']['tag_source']
+          source_member_id?: string | null
+          is_active?: boolean
+          merged_into_tag_id?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'tags_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      statement_transaction_tags: {
+        Row: {
+          statement_transaction_id: string
+          tag_id: string
+          household_id: string
+          created_at: string
+          created_by: string | null
+        }
+        Insert: {
+          statement_transaction_id: string
+          tag_id: string
+          household_id: string
+          created_at?: string
+          created_by?: string | null
+        }
+        Update: {
+          statement_transaction_id?: string
+          tag_id?: string
+          household_id?: string
+          created_at?: string
+          created_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'statement_transaction_tags_statement_transaction_id_fkey'
+            columns: ['statement_transaction_id']
+            isOneToOne: false
+            referencedRelation: 'statement_transactions'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'statement_transaction_tags_tag_id_fkey'
+            columns: ['tag_id']
+            isOneToOne: false
+            referencedRelation: 'tags'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       statement_summaries: {
         Row: {
           id: string
@@ -1232,23 +1403,63 @@ export type Database = {
       merchants: {
         Row: {
           id: string
+          household_id: string | null
           name: string
+          normalized_name: string | null
+          icon_key: string
+          color_token: string
+          color_hex: string | null
+          notes: string | null
           default_category_id: number | null
+          merged_into_merchant_id: string | null
+          is_active: boolean
+          created_by: string | null
+          updated_by: string | null
           created_at: string
+          updated_at: string
         }
         Insert: {
           id?: string
+          household_id?: string | null
           name: string
+          normalized_name?: string | null
+          icon_key?: string
+          color_token?: string
+          color_hex?: string | null
+          notes?: string | null
           default_category_id?: number | null
+          merged_into_merchant_id?: string | null
+          is_active?: boolean
+          created_by?: string | null
+          updated_by?: string | null
           created_at?: string
+          updated_at?: string
         }
         Update: {
           id?: string
+          household_id?: string | null
           name?: string
+          normalized_name?: string | null
+          icon_key?: string
+          color_token?: string
+          color_hex?: string | null
+          notes?: string | null
           default_category_id?: number | null
+          merged_into_merchant_id?: string | null
+          is_active?: boolean
+          created_by?: string | null
+          updated_by?: string | null
           created_at?: string
+          updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: 'merchants_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
           {
             foreignKeyName: 'merchants_default_category_id_fkey'
             columns: ['default_category_id']
@@ -1256,34 +1467,71 @@ export type Database = {
             referencedRelation: 'categories'
             referencedColumns: ['id']
           },
+          {
+            foreignKeyName: 'merchants_merged_into_merchant_id_fkey'
+            columns: ['merged_into_merchant_id']
+            isOneToOne: false
+            referencedRelation: 'merchants'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'merchants_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'merchants_updated_by_fkey'
+            columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
         ]
       }
       merchant_aliases: {
         Row: {
           id: string
+          household_id: string | null
           merchant_id: string
-          pattern: string
-          source: string
-          priority: number
+          raw_name: string | null
+          normalized_raw_name: string | null
+          source_type: string
+          confidence: number | null
           created_at: string
+          updated_at: string
         }
         Insert: {
           id?: string
+          household_id?: string | null
           merchant_id: string
-          pattern: string
-          source?: string
-          priority?: number
+          raw_name?: string | null
+          normalized_raw_name?: string | null
+          source_type?: string
+          confidence?: number | null
           created_at?: string
+          updated_at?: string
         }
         Update: {
           id?: string
+          household_id?: string | null
           merchant_id?: string
-          pattern?: string
-          source?: string
-          priority?: number
+          raw_name?: string | null
+          normalized_raw_name?: string | null
+          source_type?: string
+          confidence?: number | null
           created_at?: string
+          updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: 'merchant_aliases_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
           {
             foreignKeyName: 'merchant_aliases_merchant_id_fkey'
             columns: ['merchant_id']
@@ -1384,6 +1632,7 @@ export type Database = {
         Row: {
           id: string
           household_id: string | null
+          source_category_id: string | null
           name: string
           category_family: string | null
           description: string | null
@@ -1398,6 +1647,7 @@ export type Database = {
         Insert: {
           id?: string
           household_id?: string | null
+          source_category_id?: string | null
           name: string
           category_family?: string | null
           description?: string | null
@@ -1412,6 +1662,7 @@ export type Database = {
         Update: {
           id?: string
           household_id?: string | null
+          source_category_id?: string | null
           name?: string
           category_family?: string | null
           description?: string | null
@@ -1429,6 +1680,248 @@ export type Database = {
             columns: ['household_id']
             isOneToOne: false
             referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'receipt_categories_source_category_id_fkey'
+            columns: ['source_category_id']
+            isOneToOne: false
+            referencedRelation: 'receipt_categories'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      payment_category_groups: {
+        Row: {
+          id: number
+          household_id: string
+          name: string
+          payment_subtype: Database['public']['Enums']['category_payment_subtype']
+          sort_order: number
+          is_archived: boolean
+          is_system_seeded: boolean
+          template_key: string | null
+          description: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          household_id: string
+          name: string
+          payment_subtype: Database['public']['Enums']['category_payment_subtype']
+          sort_order?: number
+          is_archived?: boolean
+          is_system_seeded?: boolean
+          template_key?: string | null
+          description?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          household_id?: string
+          name?: string
+          payment_subtype?: Database['public']['Enums']['category_payment_subtype']
+          sort_order?: number
+          is_archived?: boolean
+          is_system_seeded?: boolean
+          template_key?: string | null
+          description?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'payment_category_groups_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'payment_category_groups_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'payment_category_groups_updated_by_fkey'
+            columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      payment_category_group_memberships: {
+        Row: {
+          household_id: string
+          category_id: number
+          group_id: number
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          household_id: string
+          category_id: number
+          group_id: number
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          household_id?: string
+          category_id?: number
+          group_id?: number
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'payment_category_group_memberships_category_id_fkey'
+            columns: ['category_id']
+            isOneToOne: false
+            referencedRelation: 'categories'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'payment_category_group_memberships_group_id_fkey'
+            columns: ['group_id']
+            isOneToOne: false
+            referencedRelation: 'payment_category_groups'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'payment_category_group_memberships_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      receipt_category_groups: {
+        Row: {
+          id: number
+          household_id: string
+          name: string
+          sort_order: number
+          is_archived: boolean
+          is_system_seeded: boolean
+          template_key: string | null
+          description: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          household_id: string
+          name: string
+          sort_order?: number
+          is_archived?: boolean
+          is_system_seeded?: boolean
+          template_key?: string | null
+          description?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          household_id?: string
+          name?: string
+          sort_order?: number
+          is_archived?: boolean
+          is_system_seeded?: boolean
+          template_key?: string | null
+          description?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'receipt_category_groups_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'receipt_category_groups_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'receipt_category_groups_updated_by_fkey'
+            columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      receipt_category_group_memberships: {
+        Row: {
+          household_id: string
+          receipt_category_id: string
+          group_id: number
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          household_id: string
+          receipt_category_id: string
+          group_id: number
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          household_id?: string
+          receipt_category_id?: string
+          group_id?: number
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'receipt_category_group_memberships_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'receipt_category_group_memberships_receipt_category_id_fkey'
+            columns: ['receipt_category_id']
+            isOneToOne: false
+            referencedRelation: 'receipt_categories'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'receipt_category_group_memberships_group_id_fkey'
+            columns: ['group_id']
+            isOneToOne: false
+            referencedRelation: 'receipt_category_groups'
             referencedColumns: ['id']
           },
         ]
@@ -1611,6 +2104,141 @@ export type Database = {
             referencedColumns: ['id']
           },
         ]
+      }
+      receipt_tags: {
+        Row: {
+          receipt_id: string
+          tag_id: string
+          household_id: string
+          created_at: string
+          created_by: string | null
+        }
+        Insert: {
+          receipt_id: string
+          tag_id: string
+          household_id: string
+          created_at?: string
+          created_by?: string | null
+        }
+        Update: {
+          receipt_id?: string
+          tag_id?: string
+          household_id?: string
+          created_at?: string
+          created_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'receipt_tags_receipt_id_fkey'
+            columns: ['receipt_id']
+            isOneToOne: false
+            referencedRelation: 'receipts'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'receipt_tags_tag_id_fkey'
+            columns: ['tag_id']
+            isOneToOne: false
+            referencedRelation: 'tags'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      receipt_staging_transactions: {
+        Row: {
+          id: string
+          upload_id: string
+          household_id: string
+          merchant_name: string | null
+          txn_date: string | null
+          payment_time: string | null
+          transaction_total: number | null
+          payment_information: string | null
+          payment_type: string | null
+          payment_breakdown_json: Record<string, unknown> | null
+          receipt_reference: string | null
+          tax_amount: number | null
+          currency: string
+          notes: string | null
+          extraction_confidence: number | null
+          raw_extraction_json: Record<string, unknown> | null
+          confidence_warnings_json: string[] | null
+          classification_source: string | null
+          classification_confidence: number | null
+          classification_version: string | null
+          receipt_category_id: string | null
+          is_mixed_basket: boolean
+          user_confirmed_low_confidence: boolean
+          review_status: string | null
+          committed_receipt_id: string | null
+          tag_ids_json: string[]
+          tag_suggestions_json: Record<string, unknown>[]
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          upload_id: string
+          household_id: string
+          merchant_name?: string | null
+          txn_date?: string | null
+          payment_time?: string | null
+          transaction_total?: number | null
+          payment_information?: string | null
+          payment_type?: string | null
+          payment_breakdown_json?: Record<string, unknown> | null
+          receipt_reference?: string | null
+          tax_amount?: number | null
+          currency?: string
+          notes?: string | null
+          extraction_confidence?: number | null
+          raw_extraction_json?: Record<string, unknown> | null
+          confidence_warnings_json?: string[] | null
+          classification_source?: string | null
+          classification_confidence?: number | null
+          classification_version?: string | null
+          receipt_category_id?: string | null
+          is_mixed_basket?: boolean
+          user_confirmed_low_confidence?: boolean
+          review_status?: string | null
+          committed_receipt_id?: string | null
+          tag_ids_json?: string[]
+          tag_suggestions_json?: Record<string, unknown>[]
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          upload_id?: string
+          household_id?: string
+          merchant_name?: string | null
+          txn_date?: string | null
+          payment_time?: string | null
+          transaction_total?: number | null
+          payment_information?: string | null
+          payment_type?: string | null
+          payment_breakdown_json?: Record<string, unknown> | null
+          receipt_reference?: string | null
+          tax_amount?: number | null
+          currency?: string
+          notes?: string | null
+          extraction_confidence?: number | null
+          raw_extraction_json?: Record<string, unknown> | null
+          confidence_warnings_json?: string[] | null
+          classification_source?: string | null
+          classification_confidence?: number | null
+          classification_version?: string | null
+          receipt_category_id?: string | null
+          is_mixed_basket?: boolean
+          user_confirmed_low_confidence?: boolean
+          review_status?: string | null
+          committed_receipt_id?: string | null
+          tag_ids_json?: string[]
+          tag_suggestions_json?: Record<string, unknown>[]
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       receipt_items: {
         Row: {
@@ -2461,6 +3089,7 @@ export type Database = {
       advance_status: 'pending' | 'partial' | 'settled' | 'written_off'
       match_type: 'exact' | 'fuzzy' | 'manual'
       mapping_status: 'needs_review' | 'confirmed' | 'rejected'
+      tag_source: 'default' | 'member' | 'custom' | 'system'
       link_type: 'refund' | 'installment' | 'transfer' | 'split' | 'internal_transfer' | 'credit_card_payment' | 'loan_repayment'
       exception_type: 'parse_error' | 'duplicate' | 'unmatched' | 'anomaly'
       exception_status: 'open' | 'resolved' | 'dismissed'

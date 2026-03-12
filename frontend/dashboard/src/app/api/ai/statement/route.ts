@@ -138,6 +138,7 @@ export async function POST(request: NextRequest) {
 
     const routed = await routeParsedTransactions({
       supabase: db,
+      householdId: profile.household_id,
       parsed,
       candidateAccounts,
       manualAccount,

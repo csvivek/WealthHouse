@@ -55,7 +55,21 @@ SET search_path = public
 AS $$
 DECLARE
   new_household_id uuid;
+  pending_invite_id uuid;
 BEGIN
+  SELECT invite.id
+  INTO pending_invite_id
+  FROM public.household_user_invites AS invite
+  WHERE invite.normalized_email = lower(trim(COALESCE(NEW.email, '')))
+    AND invite.accepted_at IS NULL
+    AND invite.revoked_at IS NULL
+  ORDER BY invite.created_at DESC
+  LIMIT 1;
+
+  IF pending_invite_id IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
   -- Create a household for the new user
   INSERT INTO public.households (name)
   VALUES (COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email) || '''s Household')

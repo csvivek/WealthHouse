@@ -5,6 +5,7 @@ import type { AvailableCategory } from '@/lib/knowledge/categories'
 import { normalizeMerchantName } from '@/lib/knowledge/merchant-categories'
 import { resolveMerchantCategory, type MerchantIntelligenceResult } from '@/lib/knowledge/merchant-intelligence'
 import { normalizeAccountType } from '@/lib/server/accounts'
+import { suggestTags, type TagSuggestion } from '@/lib/tags/suggestions'
 import { refreshLinkSuggestionsForImport } from '@/lib/statement-linking'
 
 export interface AccountInstitution {
@@ -64,6 +65,8 @@ export interface RoutedTransaction {
   similarMerchantKey: string
   merchantAliases: string[]
   searchSummary: string | null
+  tagIds: string[]
+  tagSuggestions: TagSuggestion[]
 }
 
 export interface UnmatchedAccountDescriptor {
@@ -359,6 +362,7 @@ function buildMerchantDecisionCacheKey(
 
 export async function routeParsedTransactions(params: {
   supabase: any
+  householdId: string
   parsed: ParsedStatementResult
   candidateAccounts: AccountCandidate[]
   manualAccount?: ResolvedAccount | null
@@ -468,6 +472,16 @@ export async function routeParsedTransactions(params: {
       `${index}`,
     )
 
+    const tagSuggestions = await suggestTags({
+      db: params.supabase,
+      householdId: params.householdId,
+      merchantName: merchantRaw,
+      categoryName: merchantDecision.categoryName,
+      description: transaction.description,
+      sourceText: [transaction.description, transaction.reference, transaction.category_hint].filter(Boolean).join(' '),
+      domain: 'statement',
+    })
+
     routedTransactions.push({
       rowIndex: index,
       txnDate,
@@ -496,6 +510,8 @@ export async function routeParsedTransactions(params: {
       similarMerchantKey: merchantDecision.similarMerchantKey,
       merchantAliases: merchantDecision.merchantAliases,
       searchSummary: merchantDecision.searchSummary,
+      tagIds: tagSuggestions.filter((suggestion) => typeof suggestion.tagId === 'string').map((suggestion) => suggestion.tagId as string),
+      tagSuggestions,
     })
   }
 
@@ -648,6 +664,8 @@ export async function stageRoutedTransactions(params: {
         merchantAliases: transaction.merchantAliases,
         similarMerchantKey: transaction.similarMerchantKey,
         searchSummary: transaction.searchSummary,
+        tagIds: transaction.tagIds,
+        tagSuggestions: transaction.tagSuggestions,
         importLabel,
       } as Record<string, unknown>,
       is_edited: false,

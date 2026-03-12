@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { resolveCategoryStyle } from '@/lib/server/category-style'
+import { moveCategoriesToGroup } from '@/lib/server/category-groups'
+import { getAccessibleReceiptCategory, resolveActionableReceiptCategory } from '@/lib/server/receipt-category-overrides'
 
 async function getHouseholdId() {
   const supabase = await createServerSupabaseClient()
@@ -36,21 +38,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const providedColorHex = typeof body?.color_hex === 'string' ? body.color_hex : null
 
   if (domain === 'receipt') {
-    const { data: existing, error: existingError } = await db
-      .from('receipt_categories')
-      .select('*')
-      .eq('id', id)
-      .or(`household_id.is.null,household_id.eq.${householdId}`)
-      .single()
-
-    if (existingError || !existing) {
+    const resolved = await resolveActionableReceiptCategory({
+      db,
+      householdId,
+      categoryId: id,
+    })
+    if (!resolved) {
       return NextResponse.json({ error: 'Category not found' }, { status: 404 })
     }
 
-    if (existing.household_id !== householdId) {
-      return NextResponse.json({ error: 'Cannot edit global receipt categories from this screen' }, { status: 403 })
-    }
-
+    const existing = resolved.category
     const nextName = providedName || existing.name
     const style = resolveCategoryStyle({
       name: nextName,
@@ -59,17 +56,31 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       colorHex: providedColorHex,
     })
 
-    const { data, error } = await db.from('receipt_categories').update({
-      name: nextName,
-      category_family: body?.type ?? existing.category_family,
-      is_active: typeof body?.is_active === 'boolean' ? body.is_active : existing.is_active,
-      description: body?.description ?? existing.description,
-      icon_key: style.icon_key,
-      color_token: style.color_token,
-      color_hex: style.color_hex,
-      updated_at: new Date().toISOString(),
-    }).eq('id', id).eq('household_id', householdId).select('*').single()
+    const { data, error } = await db
+      .from('receipt_categories')
+      .update({
+        name: nextName,
+        category_family: body?.type ?? existing.category_family,
+        is_active: typeof body?.is_active === 'boolean' ? body.is_active : existing.is_active,
+        description: body?.description ?? existing.description,
+        icon_key: style.icon_key,
+        color_token: style.color_token,
+        color_hex: style.color_hex,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id)
+      .eq('household_id', householdId)
+      .select('*')
+      .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (typeof body?.effective_group_id === 'number') {
+      await moveCategoriesToGroup(db, {
+        domain: 'receipt',
+        householdId,
+        targetGroupId: body.effective_group_id,
+        categoryIds: [existing.id],
+      })
+    }
     return NextResponse.json({ category: data })
   }
 
@@ -89,12 +100,21 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { data, error } = await db.from('categories').update({
     name: nextName,
     type: body?.type ?? existing.type,
+    payment_subtype: body?.type ?? existing.payment_subtype ?? existing.type,
     group_name: body?.group_name ?? existing.group_name,
     icon_key: style.icon_key,
     color_token: style.color_token,
     color_hex: style.color_hex,
   }).eq('id', Number(id)).select('*').single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (typeof body?.effective_group_id === 'number') {
+    await moveCategoriesToGroup(db, {
+      domain: 'payment',
+      householdId,
+      targetGroupId: body.effective_group_id,
+      categoryIds: [Number(id)],
+    })
+  }
   return NextResponse.json({ category: data })
 }
 
@@ -105,15 +125,44 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
   const db = createServiceSupabaseClient()
 
   if (domain === 'receipt') {
+    const category = await getAccessibleReceiptCategory({
+      db,
+      householdId,
+      categoryId: id,
+    })
+    if (!category) {
+      return NextResponse.json({ error: 'Category not found' }, { status: 404 })
+    }
+
+    if (category.household_id === null) {
+      return NextResponse.json({ error: 'Global receipt categories cannot be deleted' }, { status: 400 })
+    }
+
     const [{ count: headerCount }, { count: itemCount }] = await Promise.all([
-      db.from('receipt_staging_transactions').select('*', { count: 'exact', head: true }).eq('receipt_category_id', id),
-      db.from('receipt_staging_items').select('*', { count: 'exact', head: true }).eq('receipt_category_id', id),
+      db
+        .from('receipt_staging_transactions')
+        .select('*', { count: 'exact', head: true })
+        .eq('household_id', householdId)
+        .eq('receipt_category_id', id),
+      db
+        .from('receipt_staging_items')
+        .select('*', { count: 'exact', head: true })
+        .eq('household_id', householdId)
+        .eq('receipt_category_id', id),
     ])
     if ((headerCount ?? 0) > 0 || (itemCount ?? 0) > 0) {
-      return NextResponse.json({ error: 'Category is in use and cannot be deleted' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Category is in use. Reassign receipts to another category before deleting.' },
+        { status: 400 },
+      )
     }
-    const { error } = await db.from('receipt_categories').delete().eq('id', id).eq('household_id', householdId)
+    const { error } = await db.from('receipt_categories').delete().eq('id', category.id).eq('household_id', householdId)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    await db
+      .from('receipt_category_group_memberships')
+      .delete()
+      .eq('household_id', householdId)
+      .eq('receipt_category_id', category.id)
     return NextResponse.json({ success: true })
   }
 
@@ -126,5 +175,10 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
   }
   const { error } = await db.from('categories').delete().eq('id', Number(id))
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await db
+    .from('payment_category_group_memberships')
+    .delete()
+    .eq('household_id', householdId)
+    .eq('category_id', Number(id))
   return NextResponse.json({ success: true })
 }

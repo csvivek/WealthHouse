@@ -1,5 +1,13 @@
 {
   "schemaVersion": "1.0.0",
+<<<<<<< ours
+<<<<<<< ours
   "lastUpdatedAt": "2026-03-10T00:34:13.160Z",
+=======
+  "lastUpdatedAt": "1970-01-01T00:00:00.000Z",
+>>>>>>> theirs
+=======
+  "lastUpdatedAt": "1970-01-01T00:00:00.000Z",
+>>>>>>> theirs
   "modules": {}
 }

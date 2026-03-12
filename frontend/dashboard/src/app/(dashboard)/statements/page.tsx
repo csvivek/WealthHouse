@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Upload,
@@ -41,6 +41,9 @@ interface AccountOption {
 interface FileImportRow {
   id: string
   file_name: string
+  uploaded_by: string
+  uploadedByDisplayName: string | null
+  uploadedByEmail: string | null
   institution_code: string | null
   status: string
   total_rows: number | null
@@ -51,6 +54,12 @@ interface FileImportRow {
   statement_period_start: string | null
   statement_period_end: string | null
   created_at: string
+}
+
+interface HouseholdUploaderProfile {
+  id: string
+  display_name: string | null
+  email?: string | null
 }
 
 interface SuggestedExistingAccount {
@@ -114,7 +123,10 @@ export default function StatementsPage() {
   const router = useRouter()
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [imports, setImports] = useState<FileImportRow[]>([])
+  const [householdUsers, setHouseholdUsers] = useState<HouseholdUploaderProfile[]>([])
   const [loading, setLoading] = useState(true)
+  const [currentUserId, setCurrentUserId] = useState<string>('')
+  const [uploaderFilter, setUploaderFilter] = useState<string>('all')
 
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
   const [uploading, setUploading] = useState(false)
@@ -135,6 +147,7 @@ export default function StatementsPage() {
       setLoading(false)
       return
     }
+    setCurrentUserId(user.id)
 
     const { data: profile } = await supabase
       .from('user_profiles')
@@ -147,7 +160,7 @@ export default function StatementsPage() {
       return
     }
 
-    const [acctRes, importRes] = await Promise.all([
+    const [acctRes, importRes, householdProfilesResponse] = await Promise.all([
       supabase
         .from('accounts')
         .select('id, product_name, nickname, account_type, institutions(name)')
@@ -156,14 +169,33 @@ export default function StatementsPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('file_imports')
-        .select('id, file_name, institution_code, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at')
+        .select('id, file_name, uploaded_by, institution_code, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at')
         .eq('household_id', profile.household_id)
         .order('created_at', { ascending: false })
         .limit(50),
+      fetch('/api/household/profiles'),
     ])
 
+    const householdProfilesPayload = householdProfilesResponse.ok
+      ? await householdProfilesResponse.json().catch(() => ({ profiles: [] }))
+      : { profiles: [] }
+    const householdProfiles = (householdProfilesPayload.profiles ?? []) as HouseholdUploaderProfile[]
+    const uploadersById = new Map(
+      householdProfiles.map((householdProfile) => [householdProfile.id, householdProfile]),
+    )
+    const importRows = ((importRes.data as Array<Omit<FileImportRow, 'uploadedByDisplayName' | 'uploadedByEmail'>> | null) ?? [])
+      .map((importRow) => {
+        const uploader = uploadersById.get(importRow.uploaded_by)
+        return {
+          ...importRow,
+          uploadedByDisplayName: uploader?.display_name ?? null,
+          uploadedByEmail: uploader?.email ?? null,
+        }
+      })
+
     setAccounts((acctRes.data as unknown as AccountOption[]) ?? [])
-    setImports((importRes.data as FileImportRow[]) ?? [])
+    setHouseholdUsers(householdProfiles)
+    setImports(importRows)
     setLoading(false)
   }, [])
 
@@ -184,6 +216,24 @@ export default function StatementsPage() {
 
   function getAccountLabel(option: AccountOption) {
     return `${option.institutions?.name ? `${option.institutions.name} — ` : ''}${option.nickname ?? option.product_name}`
+  }
+
+  const uploaderOptions = useMemo(
+    () => householdUsers.filter((householdUser) => householdUser.id !== currentUserId),
+    [currentUserId, householdUsers],
+  )
+
+  const filteredImports = useMemo(() => {
+    if (uploaderFilter === 'all') return imports
+    if (uploaderFilter === 'me') {
+      return imports.filter((importRow) => importRow.uploaded_by === currentUserId)
+    }
+    return imports.filter((importRow) => importRow.uploaded_by === uploaderFilter)
+  }, [currentUserId, imports, uploaderFilter])
+
+  function getUploaderName(importRow: FileImportRow) {
+    if (importRow.uploaded_by === currentUserId) return 'You'
+    return importRow.uploadedByDisplayName || importRow.uploadedByEmail || 'Unknown user'
   }
 
   function initializeRecoveryState(payload: ParseRecoveryState) {
@@ -731,9 +781,29 @@ export default function StatementsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {imports.length === 0 ? (
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+            <div className="space-y-2">
+              <Label>Uploader</Label>
+              <Select value={uploaderFilter} onValueChange={setUploaderFilter}>
+                <SelectTrigger className="w-[260px]">
+                  <SelectValue placeholder="All household users" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All household users</SelectItem>
+                  <SelectItem value="me">Me</SelectItem>
+                  {uploaderOptions.map((householdUser) => (
+                    <SelectItem key={householdUser.id} value={householdUser.id}>
+                      {householdUser.display_name || householdUser.email || 'Unnamed user'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {filteredImports.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No statements imported yet.
+              {imports.length === 0 ? 'No statements imported yet.' : 'No statement imports match this uploader filter.'}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -745,12 +815,13 @@ export default function StatementsPage() {
                     <th className="pb-3 pr-4 font-medium">Period</th>
                     <th className="pb-3 pr-4 font-medium">Rows</th>
                     <th className="pb-3 pr-4 font-medium">Status</th>
+                    <th className="pb-3 pr-4 font-medium">Uploader</th>
                     <th className="pb-3 pr-4 font-medium">Uploaded</th>
                     <th className="pb-3 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {imports.map((importRow) => {
+                  {filteredImports.map((importRow) => {
                     const status = statusConfig[importRow.status] ?? statusConfig.received
                     return (
                       <tr key={importRow.id} className="border-b last:border-0">
@@ -779,6 +850,12 @@ export default function StatementsPage() {
                           <Badge className={cn('border-0 text-xs', status.className)}>
                             {status.label}
                           </Badge>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <div className="font-medium">{getUploaderName(importRow)}</div>
+                          {importRow.uploadedByEmail && (
+                            <div className="text-xs text-muted-foreground">{importRow.uploadedByEmail}</div>
+                          )}
                         </td>
                         <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">
                           {formatDate(importRow.created_at)}

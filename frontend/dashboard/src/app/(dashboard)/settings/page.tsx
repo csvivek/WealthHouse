@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Save, Shield, Trash2, Download, Moon, Sun } from 'lucide-react'
+import { MailPlus, Save, Shield, Trash2, Download, Moon, Sun } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -36,6 +36,16 @@ interface HouseholdProfile {
   avatar_url: string | null
   role: HouseholdRole
   email?: string | null
+}
+
+interface HouseholdInvitation {
+  id: string
+  email: string
+  displayName: string | null
+  role: string
+  createdAt: string
+  acceptedAt: string | null
+  revokedAt: string | null
 }
 
 interface CategoryGroup {
@@ -86,6 +96,10 @@ export default function SettingsPage() {
   const [householdName, setHouseholdName] = useState('')
   const [editingHouseholdName, setEditingHouseholdName] = useState(false)
   const [currentProfile, setCurrentProfile] = useState<HouseholdProfile | null>(null)
+  const [invitations, setInvitations] = useState<HouseholdInvitation[]>([])
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteDisplayName, setInviteDisplayName] = useState('')
+  const [savingInvite, setSavingInvite] = useState(false)
   const [isDialogOpen, setDialogOpen] = useState(false)
   const [editName, setEditName] = useState('')
   const [editRole, setEditRole] = useState<HouseholdRole>('member')
@@ -112,6 +126,22 @@ export default function SettingsPage() {
     setHierarchyRows(payload.hierarchy ?? [])
     setGroupTotals(payload.rollups?.groupTotals ?? [])
     setSubgroupTotals(payload.rollups?.subgroupTotals ?? [])
+  }, [])
+
+  const fetchHouseholdInvitations = useCallback(async (isOwner: boolean) => {
+    if (!isOwner) {
+      setInvitations([])
+      return
+    }
+
+    const response = await fetch('/api/household/invitations')
+    if (!response.ok) {
+      setInvitations([])
+      return
+    }
+
+    const payload = await response.json()
+    setInvitations((payload.invitations ?? []) as HouseholdInvitation[])
   }, [])
 
   // move outside so we can call it again after saving
@@ -152,14 +182,14 @@ export default function SettingsPage() {
         setHousehold((j.profiles || []) as HouseholdProfile[])
       }
 
+      await fetchHouseholdInvitations(profile.role === 'owner')
       await fetchTaxonomy()
     }
 
     setLoading(false)
-  }, [fetchTaxonomy])
+  }, [fetchHouseholdInvitations, fetchTaxonomy])
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchProfile()
   }, [fetchProfile])
 
@@ -233,6 +263,58 @@ export default function SettingsPage() {
       }
     } catch (err) {
       console.error(err)
+    }
+  }
+
+  const sendInvitation = async () => {
+    if (!inviteEmail.trim()) {
+      alert('Email is required.')
+      return
+    }
+
+    setSavingInvite(true)
+    try {
+      const response = await fetch('/api/household/invitations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          displayName: inviteDisplayName.trim() || null,
+        }),
+      })
+
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) {
+        alert(payload?.error ?? 'Failed to send invite.')
+        return
+      }
+
+      setInvitations((current) => [payload.invitation as HouseholdInvitation, ...current])
+      setInviteEmail('')
+      setInviteDisplayName('')
+    } catch (error) {
+      console.error(error)
+      alert('Failed to send invite.')
+    } finally {
+      setSavingInvite(false)
+    }
+  }
+
+  const revokeInvitation = async (id: string) => {
+    if (!confirm('Revoke this pending invite?')) return
+
+    try {
+      const response = await fetch(`/api/household/invitations/${id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        alert(payload?.error ?? 'Failed to revoke invite.')
+        return
+      }
+
+      setInvitations((current) => current.filter((invite) => invite.id !== id))
+    } catch (error) {
+      console.error(error)
+      alert('Failed to revoke invite.')
     }
   }
 
@@ -438,6 +520,45 @@ export default function SettingsPage() {
 
         {/* Household Tab */}
         <TabsContent value="household">
+          {currentProfile?.role === 'owner' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Invite Household User</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Invite a new login user into this household. Pending invites only become active after the invited person signs in.
+                </p>
+                <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                  <div className="space-y-2">
+                    <Label htmlFor="inviteEmail">Email</Label>
+                    <Input
+                      id="inviteEmail"
+                      placeholder="name@example.com"
+                      value={inviteEmail}
+                      onChange={(event) => setInviteEmail(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="inviteDisplayName">Display Name</Label>
+                    <Input
+                      id="inviteDisplayName"
+                      placeholder="Optional"
+                      value={inviteDisplayName}
+                      onChange={(event) => setInviteDisplayName(event.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button onClick={sendInvitation} disabled={savingInvite} className="w-full md:w-auto">
+                      <MailPlus className="mr-2 size-4" />
+                      {savingInvite ? 'Sending…' : 'Send Invite'}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Household Members</CardTitle>
@@ -498,6 +619,52 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {currentProfile?.role === 'owner' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Pending Invites</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {invitations.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No pending invites.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left text-muted-foreground">
+                          <th className="pb-3 pr-4 font-medium">Email</th>
+                          <th className="pb-3 pr-4 font-medium">Display Name</th>
+                          <th className="pb-3 pr-4 font-medium">Role</th>
+                          <th className="pb-3 pr-4 font-medium">Invited</th>
+                          <th className="pb-3 font-medium">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invitations.map((invitation) => (
+                          <tr key={invitation.id} className="border-b last:border-0">
+                            <td className="py-3 pr-4">{invitation.email}</td>
+                            <td className="py-3 pr-4">{invitation.displayName ?? '—'}</td>
+                            <td className="py-3 pr-4">{invitation.role}</td>
+                            <td className="py-3 pr-4 text-muted-foreground">{new Date(invitation.createdAt).toLocaleDateString()}</td>
+                            <td className="py-3">
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => revokeInvitation(invitation.id)}
+                              >
+                                Revoke
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Edit dialog */}
           <Dialog open={isDialogOpen} onOpenChange={setDialogOpen}>

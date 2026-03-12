@@ -18,6 +18,7 @@ interface StatementCommitJobResult {
   rejectedCount: number
   status: 'committed'
   replacementCommit: boolean
+  warnings: string[]
 }
 
 export interface StatementCommitJob {
@@ -105,6 +106,13 @@ function StatementCommitJobTray({ jobs, dismissJob }: { jobs: StatementCommitJob
                           ? (job.error ?? 'Commit failed')
                           : 'Processing in background. You can leave this page.'}
                     </p>
+                    {job.status === 'succeeded' && (job.result?.warnings?.length ?? 0) > 0 && (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                        {(job.result?.warnings ?? []).map((warning) => (
+                          <p key={warning}>{warning}</p>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
                       <JobStatusBadge status={job.status} />
                       <Link className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" href={`/statements/review/${job.importId}`}>

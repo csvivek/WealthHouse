@@ -1,8 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
+import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { syncReceiptKnowledgeMarkdown, upsertReceiptItemKnowledge, upsertReceiptMerchantKnowledge } from '@/lib/receipts/knowledge'
+import { resolveMerchantReference } from '@/lib/server/merchant-service'
+import { dedupeTagIds, validateTagOwnership } from '@/lib/server/tag-service'
 
 function hasUnresolvedDuplicates(rows: Array<{ status: string }>) {
   return rows.some((row) => row.status === 'suggested')
@@ -73,6 +76,10 @@ export async function POST(
     }
 
     const staging = stagingResult.data as Record<string, unknown>
+    const stagedTagIds = Array.isArray(staging.tag_ids_json)
+      ? dedupeTagIds(staging.tag_ids_json.filter((value): value is string => typeof value === 'string'))
+      : []
+    await validateTagOwnership(serviceSupabase, profile.household_id, stagedTagIds)
 
     const { data: stagingItemsData, error: stagingItemsError } = await serviceSupabase
       .from('receipt_staging_items')
@@ -129,6 +136,20 @@ export async function POST(
       .maybeSingle()
 
     let receiptId = existingReceipt.data?.id as string | undefined
+    let merchantResolution: Awaited<ReturnType<typeof resolveMerchantReference>> = null
+    try {
+      merchantResolution = await resolveMerchantReference({
+        db: serviceSupabase,
+        householdId: profile.household_id,
+        rawName: typeof staging.merchant_name === 'string' ? staging.merchant_name : null,
+        sourceType: 'receipt',
+        actorUserId: user.id,
+      })
+    } catch (error) {
+      if (!isMerchantSchemaNotReadyError(error)) {
+        throw error
+      }
+    }
 
     if (!receiptId) {
       const { data: receiptData, error: insertReceiptError } = await serviceSupabase
@@ -137,6 +158,7 @@ export async function POST(
           household_id: profile.household_id,
           receipt_datetime: staging.txn_date ? `${staging.txn_date}T${staging.payment_time || '00:00:00'}Z` : null,
           merchant_raw: staging.merchant_name,
+          merchant_id: merchantResolution?.merchant.id ?? null,
           total_amount: staging.transaction_total,
           tax_amount: staging.tax_amount,
           currency: staging.currency || 'SGD',
@@ -193,6 +215,29 @@ export async function POST(
           return NextResponse.json({ error: itemInsertError.message }, { status: 500 })
         }
       }
+
+      if (stagedTagIds.length > 0) {
+        const { error: receiptTagError } = await serviceSupabase
+          .from('receipt_tags')
+          .upsert(
+            stagedTagIds.map((tagId) => ({
+              household_id: profile.household_id,
+              receipt_id: receiptId,
+              tag_id: tagId,
+              created_by: user.id,
+            })),
+            { onConflict: 'receipt_id,tag_id' },
+          )
+
+        if (receiptTagError) {
+          return NextResponse.json({ error: receiptTagError.message }, { status: 500 })
+        }
+      }
+    } else if (merchantResolution?.merchant.id) {
+      await serviceSupabase
+        .from('receipts')
+        .update({ merchant_id: merchantResolution.merchant.id })
+        .eq('id', receiptId)
     }
 
     await Promise.all([

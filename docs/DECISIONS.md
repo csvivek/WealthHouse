@@ -36,6 +36,7 @@ Household-centric schema (actual Supabase tables):
 - Canonical migration directory is root: `supabase/migrations`.
 - Legacy directory `frontend/dashboard/supabase/migrations` is retained only for historical reference.
 - New migrations must be added only under `supabase/migrations` to avoid version-number drift and partial schema rollout.
+- Merchant management implementation notes live in `docs/MERCHANT_MANAGEMENT.md`.
 
 ## AI Agent Behavior
 

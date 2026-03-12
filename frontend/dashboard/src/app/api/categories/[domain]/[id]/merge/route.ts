@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
+import { moveCategoriesToGroup } from '@/lib/server/category-groups'
+import { resolveActionableReceiptCategory } from '@/lib/server/receipt-category-overrides'
 
 async function getHouseholdId() {
   const supabase = await createServerSupabaseClient()
@@ -24,33 +26,55 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const db = createServiceSupabaseClient()
 
     if (domain === 'receipt') {
-      const { data: sourceCategory, error: sourceError } = await db
-        .from('receipt_categories')
-        .select('id, household_id, name, category_family')
-        .eq('id', id)
-        .or(`household_id.is.null,household_id.eq.${householdId}`)
-        .single()
-      if (sourceError || !sourceCategory) {
+      const sourceResolution = await resolveActionableReceiptCategory({
+        db,
+        householdId,
+        categoryId: id,
+      })
+      if (!sourceResolution) {
         return NextResponse.json({ error: 'Source category not found' }, { status: 404 })
       }
-      if (sourceCategory.household_id !== householdId) {
-        return NextResponse.json({ error: 'Cannot merge global receipt categories from this screen' }, { status: 403 })
-      }
 
-      const { data: targetCategory, error: targetError } = await db
-        .from('receipt_categories')
-        .select('id, household_id, name, category_family')
-        .eq('id', targetId)
-        .or(`household_id.is.null,household_id.eq.${householdId}`)
-        .single()
-      if (targetError || !targetCategory) {
+      const targetResolution = await resolveActionableReceiptCategory({
+        db,
+        householdId,
+        categoryId: targetId,
+      })
+      if (!targetResolution) {
         return NextResponse.json({ error: 'Target category not found' }, { status: 404 })
       }
 
-      await db.from('receipt_staging_transactions').update({ receipt_category_id: targetId }).eq('receipt_category_id', id)
-      await db.from('receipt_staging_items').update({ receipt_category_id: targetId }).eq('receipt_category_id', id)
-      const { error } = await db.from('receipt_categories').delete().eq('id', id).eq('household_id', householdId)
+      const sourceCategory = sourceResolution.category
+      const targetCategory = targetResolution.category
+      if (sourceCategory.id === targetCategory.id) {
+        return NextResponse.json({ error: 'Cannot merge a category into itself' }, { status: 400 })
+      }
+
+      const { error: transactionUpdateError } = await db
+        .from('receipt_staging_transactions')
+        .update({ receipt_category_id: targetCategory.id })
+        .eq('household_id', householdId)
+        .eq('receipt_category_id', sourceCategory.id)
+      if (transactionUpdateError) throw new Error(transactionUpdateError.message)
+
+      const { error: itemUpdateError } = await db
+        .from('receipt_staging_items')
+        .update({ receipt_category_id: targetCategory.id })
+        .eq('household_id', householdId)
+        .eq('receipt_category_id', sourceCategory.id)
+      if (itemUpdateError) throw new Error(itemUpdateError.message)
+
+      const { error } = await db
+        .from('receipt_categories')
+        .delete()
+        .eq('id', sourceCategory.id)
+        .eq('household_id', householdId)
       if (error) throw new Error(error.message)
+      await db
+        .from('receipt_category_group_memberships')
+        .delete()
+        .eq('household_id', householdId)
+        .eq('receipt_category_id', sourceCategory.id)
       return NextResponse.json({ success: true })
     }
 
@@ -88,6 +112,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     await db.from('statement_transactions').update({ category_id: Number(targetId) }).eq('category_id', Number(id))
     await db.from('ledger_entries').update({ category_id: Number(targetId) }).eq('category_id', Number(id))
+    const { data: targetMembership } = await db
+      .from('payment_category_group_memberships')
+      .select('group_id')
+      .eq('household_id', householdId)
+      .eq('category_id', Number(targetId))
+      .maybeSingle()
+    if (targetMembership?.group_id) {
+      await moveCategoriesToGroup(db, {
+        domain: 'payment',
+        householdId,
+        targetGroupId: targetMembership.group_id,
+        categoryIds: [Number(targetId)],
+      })
+    }
+    await db
+      .from('payment_category_group_memberships')
+      .delete()
+      .eq('household_id', householdId)
+      .eq('category_id', Number(id))
     const { error } = await db.from('categories').delete().eq('id', Number(id))
     if (error) throw new Error(error.message)
     return NextResponse.json({ success: true })

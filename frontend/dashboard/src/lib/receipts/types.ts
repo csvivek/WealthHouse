@@ -60,6 +60,14 @@ export interface ReceiptClassificationResult {
   isMixedBasket: boolean
   rationale: string | null
   webSummary: string | null
+  tagIds: string[]
+  tagSuggestions: Array<{
+    tagId: string | null
+    name: string
+    confidence: number
+    reason: string
+    source: string
+  }>
   version: string
   itemResults: ReceiptClassificationItemResult[]
 }

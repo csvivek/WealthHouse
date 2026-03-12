@@ -1,18 +1,27 @@
 import {
   ArrowRightLeft,
+  Bus,
   BriefcaseBusiness,
   Car,
   CircleDollarSign,
+  Fuel,
+  Gift,
   GraduationCap,
   HandCoins,
   HeartPulse,
   Home,
+  Landmark,
+  Plane,
+  ShoppingCart,
+  TrainFront,
+  Wrench,
   MoreHorizontal,
   ReceiptText,
   ShoppingBag,
   Ticket,
   UtensilsCrossed,
   Wallet,
+  Tag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -44,14 +53,23 @@ export function CategoryIcon({
 
   if (key === 'income') return <CircleDollarSign className={iconClass} />
   if (key === 'transfer') return <ArrowRightLeft className={iconClass} />
+  if (key === 'tag') return <Tag className={iconClass} />
   if (key === 'shopping' || key === 'groceries') return <ShoppingBag className={iconClass} />
+  if (key === 'cart') return <ShoppingCart className={iconClass} />
   if (key === 'food' || key === 'dining') return <UtensilsCrossed className={iconClass} />
-  if (key === 'transport') return <Car className={iconClass} />
+  if (key === 'transport' || key === 'car' || key === 'parking') return <Car className={iconClass} />
+  if (key === 'fuel') return <Fuel className={iconClass} />
+  if (key === 'flight' || key === 'plane' || key === 'travel') return <Plane className={iconClass} />
+  if (key === 'bus') return <Bus className={iconClass} />
+  if (key === 'train') return <TrainFront className={iconClass} />
   if (key === 'home') return <Home className={iconClass} />
+  if (key === 'tools') return <Wrench className={iconClass} />
+  if (key === 'gift') return <Gift className={iconClass} />
+  if (key === 'bills' || key === 'bank') return <Landmark className={iconClass} />
   if (key === 'education') return <GraduationCap className={iconClass} />
-  if (key === 'healthcare') return <HeartPulse className={iconClass} />
+  if (key === 'healthcare' || key === 'medical') return <HeartPulse className={iconClass} />
   if (key === 'utilities') return <ReceiptText className={iconClass} />
-  if (key === 'salary') return <BriefcaseBusiness className={iconClass} />
+  if (key === 'salary' || key === 'work' || key === 'business') return <BriefcaseBusiness className={iconClass} />
   if (key === 'entertainment') return <Ticket className={iconClass} />
   if (key === 'cash') return <HandCoins className={iconClass} />
 

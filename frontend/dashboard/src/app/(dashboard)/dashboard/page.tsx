@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
+import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
 import {
   formatCurrency,
   formatCurrencyCompact,
@@ -52,6 +53,7 @@ interface StatementTransaction {
   txn_type: string
   merchant_normalized: string | null
   merchant_raw: string | null
+  merchant: { name: string | null } | null
   category_id: number | null
   description: string | null
   currency: string
@@ -70,6 +72,7 @@ interface ReceiptRow {
   id: string
   receipt_datetime: string | null
   merchant_raw: string
+  merchant: { name: string | null } | null
   total_amount: number
   category_id: number | null
   suggested_account_id: string | null
@@ -429,46 +432,63 @@ export default function DashboardPage() {
         const scopedCategoryIds = resolveScopedCategoryIds(categoryRows, filters)
         const { start, end } = resolveDatePeriodRange(filters.period)
 
-        let paymentsQuery = supabase
-          .from('statement_transactions')
-          .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at')
-          .order('txn_date', { ascending: false })
-
-        if (scopedAccountIds.length > 0) {
-          paymentsQuery = paymentsQuery.in('account_id', scopedAccountIds)
-        } else {
-          paymentsQuery = paymentsQuery.in('account_id', [''])
-        }
-
         const hasCategoryFilters =
           filters.groupId !== 'all' || filters.subgroupId !== 'all' || filters.categoryId !== 'all'
-        if (hasCategoryFilters) {
-          paymentsQuery = paymentsQuery.in('category_id', scopedCategoryIds.length > 0 ? scopedCategoryIds : [-1])
+
+        const buildPaymentsQuery = (includeMerchantJoin: boolean) => {
+          let query = supabase
+            .from('statement_transactions')
+            .select(
+              includeMerchantJoin
+                ? 'id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, merchant:merchants(name), category_id, description, currency, created_at'
+                : 'id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at',
+            )
+            .order('txn_date', { ascending: false })
+
+          if (scopedAccountIds.length > 0) {
+            query = query.in('account_id', scopedAccountIds)
+          } else {
+            query = query.in('account_id', [''])
+          }
+
+          if (hasCategoryFilters) {
+            query = query.in('category_id', scopedCategoryIds.length > 0 ? scopedCategoryIds : [-1])
+          }
+
+          if (start) query = query.gte('txn_date', start)
+          if (end) query = query.lte('txn_date', end)
+
+          return query
         }
 
-        if (start) paymentsQuery = paymentsQuery.gte('txn_date', start)
-        if (end) paymentsQuery = paymentsQuery.lte('txn_date', end)
+        const buildReceiptsQuery = (includeMerchantJoin: boolean) => {
+          let query = supabase
+            .from('receipts')
+            .select(
+              includeMerchantJoin
+                ? 'id, receipt_datetime, merchant_raw, merchant:merchants(name), total_amount, category_id, suggested_account_id'
+                : 'id, receipt_datetime, merchant_raw, total_amount, category_id, suggested_account_id',
+            )
+            .eq('status', 'confirmed')
+            .order('receipt_datetime', { ascending: false, nullsFirst: false })
 
-        let receiptsQuery = supabase
-          .from('receipts')
-          .select('id, receipt_datetime, merchant_raw, total_amount, category_id, suggested_account_id')
-          .eq('status', 'confirmed')
-          .order('receipt_datetime', { ascending: false, nullsFirst: false })
+          if (filters.accountId !== 'all') {
+            query = query.eq('suggested_account_id', filters.accountId)
+          }
 
-        if (filters.accountId !== 'all') {
-          receiptsQuery = receiptsQuery.eq('suggested_account_id', filters.accountId)
+          if (hasCategoryFilters) {
+            query = query.in('category_id', scopedCategoryIds.length > 0 ? scopedCategoryIds : [-1])
+          }
+
+          if (start) query = query.gte('receipt_datetime', `${start}T00:00:00.000Z`)
+          if (end) query = query.lte('receipt_datetime', `${end}T23:59:59.999Z`)
+
+          return query
         }
 
-        if (hasCategoryFilters) {
-          receiptsQuery = receiptsQuery.in('category_id', scopedCategoryIds.length > 0 ? scopedCategoryIds : [-1])
-        }
-
-        if (start) receiptsQuery = receiptsQuery.gte('receipt_datetime', `${start}T00:00:00.000Z`)
-        if (end) receiptsQuery = receiptsQuery.lte('receipt_datetime', `${end}T23:59:59.999Z`)
-
-        const [paymentsRes, receiptsRes, cardsRes, balancesRes] = await Promise.all([
-          paymentsQuery,
-          receiptsQuery,
+        let [paymentsRes, receiptsRes, cardsRes, balancesRes] = await Promise.all([
+          buildPaymentsQuery(true),
+          buildReceiptsQuery(true),
           scopedAccountIds.length > 0
             ? supabase
                 .from('cards')
@@ -483,14 +503,25 @@ export default function DashboardPage() {
             : Promise.resolve({ data: [] as AssetBalance[] }),
         ])
 
+        if (isMerchantSchemaNotReadyError(paymentsRes.error, 'merchants')) {
+          paymentsRes = await buildPaymentsQuery(false)
+        }
+
+        if (isMerchantSchemaNotReadyError(receiptsRes.error, 'merchants')) {
+          receiptsRes = await buildReceiptsQuery(false)
+        }
+
+        if (paymentsRes.error) throw paymentsRes.error
+        if (receiptsRes.error) throw receiptsRes.error
+
         if (!isActive) return
 
-        const paymentRows = (paymentsRes.data as StatementTransaction[] | null) ?? []
+        const paymentRows = (paymentsRes.data as unknown as StatementTransaction[] | null) ?? []
         setAccounts(accountList)
         setCategories(categoryRows)
         setAllTxns(paymentRows)
         setRecentTxns(paymentRows.slice(0, 8))
-        setReceipts((receiptsRes.data as ReceiptRow[] | null) ?? [])
+        setReceipts((receiptsRes.data as unknown as ReceiptRow[] | null) ?? [])
         setCards((cardsRes.data as CardRow[] | null) ?? [])
         setAssetBalances((balancesRes.data as AssetBalance[] | null) ?? [])
       } catch (error) {
@@ -605,7 +636,7 @@ export default function DashboardPage() {
               receipts.slice(0, 10).map((receipt) => (
                 <div key={receipt.id} className="flex items-center justify-between border-b py-2 last:border-b-0">
                   <div>
-                    <p className="font-medium">{receipt.merchant_raw}</p>
+                    <p className="font-medium">{receipt.merchant?.name ?? receipt.merchant_raw}</p>
                     <p className="text-xs text-muted-foreground">
                       {receipt.receipt_datetime ? formatDateShort(receipt.receipt_datetime) : 'No date'}
                     </p>
@@ -712,6 +743,7 @@ export default function DashboardPage() {
                       transaction.category_id != null ? categoryMap.get(transaction.category_id) : undefined
                     const isCredit = transaction.txn_type === 'credit'
                     const merchantName =
+                      transaction.merchant?.name ??
                       transaction.merchant_normalized ??
                       transaction.merchant_raw ??
                       transaction.description ??

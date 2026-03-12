@@ -62,6 +62,8 @@ export async function POST(
     return NextResponse.json({
       success: true,
       classification: result,
+      tagIds: result.tagIds,
+      tagSuggestions: result.tagSuggestions,
     })
   } catch (error) {
     return NextResponse.json(

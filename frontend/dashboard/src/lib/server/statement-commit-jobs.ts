@@ -50,7 +50,16 @@ function pruneOldJobs(store: StatementCommitJobStore) {
 }
 
 function cloneJob(job: StatementCommitJobRecord) {
-  return { ...job, result: job.result ? { ...job.result } : null }
+  return {
+    ...job,
+    result: job.result
+      ? {
+          ...job.result,
+          statementImportIds: [...job.result.statementImportIds],
+          warnings: [...(job.result.warnings ?? [])],
+        }
+      : null,
+  }
 }
 
 async function runStatementCommitJob(jobId: string) {
