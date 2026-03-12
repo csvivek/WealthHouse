@@ -21,6 +21,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, formatDate } from '@/lib/format'
+import { isApprovedMappingStatus } from '@/lib/statement-linking/config'
 import { cn } from '@/lib/utils'
 import { CategoryBadge } from '@/components/category-badge'
 import { CategoryIcon } from '@/components/category-icon'
@@ -254,13 +255,11 @@ async function loadInternalTransferLinks(
       .from('transaction_links')
       .select('id, from_transaction_id, to_transaction_id, link_type, status')
       .eq('link_type', 'internal_transfer')
-      .eq('status', 'confirmed')
       .in('from_transaction_id', transactionIds),
     supabase
       .from('transaction_links')
       .select('id, from_transaction_id, to_transaction_id, link_type, status')
       .eq('link_type', 'internal_transfer')
-      .eq('status', 'confirmed')
       .in('to_transaction_id', transactionIds),
   ])
 
@@ -268,8 +267,8 @@ async function loadInternalTransferLinks(
   if (incomingResult.error) throw new Error(incomingResult.error.message)
 
   return dedupeTransferLinks([
-    ...normalizeTransferLinks(outgoingResult.data),
-    ...normalizeTransferLinks(incomingResult.data),
+    ...normalizeTransferLinks(outgoingResult.data).filter((link) => isApprovedMappingStatus(link.status)),
+    ...normalizeTransferLinks(incomingResult.data).filter((link) => isApprovedMappingStatus(link.status)),
   ])
 }
 

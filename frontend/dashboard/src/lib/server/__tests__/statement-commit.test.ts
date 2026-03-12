@@ -403,6 +403,20 @@ describe('processStatementCommit summary handling', () => {
     })
   })
 
+  it('surfaces the underlying approved staging link query error', async () => {
+    const context = createMutableDb({
+      stagingLinksSelectError: {
+        code: '42501',
+        message: 'permission denied for table staging_transaction_links',
+      },
+    })
+    mockedCreateServiceSupabaseClient.mockReturnValue(context.db as never)
+
+    await expect(
+      processStatementCommit({ importId: 'import-1', householdId: 'hh-1', userId: 'user-1' }),
+    ).rejects.toThrow('Failed to load approved staging links: permission denied for table staging_transaction_links [42501]')
+  })
+
   it('commits successfully when staging transaction link columns are unavailable', async () => {
     const context = createMutableDb({
       stagingLinksSelectError: {
@@ -504,7 +518,7 @@ describe('processStatementCommit summary handling', () => {
           link_type: 'credit_card_payment',
           link_score: 0.99,
           link_reason: { rule: 'test' },
-          status: 'confirmed',
+          status: 'approved',
           matched_by: 'system',
           matched_by_user_id: null,
           reviewed_by: null,

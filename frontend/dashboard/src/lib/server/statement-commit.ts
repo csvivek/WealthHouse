@@ -4,7 +4,11 @@ import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { logAudit } from '@/lib/integrity/audit'
 import { resolveMerchantReference } from '@/lib/server/merchant-service'
-import { isStatementLinkingSchemaNotReadyError, statementLinkingSchemaNotReadyWarning } from '@/lib/statement-linking/config'
+import {
+  isApprovedMappingStatus,
+  isStatementLinkingSchemaNotReadyError,
+  statementLinkingSchemaNotReadyWarning,
+} from '@/lib/statement-linking/config'
 import type { Database } from '@/types/database'
 
 type FileImportUpdate = Database['public']['Tables']['file_imports']['Update']
@@ -48,6 +52,35 @@ function readNumber(value: unknown) {
 
 function readStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : []
+}
+
+function readSupabaseErrorMessage(error: unknown) {
+  if (!error) return 'Unknown error'
+
+  if (error instanceof Error) {
+    return error.message || 'Unknown error'
+  }
+
+  if (typeof error === 'object') {
+    const next = error as {
+      message?: unknown
+      details?: unknown
+      hint?: unknown
+      code?: unknown
+    }
+    const parts = [
+      typeof next.message === 'string' ? next.message : '',
+      typeof next.details === 'string' ? next.details : '',
+      typeof next.hint === 'string' ? next.hint : '',
+    ].filter((part) => part.trim().length > 0)
+
+    const message = parts.join(' ').trim() || 'Unknown error'
+    return typeof next.code === 'string' && next.code.trim().length > 0
+      ? `${message} [${next.code}]`
+      : message
+  }
+
+  return String(error)
 }
 
 function coerceDateOnly(value: unknown) {
@@ -451,20 +484,23 @@ export async function processStatementCommit(params: {
     .select('*')
     .eq('file_import_id', importId)
     .eq('household_id', householdId)
-    .eq('status', 'confirmed')
 
   if (approvedLinksError) {
     if (isStatementLinkingSchemaNotReadyError(approvedLinksError)) {
       warnings.push(statementLinkingSchemaNotReadyWarning())
     } else {
+      console.error('Failed to load approved staging links:', approvedLinksError)
       await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
-      throw new StatementCommitProcessError('Failed to load approved staging links', 500)
+      throw new StatementCommitProcessError(
+        `Failed to load approved staging links: ${readSupabaseErrorMessage(approvedLinksError)}`,
+        500,
+      )
     }
   }
 
   const linkInserts: TransactionLinkInsert[] = []
 
-  for (const link of approvedLinks ?? []) {
+  for (const link of (approvedLinks ?? []).filter((row) => isApprovedMappingStatus(row.status))) {
     const fromTransactionId = committedTransactionByStagingId.get(link.from_staging_id)
     const toTransactionId = link.to_transaction_id ?? (link.to_staging_id ? committedTransactionByStagingId.get(link.to_staging_id) : null)
 

@@ -1,6 +1,6 @@
 export type LinkType = 'internal_transfer' | 'credit_card_payment' | 'loan_repayment'
 
-export type LinkStatus = 'needs_review' | 'confirmed' | 'rejected'
+export type LinkStatus = 'needs_review' | 'confirmed' | 'approved' | 'auto_approved' | 'rejected'
 
 export interface LinkCandidate {
   sourceKind: 'staging' | 'committed'

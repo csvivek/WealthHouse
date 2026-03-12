@@ -327,28 +327,44 @@ function createServiceDbMock(params?: {
 
       if (table === 'transaction_links') {
         return {
-          select: () => ({
-            eq: (_column: string, _value: string) => ({
-              eq: (_statusColumn: string, _statusValue: string) => ({
-                eq: async (transactionColumn: string, transactionId: string) => ({
-                  data: links.filter((link) => String(link[transactionColumn]) === transactionId),
-                  error: null,
-                }),
-              }),
-            }),
-          }),
-          delete: () => ({
-            eq: (_column: string, _value: string) => ({
-              eq: async (transactionColumn: string, transactionId: string) => {
+          select: () => {
+            const filters: Array<[string, unknown]> = []
+            const builder = {
+              eq: (column: string, value: unknown) => {
+                filters.push([column, value])
+                return builder
+              },
+              then: <TResult1 = { data: Array<Record<string, unknown>>; error: null }>(
+                onfulfilled?: ((value: { data: Array<Record<string, unknown>>; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+                onrejected?: ((reason: unknown) => PromiseLike<never>) | null,
+              ) => {
+                const data = links.filter((link) => filters.every(([column, value]) => link[column] === value))
+                return Promise.resolve({ data, error: null as null }).then(onfulfilled, onrejected)
+              },
+            }
+            return builder
+          },
+          delete: () => {
+            const filters: Array<[string, unknown]> = []
+            const builder = {
+              eq: (column: string, value: unknown) => {
+                filters.push([column, value])
+                return builder
+              },
+              then: <TResult1 = { error: null }>(
+                onfulfilled?: ((value: { error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+                onrejected?: ((reason: unknown) => PromiseLike<never>) | null,
+              ) => {
                 for (let index = links.length - 1; index >= 0; index -= 1) {
-                  if (String(links[index][transactionColumn]) === transactionId) {
+                  if (filters.every(([column, value]) => links[index][column] === value)) {
                     links.splice(index, 1)
                   }
                 }
-                return { error: null }
+                return Promise.resolve({ error: null as null }).then(onfulfilled, onrejected)
               },
-            }),
-          }),
+            }
+            return builder
+          },
           insert: async (value: Record<string, unknown>) => {
             links.push({
               id: `link-${links.length + 1}`,

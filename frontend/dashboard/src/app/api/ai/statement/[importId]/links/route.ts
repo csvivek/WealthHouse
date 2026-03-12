@@ -3,10 +3,23 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import type { Database } from '@/types/database'
 import { refreshLinkSuggestionsForImport } from '@/lib/statement-linking'
+import {
+  isApprovedMappingStatus,
+  rewriteApprovedMappingStatus,
+  withApprovedMappingStatusFallback,
+} from '@/lib/statement-linking/config'
 
 type StagingLinkInsert = Database['public']['Tables']['staging_transaction_links']['Insert']
 type StagingLinkUpdate = Database['public']['Tables']['staging_transaction_links']['Update']
 type ApprovalLogInsert = Database['public']['Tables']['approval_log']['Insert']
+
+function readErrorMessage(error: unknown, fallback = 'Failed to update links') {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error && 'message' in error) {
+    return String((error as { message?: unknown }).message ?? fallback)
+  }
+  return fallback
+}
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ importId: string }> }) {
   try {
@@ -49,22 +62,28 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         return NextResponse.json({ error: 'No link IDs provided' }, { status: 400 })
       }
 
-      const update: StagingLinkUpdate = {
-        status: action === 'approve' ? 'confirmed' : 'rejected',
-        reviewed_by: user.id,
-        reviewed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+      const runUpdate = (approvedStatus: 'confirmed' | 'approved') => {
+        const update: StagingLinkUpdate = {
+          status: (action === 'approve' ? approvedStatus : 'rejected') as Database['public']['Enums']['mapping_status'],
+          reviewed_by: user.id,
+          reviewed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+
+        return supabase
+          .from('staging_transaction_links')
+          .update(update)
+          .eq('file_import_id', importId)
+          .eq('household_id', profile.household_id)
+          .in('id', linkIds)
       }
 
-      const { error } = await supabase
-        .from('staging_transaction_links')
-        .update(update)
-        .eq('file_import_id', importId)
-        .eq('household_id', profile.household_id)
-        .in('id', linkIds)
+      const { error } = action === 'approve'
+        ? await withApprovedMappingStatusFallback(runUpdate)
+        : await runUpdate('confirmed')
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        return NextResponse.json({ error: readErrorMessage(error) }, { status: 500 })
       }
 
       const approvalLog: ApprovalLogInsert = {
@@ -85,7 +104,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         return NextResponse.json({ error: 'Invalid link payload' }, { status: 400 })
       }
 
-      const insert: StagingLinkInsert = {
+      const requestedStatus = payload.status ?? 'confirmed'
+      let insert: StagingLinkInsert = {
         file_import_id: importId,
         household_id: profile.household_id,
         from_staging_id: payload.from_staging_id,
@@ -94,16 +114,27 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         link_type: payload.link_type,
         link_score: payload.link_score ?? 1,
         link_reason: payload.link_reason ?? { manual: true },
-        status: payload.status ?? 'confirmed',
+        status: requestedStatus,
         matched_by: 'user',
         matched_by_user_id: user.id,
         reviewed_by: user.id,
         reviewed_at: new Date().toISOString(),
       }
 
-      const { error } = await supabase.from('staging_transaction_links').insert(insert)
+      const runInsert = (approvedStatus: 'confirmed' | 'approved') => {
+        insert = {
+          ...insert,
+          status: (rewriteApprovedMappingStatus(requestedStatus, approvedStatus) ?? 'needs_review') as Database['public']['Enums']['mapping_status'],
+        }
+        return supabase.from('staging_transaction_links').insert(insert)
+      }
+
+      const { error } = isApprovedMappingStatus(requestedStatus)
+        ? await withApprovedMappingStatusFallback(runInsert)
+        : await runInsert('confirmed')
+
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        return NextResponse.json({ error: readErrorMessage(error) }, { status: 500 })
       }
 
       const approvalLog: ApprovalLogInsert = {

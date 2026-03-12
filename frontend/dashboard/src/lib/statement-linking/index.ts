@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { buildStagingCandidatePairs } from './candidates'
+import { rewriteApprovedMappingStatus, withApprovedMappingStatusFallback } from './config'
 import { scoreCandidate } from './scoring'
 import type { SuggestedLink } from './types'
 
@@ -86,25 +87,36 @@ export async function refreshLinkSuggestionsForImport(params: {
 
     for (const suggestion of suggestions) {
       if (suggestion.toStagingId === source.id) continue
-      inserts.push({
-        file_import_id: fileImportId,
-        household_id: householdId,
-        from_staging_id: suggestion.fromStagingId,
-        to_staging_id: suggestion.toStagingId,
-        to_transaction_id: suggestion.toTransactionId,
-        link_type: suggestion.linkType,
-        link_score: suggestion.linkScore,
-        link_reason: suggestion.linkReason,
-        status: suggestion.status,
-        matched_by: suggestion.matchedBy,
-        matched_by_user_id: actorUserId ?? null,
-      })
-    }
+        inserts.push({
+          file_import_id: fileImportId,
+          household_id: householdId,
+          from_staging_id: suggestion.fromStagingId,
+          to_staging_id: suggestion.toStagingId,
+          to_transaction_id: suggestion.toTransactionId,
+          link_type: suggestion.linkType,
+          link_score: suggestion.linkScore,
+          link_reason: suggestion.linkReason,
+          status: suggestion.status as Database['public']['Enums']['mapping_status'],
+          matched_by: suggestion.matchedBy,
+          matched_by_user_id: actorUserId ?? null,
+        })
+      }
   }
 
   if (inserts.length > 0) {
-    await supabase
-      .from('staging_transaction_links')
-      .insert(inserts)
+    const result = await withApprovedMappingStatusFallback((approvedStatus) => (
+      supabase
+        .from('staging_transaction_links')
+        .insert(
+          inserts.map((insert) => ({
+            ...insert,
+            status: (rewriteApprovedMappingStatus(insert.status, approvedStatus) ?? 'needs_review') as Database['public']['Enums']['mapping_status'],
+          })),
+        )
+    ))
+
+    if (result.error) {
+      throw result.error
+    }
   }
 }

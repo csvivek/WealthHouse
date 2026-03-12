@@ -95,7 +95,7 @@ interface StagingLink {
   linkType: string
   linkScore: number
   linkReason: Record<string, unknown>
-  status: 'needs_review' | 'confirmed' | 'rejected'
+  status: 'needs_review' | 'confirmed' | 'approved' | 'auto_approved' | 'rejected'
   matchedBy: string
   reviewedBy: string | null
   reviewedAt: string | null

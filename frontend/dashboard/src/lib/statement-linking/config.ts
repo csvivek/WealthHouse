@@ -2,6 +2,9 @@ export const STATEMENT_LINKING_ERROR_CODES = {
   SCHEMA_NOT_READY: 'statement_linking_schema_not_ready',
 } as const
 
+const APPROVED_MAPPING_STATUS_VALUES = ['confirmed', 'approved', 'auto_approved'] as const
+const WRITABLE_APPROVED_MAPPING_STATUS_VALUES = ['confirmed', 'approved'] as const
+
 type SupabaseLikeError = {
   message?: string | null
   details?: string | null
@@ -33,6 +36,43 @@ function readErrorCode(error: unknown) {
   const value = asSupabaseLikeError(error)
   if (!value || value instanceof Error) return null
   return value.code ?? null
+}
+
+export function isApprovedMappingStatus(value: unknown) {
+  if (typeof value !== 'string') return false
+  const normalized = value.trim().toLowerCase()
+  return APPROVED_MAPPING_STATUS_VALUES.some((status) => status === normalized)
+}
+
+export function isInvalidMappingStatusValueError(error: unknown, value: string) {
+  const code = readErrorCode(error)
+  const message = readErrorText(error)
+  const normalized = value.trim().toLowerCase()
+
+  if (code !== '22P02' || !message.includes('mapping_status')) return false
+  return message.includes(`"${normalized}"`) || message.includes(`'${normalized}'`) || message.includes(normalized)
+}
+
+export function rewriteApprovedMappingStatus(
+  status: unknown,
+  approvedStatus: (typeof WRITABLE_APPROVED_MAPPING_STATUS_VALUES)[number],
+) {
+  if (!isApprovedMappingStatus(status)) {
+    return typeof status === 'string' ? status : null
+  }
+
+  return approvedStatus
+}
+
+export async function withApprovedMappingStatusFallback<T extends { error?: unknown | null }>(
+  run: (approvedStatus: (typeof WRITABLE_APPROVED_MAPPING_STATUS_VALUES)[number]) => PromiseLike<T>,
+) {
+  const result = await run('confirmed')
+  if (!isInvalidMappingStatusValueError(result?.error, 'confirmed')) {
+    return result
+  }
+
+  return run('approved')
 }
 
 export function isStatementLinkingSchemaNotReadyError(error: unknown, requiredTable = 'staging_transaction_links') {

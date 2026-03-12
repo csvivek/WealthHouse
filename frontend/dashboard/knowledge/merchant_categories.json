@@ -836,13 +836,13 @@
       "dbs bank"
     ],
     "business_type": "Banking",
-    "approved_category_id": 41,
-    "approved_category_name": "Internal Transfer",
+    "approved_category_id": 39,
+    "approved_category_name": "Credit Card Payment",
     "confidence": 1,
     "decision_source": "manual_override",
-    "usage_count": 2,
+    "usage_count": 4,
     "first_seen_date": "2026-03-08T10:28:50.936Z",
-    "last_reviewed_date": "2026-03-08T10:29:04.808Z",
+    "last_reviewed_date": "2026-03-12T14:34:53.234Z",
     "notes": null
   },
   "sp digital": {
@@ -869,13 +869,13 @@
     "family_name": "gst reversal",
     "aliases": [],
     "business_type": null,
-    "approved_category_id": 37,
-    "approved_category_name": "Refunds",
+    "approved_category_id": 51,
+    "approved_category_name": "Banking Reversals",
     "confidence": 1,
     "decision_source": "manual_override",
-    "usage_count": 1,
+    "usage_count": 2,
     "first_seen_date": "2026-03-08T10:35:05.938Z",
-    "last_reviewed_date": "2026-03-08T10:35:05.938Z",
+    "last_reviewed_date": "2026-03-12T14:35:17.283Z",
     "notes": null
   },
   "cvs pharmacy": {
@@ -1068,6 +1068,24 @@
     "usage_count": 1,
     "first_seen_date": "2026-03-12T14:01:50.519Z",
     "last_reviewed_date": "2026-03-12T14:01:50.519Z",
+    "notes": null
+  },
+  "annual fee reversal": {
+    "canonical_merchant_name": "DBS Bank",
+    "normalized_merchant_name": "annual fee reversal",
+    "family_name": "dbs bank",
+    "aliases": [
+      "dbs",
+      "dbs bank"
+    ],
+    "business_type": "Banking",
+    "approved_category_id": 51,
+    "approved_category_name": "Banking Reversals",
+    "confidence": 1,
+    "decision_source": "manual_override",
+    "usage_count": 1,
+    "first_seen_date": "2026-03-12T14:33:48.764Z",
+    "last_reviewed_date": "2026-03-12T14:33:48.764Z",
     "notes": null
   }
 }

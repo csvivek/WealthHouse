@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { getAuthenticatedHouseholdContext } from '@/lib/server/household-context'
+import { isApprovedMappingStatus, withApprovedMappingStatusFallback } from '@/lib/statement-linking/config'
 import { replaceTagsOnStatementTransaction, validateTagOwnership } from '@/lib/server/tag-service'
 import { isPaymentCategoryTypeCompatible, normalizeTxnDirection } from '@/lib/transactions/category-compatibility'
 import {
@@ -73,6 +74,14 @@ class RouteError extends Error {
     super(message)
     this.status = status
   }
+}
+
+function readErrorMessage(error: unknown, fallback = 'Failed to update transaction') {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error && 'message' in error) {
+    return String((error as { message?: unknown }).message ?? fallback)
+  }
+  return fallback
 }
 
 function flattenTags(value: unknown): TagResponse[] {
@@ -192,13 +201,11 @@ async function getInternalTransferLinksForTransaction(
       .from('transaction_links')
       .select('id, from_transaction_id, to_transaction_id, link_type, status')
       .eq('link_type', 'internal_transfer')
-      .eq('status', 'confirmed')
       .eq('from_transaction_id', transactionId),
     db
       .from('transaction_links')
       .select('id, from_transaction_id, to_transaction_id, link_type, status')
       .eq('link_type', 'internal_transfer')
-      .eq('status', 'confirmed')
       .eq('to_transaction_id', transactionId),
   ])
 
@@ -206,8 +213,8 @@ async function getInternalTransferLinksForTransaction(
   if (incomingResult.error) throw new Error(incomingResult.error.message)
 
   return dedupeInternalTransferLinks([
-    ...normalizeInternalTransferLinks(outgoingResult.data),
-    ...normalizeInternalTransferLinks(incomingResult.data),
+    ...normalizeInternalTransferLinks(outgoingResult.data).filter((link) => isApprovedMappingStatus(link.status)),
+    ...normalizeInternalTransferLinks(incomingResult.data).filter((link) => isApprovedMappingStatus(link.status)),
   ])
 }
 
@@ -390,20 +397,22 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     await deleteInternalTransferLinksForTransaction(db, id)
 
     if (internalTransferTargetId && isInternalTransferCategory) {
-      const { error: insertError } = await db
-        .from('transaction_links')
-        .insert({
-          from_transaction_id: id,
-          to_transaction_id: internalTransferTargetId,
-          link_type: 'internal_transfer',
-          link_score: 1,
-          link_reason: { source: 'transactions_editor' },
-          status: 'confirmed',
-          matched_by: 'user',
-          matched_by_user_id: ctx.userId,
-        })
+      const { error: insertError } = await withApprovedMappingStatusFallback((approvedStatus) => (
+        db
+          .from('transaction_links')
+          .insert({
+            from_transaction_id: id,
+            to_transaction_id: internalTransferTargetId,
+            link_type: 'internal_transfer',
+            link_score: 1,
+            link_reason: { source: 'transactions_editor' },
+            status: approvedStatus,
+            matched_by: 'user',
+            matched_by_user_id: ctx.userId,
+          })
+      ))
 
-      if (insertError) throw new Error(insertError.message)
+      if (insertError) throw new Error(readErrorMessage(insertError))
     }
 
     const nextTransaction = await getStatementTransactionEditorState(db, id)
