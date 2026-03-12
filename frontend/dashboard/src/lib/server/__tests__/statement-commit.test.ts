@@ -122,6 +122,7 @@ function createMutableDb(params?: {
   existingStatementImports?: Row[]
   stagingLinks?: Row[]
   stagingLinksSelectError?: { message: string; code?: string | null }
+  transactionLinksUpsertError?: { message: string; code?: string | null }
 }) {
   const fileImports = [{
     id: 'import-1',
@@ -236,6 +237,9 @@ function createMutableDb(params?: {
         ),
         insert: (payload: Row | Row[]) => new InsertBuilder(insertRows(table, payload)),
         upsert: async (payload: Row | Row[]) => {
+          if (table === 'transaction_links' && params?.transactionLinksUpsertError) {
+            return { error: params.transactionLinksUpsertError }
+          }
           insertRows(table, payload)
           return { error: null }
         },
@@ -396,6 +400,136 @@ describe('processStatementCommit summary handling', () => {
     expect(context.tables.file_imports[0]).toMatchObject({
       status: 'committed',
       committed_rows: 1,
+    })
+  })
+
+  it('commits successfully when staging transaction link columns are unavailable', async () => {
+    const context = createMutableDb({
+      stagingLinksSelectError: {
+        message: "Could not find the 'status' column of 'staging_transaction_links' in the schema cache",
+      },
+    })
+    mockedCreateServiceSupabaseClient.mockReturnValue(context.db as never)
+
+    const result = await processStatementCommit({ importId: 'import-1', householdId: 'hh-1', userId: 'user-1' })
+
+    expect(result.status).toBe('committed')
+    expect(result.committedCount).toBe(1)
+    expect(result.warnings).toContain(
+      'Statement committed, but transaction links were skipped because staging link support is not deployed in this Supabase environment.',
+    )
+    expect(context.tables.transaction_links).toHaveLength(0)
+  })
+
+  it('commits successfully when transaction link persistence schema is unavailable', async () => {
+    const context = createMutableDb({
+      approvedRows: [
+        {
+          id: 'row-1',
+          file_import_id: 'import-1',
+          household_id: 'hh-1',
+          account_id: 'acct-1',
+          row_index: 1,
+          review_status: 'approved',
+          duplicate_status: 'none',
+          duplicate_transaction_id: null,
+          txn_hash: 'txn-hash-1',
+          source_txn_hash: 'src-hash-1',
+          txn_date: '2026-02-10',
+          posting_date: '2026-02-11',
+          merchant_raw: 'ACME Store',
+          description: 'Monthly spend',
+          reference: 'REF-1',
+          amount: 69.04,
+          txn_type: 'debit',
+          currency: 'SGD',
+          original_amount: null,
+          original_currency: null,
+          confidence: 0.98,
+          original_data: {
+            matchedAccountName: 'My Card',
+            tagIds: [],
+          },
+          is_edited: false,
+          review_note: null,
+          last_reviewed_by: null,
+          last_reviewed_at: null,
+          committed_transaction_id: null,
+          created_at: '2026-03-12T00:00:00.000Z',
+          updated_at: '2026-03-12T00:00:00.000Z',
+        },
+        {
+          id: 'row-2',
+          file_import_id: 'import-1',
+          household_id: 'hh-1',
+          account_id: 'acct-1',
+          row_index: 2,
+          review_status: 'approved',
+          duplicate_status: 'none',
+          duplicate_transaction_id: null,
+          txn_hash: 'txn-hash-2',
+          source_txn_hash: 'src-hash-2',
+          txn_date: '2026-02-10',
+          posting_date: '2026-02-11',
+          merchant_raw: 'ACME Payment',
+          description: 'Payment received',
+          reference: 'REF-2',
+          amount: -69.04,
+          txn_type: 'credit',
+          currency: 'SGD',
+          original_amount: null,
+          original_currency: null,
+          confidence: 0.98,
+          original_data: {
+            matchedAccountName: 'My Card',
+            tagIds: [],
+          },
+          is_edited: false,
+          review_note: null,
+          last_reviewed_by: null,
+          last_reviewed_at: null,
+          committed_transaction_id: null,
+          created_at: '2026-03-12T00:00:00.000Z',
+          updated_at: '2026-03-12T00:00:00.000Z',
+        },
+      ],
+      stagingLinks: [
+        {
+          id: 'link-1',
+          file_import_id: 'import-1',
+          household_id: 'hh-1',
+          from_staging_id: 'row-1',
+          to_staging_id: 'row-2',
+          to_transaction_id: null,
+          link_type: 'credit_card_payment',
+          link_score: 0.99,
+          link_reason: { rule: 'test' },
+          status: 'confirmed',
+          matched_by: 'system',
+          matched_by_user_id: null,
+          reviewed_by: null,
+          reviewed_at: null,
+          created_at: '2026-03-12T00:00:00.000Z',
+          updated_at: '2026-03-12T00:00:00.000Z',
+        },
+      ],
+      transactionLinksUpsertError: {
+        message: 'column transaction_links.matched_by does not exist',
+      },
+    })
+    mockedCreateServiceSupabaseClient.mockReturnValue(context.db as never)
+
+    const result = await processStatementCommit({ importId: 'import-1', householdId: 'hh-1', userId: 'user-1' })
+
+    expect(result.status).toBe('committed')
+    expect(result.committedCount).toBe(2)
+    expect(result.warnings).toContain(
+      'Statement committed, but transaction links were skipped because staging link support is not deployed in this Supabase environment.',
+    )
+    expect(context.tables.transaction_links).toHaveLength(0)
+    expect(context.tables.file_imports[0]).toMatchObject({
+      status: 'committed',
+      committed_rows: 2,
     })
   })
 })

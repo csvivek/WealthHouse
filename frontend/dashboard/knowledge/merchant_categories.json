@@ -937,9 +937,9 @@
     "approved_category_name": "Subscriptions",
     "confidence": 1,
     "decision_source": "manual_override",
-    "usage_count": 1,
+    "usage_count": 2,
     "first_seen_date": "2026-03-12T06:03:15.774Z",
-    "last_reviewed_date": "2026-03-12T06:03:15.774Z",
+    "last_reviewed_date": "2026-03-12T14:01:25.421Z",
     "notes": null
   },
   "tada": {
@@ -952,9 +952,9 @@
     "approved_category_name": "Ride Hailing",
     "confidence": 1,
     "decision_source": "manual_override",
-    "usage_count": 6,
+    "usage_count": 8,
     "first_seen_date": "2026-03-12T06:03:48.306Z",
-    "last_reviewed_date": "2026-03-12T06:03:49.624Z",
+    "last_reviewed_date": "2026-03-12T14:03:50.279Z",
     "notes": null
   },
   "zero1": {
@@ -967,9 +967,9 @@
     "approved_category_name": "Telco",
     "confidence": 1,
     "decision_source": "manual_override",
-    "usage_count": 1,
+    "usage_count": 2,
     "first_seen_date": "2026-03-12T06:03:58.305Z",
-    "last_reviewed_date": "2026-03-12T06:03:58.305Z",
+    "last_reviewed_date": "2026-03-12T14:01:38.143Z",
     "notes": null
   },
   "eight telecom": {
@@ -982,9 +982,9 @@
     "approved_category_name": "Telco",
     "confidence": 1,
     "decision_source": "manual_override",
-    "usage_count": 1,
+    "usage_count": 2,
     "first_seen_date": "2026-03-12T06:04:17.554Z",
-    "last_reviewed_date": "2026-03-12T06:04:17.554Z",
+    "last_reviewed_date": "2026-03-12T14:02:02.642Z",
     "notes": null
   },
   "myrepublic": {
@@ -997,24 +997,26 @@
     "approved_category_name": "Telco",
     "confidence": 1,
     "decision_source": "manual_override",
-    "usage_count": 1,
+    "usage_count": 2,
     "first_seen_date": "2026-03-12T06:04:26.983Z",
-    "last_reviewed_date": "2026-03-12T06:04:26.983Z",
+    "last_reviewed_date": "2026-03-12T14:02:11.010Z",
     "notes": null
   },
   "unintentional loan instalment": {
     "canonical_merchant_name": "Unintentional Loan",
     "normalized_merchant_name": "unintentional loan instalment",
     "family_name": "unintentional loan",
-    "aliases": [],
+    "aliases": [
+      "unintentional loan"
+    ],
     "business_type": null,
     "approved_category_id": 40,
     "approved_category_name": "Loan Repayment",
     "confidence": 1,
     "decision_source": "manual_override",
-    "usage_count": 1,
+    "usage_count": 2,
     "first_seen_date": "2026-03-12T06:04:54.776Z",
-    "last_reviewed_date": "2026-03-12T06:04:54.776Z",
+    "last_reviewed_date": "2026-03-12T14:02:47.089Z",
     "notes": null
   },
   "gogovan": {
@@ -1036,15 +1038,36 @@
     "canonical_merchant_name": "Trust Bank Singapore Limited",
     "normalized_merchant_name": "credit payment from trust savings account",
     "family_name": "trust bank limited",
-    "aliases": [],
-    "business_type": "Banking",
-    "approved_category_id": 41,
-    "approved_category_name": "Internal Transfer",
+    "aliases": [
+      "trust bank limited"
+    ],
+    "business_type": "Financial Institution",
+    "approved_category_id": 39,
+    "approved_category_name": "Credit Card Payment",
+    "confidence": 1,
+    "decision_source": "manual_override",
+    "usage_count": 2,
+    "first_seen_date": "2026-03-12T06:05:46.037Z",
+    "last_reviewed_date": "2026-03-12T14:03:21.568Z",
+    "notes": null
+  },
+  "grab": {
+    "canonical_merchant_name": "Grab",
+    "normalized_merchant_name": "grab",
+    "family_name": "grab",
+    "aliases": [
+      "grabtaxi",
+      "grabcar",
+      "grabfood"
+    ],
+    "business_type": "Ride Hailing",
+    "approved_category_id": 9,
+    "approved_category_name": "Ride Hailing",
     "confidence": 1,
     "decision_source": "manual_override",
     "usage_count": 1,
-    "first_seen_date": "2026-03-12T06:05:46.037Z",
-    "last_reviewed_date": "2026-03-12T06:05:46.037Z",
+    "first_seen_date": "2026-03-12T14:01:50.519Z",
+    "last_reviewed_date": "2026-03-12T14:01:50.519Z",
     "notes": null
   }
 }

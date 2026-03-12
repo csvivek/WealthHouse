@@ -41,15 +41,32 @@ export function isStatementLinkingSchemaNotReadyError(error: unknown, requiredTa
   const code = readErrorCode(error)
   const message = readErrorText(error)
   const required = requiredTable.toLowerCase()
-  const mentionsRequired = message.includes(required) || message.includes(`public.${required}`)
+  const mentionsRequired =
+    message.includes(required) ||
+    message.includes(`public.${required}`) ||
+    message.includes(`'${required}'`) ||
+    message.includes(`"${required}"`) ||
+    message.includes(`relation "${required}"`)
 
-  if ((code === 'PGRST205' || code === '42P01') && mentionsRequired) {
+  if (
+    (code === 'PGRST200' || code === 'PGRST202' || code === 'PGRST205' || code === '42P01' || code === '42703') &&
+    mentionsRequired
+  ) {
     return true
   }
 
   if (message.includes('schema cache') && mentionsRequired) return true
   if (message.includes(`could not find the table 'public.${required}'`)) return true
   if (message.includes(`relation "public.${required}" does not exist`)) return true
+  if (message.includes(`column ${required}.`) && message.includes('does not exist')) return true
+  if (message.includes(`column public.${required}.`) && message.includes('does not exist')) return true
+  if (message.includes(`relation "${required}"`) && message.includes('column') && message.includes('does not exist')) return true
+  if (message.includes(`of '${required}'`) && message.includes('column')) return true
+  if (message.includes(`of "${required}"`) && message.includes('column')) return true
+
+  if (required === 'transaction_links' && (code === '42P10' || message.includes('on conflict specification'))) {
+    return true
+  }
 
   return false
 }

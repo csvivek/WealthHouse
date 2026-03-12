@@ -490,8 +490,12 @@ export async function processStatementCommit(params: {
       .upsert(linkInserts, { onConflict: 'from_transaction_id,to_transaction_id,link_type' })
 
     if (linkInsertError) {
-      await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
-      throw new StatementCommitProcessError(linkInsertError.message || 'Failed to persist transaction links', 500)
+      if (isStatementLinkingSchemaNotReadyError(linkInsertError, 'transaction_links')) {
+        warnings.push(statementLinkingSchemaNotReadyWarning())
+      } else {
+        await rollbackNewCommitState(supabase, importId, newStatementImportIds, recommittedRowIds)
+        throw new StatementCommitProcessError(linkInsertError.message || 'Failed to persist transaction links', 500)
+      }
     }
   }
 
