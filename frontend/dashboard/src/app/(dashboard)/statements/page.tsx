@@ -3,15 +3,24 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Upload,
-  FileUp,
-  Loader2,
-  FileText,
-  ExternalLink,
-  Pencil,
   AlertTriangle,
+  ArrowRight,
+  Calendar,
+  Check,
+  ChevronRight,
+  Clock,
+  ExternalLink,
+  FileText,
+  FileUp,
+  Filter,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
+  Upload,
+  X,
 } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,9 +30,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { Progress } from '@/components/ui/progress'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { createClient } from '@/lib/supabase/client'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
 import { formatDate } from '@/lib/format'
@@ -108,15 +137,243 @@ interface DescriptorResolutionState {
   }
 }
 
-const statusConfig: Record<string, { label: string; className: string }> = {
-  received: { label: 'Received', className: 'bg-gray-100 text-gray-700 dark:bg-gray-900/40 dark:text-gray-400' },
-  parsing: { label: 'Parsing', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400' },
-  in_review: { label: 'In Review', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400' },
-  committing: { label: 'Committing', className: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400' },
-  committed: { label: 'Committed', className: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
-  rejected: { label: 'Rejected', className: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400' },
-  duplicate: { label: 'Duplicate', className: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400' },
-  failed: { label: 'Failed', className: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400' },
+const statusConfig: Record<
+  string,
+  { label: string; color: string; bgColor: string }
+> = {
+  received: {
+    label: 'Received',
+    color: 'text-gray-700 dark:text-gray-300',
+    bgColor: 'bg-gray-100 dark:bg-gray-800',
+  },
+  parsing: {
+    label: 'Parsing',
+    color: 'text-warning-foreground',
+    bgColor: 'bg-warning/10',
+  },
+  in_review: {
+    label: 'In Review',
+    color: 'text-transfer-foreground',
+    bgColor: 'bg-transfer/10',
+  },
+  committing: {
+    label: 'Committing',
+    color: 'text-primary',
+    bgColor: 'bg-primary/10',
+  },
+  committed: {
+    label: 'Committed',
+    color: 'text-income-foreground',
+    bgColor: 'bg-income/10',
+  },
+  rejected: {
+    label: 'Rejected',
+    color: 'text-expense-foreground',
+    bgColor: 'bg-expense/10',
+  },
+  duplicate: {
+    label: 'Duplicate',
+    color: 'text-warning-foreground',
+    bgColor: 'bg-warning/10',
+  },
+  failed: {
+    label: 'Failed',
+    color: 'text-expense-foreground',
+    bgColor: 'bg-expense/10',
+  },
+}
+
+// Stats Card Component
+function StatsCard({
+  label,
+  value,
+  subvalue,
+  icon: Icon,
+  className,
+}: {
+  label: string
+  value: string | number
+  subvalue?: string
+  icon?: React.ElementType
+  className?: string
+}) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-1 rounded-xl border bg-card p-4 transition-all hover:shadow-sm',
+        className
+      )}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">
+          {label}
+        </span>
+        {Icon && (
+          <div className="rounded-lg bg-muted p-1.5">
+            <Icon className="size-4 text-muted-foreground" />
+          </div>
+        )}
+      </div>
+      <span className="text-2xl font-semibold tracking-tight">{value}</span>
+      {subvalue && (
+        <span className="text-xs text-muted-foreground">{subvalue}</span>
+      )}
+    </div>
+  )
+}
+
+// Import Timeline Item
+function ImportTimelineItem({
+  importRow,
+  currentUserId,
+  onReview,
+  onReopen,
+}: {
+  importRow: FileImportRow
+  currentUserId: string
+  onReview: () => void
+  onReopen: () => void
+}) {
+  const status = statusConfig[importRow.status] ?? statusConfig.received
+  const uploaderName =
+    importRow.uploaded_by === currentUserId
+      ? 'You'
+      : importRow.uploadedByDisplayName ||
+        importRow.uploadedByEmail ||
+        'Unknown'
+
+  const progressValue =
+    importRow.total_rows && importRow.committed_rows
+      ? (importRow.committed_rows / importRow.total_rows) * 100
+      : 0
+
+  return (
+    <div className="group relative flex gap-4 pb-6 last:pb-0">
+      {/* Timeline line */}
+      <div className="absolute left-[15px] top-8 h-[calc(100%-32px)] w-px bg-border group-last:hidden" />
+
+      {/* Status indicator */}
+      <div
+        className={cn(
+          'relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border-2 bg-background',
+          importRow.status === 'committed' && 'border-income bg-income/10',
+          importRow.status === 'in_review' && 'border-transfer bg-transfer/10',
+          importRow.status === 'committing' && 'border-primary bg-primary/10',
+          importRow.status === 'failed' && 'border-expense bg-expense/10',
+          !['committed', 'in_review', 'committing', 'failed'].includes(
+            importRow.status
+          ) && 'border-muted-foreground/30'
+        )}
+      >
+        {importRow.status === 'committed' ? (
+          <Check className="size-4 text-income" />
+        ) : importRow.status === 'committing' || importRow.status === 'parsing' ? (
+          <Loader2 className="size-4 animate-spin text-primary" />
+        ) : importRow.status === 'failed' ? (
+          <X className="size-4 text-expense" />
+        ) : (
+          <FileText className="size-3.5 text-muted-foreground" />
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="flex flex-1 flex-col gap-2 rounded-xl border bg-card p-4 transition-all hover:shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h4 className="truncate font-medium">{importRow.file_name}</h4>
+              <Badge className={cn('border-0 text-xs', status.bgColor, status.color)}>
+                {status.label}
+              </Badge>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span>{uploaderName}</span>
+              <span className="flex items-center gap-1">
+                <Clock className="size-3" />
+                {formatDate(importRow.created_at)}
+              </span>
+              {importRow.institution_code && (
+                <span>{importRow.institution_code}</span>
+              )}
+            </div>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-8 opacity-0 transition-opacity group-hover:opacity-100"
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {(importRow.status === 'in_review' ||
+                importRow.status === 'committed' ||
+                importRow.status === 'committing') && (
+                <DropdownMenuItem onClick={onReview}>
+                  <ExternalLink className="mr-2 size-4" />
+                  {importRow.status === 'in_review' ? 'Review' : 'View'}
+                </DropdownMenuItem>
+              )}
+              {importRow.status === 'committed' && (
+                <DropdownMenuItem onClick={onReopen}>
+                  <Pencil className="mr-2 size-4" />
+                  Reopen for Editing
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Stats row */}
+        {importRow.total_rows != null && (
+          <div className="mt-2 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Progress</span>
+              <span className="font-medium">
+                {importRow.committed_rows ?? 0} / {importRow.total_rows}{' '}
+                transactions
+                {(importRow.duplicate_rows ?? 0) > 0 && (
+                  <span className="ml-1 text-warning-foreground">
+                    ({importRow.duplicate_rows} duplicates)
+                  </span>
+                )}
+              </span>
+            </div>
+            <Progress value={progressValue} className="h-1.5" />
+          </div>
+        )}
+
+        {/* Period badge */}
+        {importRow.statement_period_start && importRow.statement_period_end && (
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Calendar className="size-3" />
+            <span>
+              {formatDate(importRow.statement_period_start)} -{' '}
+              {formatDate(importRow.statement_period_end)}
+            </span>
+          </div>
+        )}
+
+        {/* Quick actions */}
+        {(importRow.status === 'in_review' ||
+          importRow.status === 'committed') && (
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" variant="outline" className="h-7" onClick={onReview}>
+              {importRow.status === 'in_review' ? 'Review' : 'View Details'}
+              <ArrowRight className="ml-1.5 size-3" />
+            </Button>
+            {importRow.status === 'committed' && (
+              <Button size="sm" variant="ghost" className="h-7" onClick={onReopen}>
+                Reopen
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function StatementsPage() {
@@ -127,12 +384,16 @@ export default function StatementsPage() {
   const [loading, setLoading] = useState(true)
   const [currentUserId, setCurrentUserId] = useState<string>('')
   const [uploaderFilter, setUploaderFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
 
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
   const [uploading, setUploading] = useState(false)
   const [resolvingRecovery, setResolvingRecovery] = useState(false)
   const [parseRecovery, setParseRecovery] = useState<ParseRecoveryState | null>(null)
   const [descriptorResolutions, setDescriptorResolutions] = useState<Record<string, DescriptorResolutionState>>({})
+  const [recoverySheetOpen, setRecoverySheetOpen] = useState(false)
 
   const { hasActiveJobs } = useStatementCommitJobs()
   const [dragOver, setDragOver] = useState(false)
@@ -169,7 +430,9 @@ export default function StatementsPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('file_imports')
-        .select('id, file_name, uploaded_by, institution_code, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at')
+        .select(
+          'id, file_name, uploaded_by, institution_code, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
+        )
         .eq('household_id', profile.household_id)
         .order('created_at', { ascending: false })
         .limit(50),
@@ -181,17 +444,18 @@ export default function StatementsPage() {
       : { profiles: [] }
     const householdProfiles = (householdProfilesPayload.profiles ?? []) as HouseholdUploaderProfile[]
     const uploadersById = new Map(
-      householdProfiles.map((householdProfile) => [householdProfile.id, householdProfile]),
+      householdProfiles.map((householdProfile) => [householdProfile.id, householdProfile])
     )
-    const importRows = ((importRes.data as Array<Omit<FileImportRow, 'uploadedByDisplayName' | 'uploadedByEmail'>> | null) ?? [])
-      .map((importRow) => {
-        const uploader = uploadersById.get(importRow.uploaded_by)
-        return {
-          ...importRow,
-          uploadedByDisplayName: uploader?.display_name ?? null,
-          uploadedByEmail: uploader?.email ?? null,
-        }
-      })
+    const importRows = (
+      (importRes.data as Array<Omit<FileImportRow, 'uploadedByDisplayName' | 'uploadedByEmail'>> | null) ?? []
+    ).map((importRow) => {
+      const uploader = uploadersById.get(importRow.uploaded_by)
+      return {
+        ...importRow,
+        uploadedByDisplayName: uploader?.display_name ?? null,
+        uploadedByEmail: uploader?.email ?? null,
+      }
+    })
 
     setAccounts((acctRes.data as unknown as AccountOption[]) ?? [])
     setHouseholdUsers(householdProfiles)
@@ -215,33 +479,64 @@ export default function StatementsPage() {
   }, [hasActiveJobs, fetchData])
 
   function getAccountLabel(option: AccountOption) {
-    return `${option.institutions?.name ? `${option.institutions.name} — ` : ''}${option.nickname ?? option.product_name}`
+    return `${option.institutions?.name ? `${option.institutions.name} - ` : ''}${option.nickname ?? option.product_name}`
   }
 
   const uploaderOptions = useMemo(
-    () => householdUsers.filter((householdUser) => householdUser.id !== currentUserId),
-    [currentUserId, householdUsers],
+    () =>
+      householdUsers.filter(
+        (householdUser) => householdUser.id !== currentUserId
+      ),
+    [currentUserId, householdUsers]
   )
 
   const filteredImports = useMemo(() => {
-    if (uploaderFilter === 'all') return imports
-    if (uploaderFilter === 'me') {
-      return imports.filter((importRow) => importRow.uploaded_by === currentUserId)
-    }
-    return imports.filter((importRow) => importRow.uploaded_by === uploaderFilter)
-  }, [currentUserId, imports, uploaderFilter])
+    let result = imports
 
-  function getUploaderName(importRow: FileImportRow) {
-    if (importRow.uploaded_by === currentUserId) return 'You'
-    return importRow.uploadedByDisplayName || importRow.uploadedByEmail || 'Unknown user'
-  }
+    if (uploaderFilter !== 'all') {
+      if (uploaderFilter === 'me') {
+        result = result.filter((importRow) => importRow.uploaded_by === currentUserId)
+      } else {
+        result = result.filter((importRow) => importRow.uploaded_by === uploaderFilter)
+      }
+    }
+
+    if (statusFilter !== 'all') {
+      result = result.filter((importRow) => importRow.status === statusFilter)
+    }
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      result = result.filter(
+        (importRow) =>
+          importRow.file_name.toLowerCase().includes(query) ||
+          importRow.institution_code?.toLowerCase().includes(query)
+      )
+    }
+
+    return result
+  }, [currentUserId, imports, uploaderFilter, statusFilter, searchQuery])
+
+  const stats = useMemo(() => {
+    const totalImports = imports.length
+    const committed = imports.filter((i) => i.status === 'committed').length
+    const inReview = imports.filter((i) => i.status === 'in_review').length
+    const totalTransactions = imports.reduce(
+      (sum, i) => sum + (i.committed_rows ?? 0),
+      0
+    )
+    return { totalImports, committed, inReview, totalTransactions }
+  }, [imports])
 
   function initializeRecoveryState(payload: ParseRecoveryState) {
     setParseRecovery(payload)
+    setRecoverySheetOpen(true)
 
     const next: Record<string, DescriptorResolutionState> = {}
     for (const descriptor of payload.unmatchedAccountDescriptors ?? []) {
-      const defaultMode: ResolutionMode = descriptor.suggestedExistingAccountId ? 'existing' : 'create'
+      const defaultMode: ResolutionMode = descriptor.suggestedExistingAccountId
+        ? 'existing'
+        : 'create'
       next[descriptor.descriptorKey] = {
         mode: defaultMode,
         existingAccountId: descriptor.suggestedExistingAccountId || '',
@@ -249,7 +544,8 @@ export default function StatementsPage() {
           institution_name: descriptor.institution_name || '',
           product_name: descriptor.card_name || descriptor.product_name || '',
           account_type: descriptor.account_type || 'savings',
-          identifier_hint: descriptor.identifier_hint || descriptor.card_last4 || '',
+          identifier_hint:
+            descriptor.identifier_hint || descriptor.card_last4 || '',
           currency: descriptor.currency || 'SGD',
           nickname: '',
           card_name: descriptor.card_name || descriptor.product_name || '',
@@ -261,7 +557,10 @@ export default function StatementsPage() {
     setDescriptorResolutions(next)
   }
 
-  function updateDescriptorResolution(descriptorKey: string, updater: (current: DescriptorResolutionState) => DescriptorResolutionState) {
+  function updateDescriptorResolution(
+    descriptorKey: string,
+    updater: (current: DescriptorResolutionState) => DescriptorResolutionState
+  ) {
     setDescriptorResolutions((current) => {
       const existing = current[descriptorKey]
       if (!existing) return current
@@ -292,21 +591,33 @@ export default function StatementsPage() {
 
       if (!res.ok) {
         if (res.status === 409) {
-          toast.error(`This file has already been processed: ${data.existingFileName}`)
+          toast.error(
+            `This file has already been processed: ${data.existingFileName}`
+          )
           if (data.existingStatus === 'in_review') {
             router.push(`/statements/review/${data.existingImportId}`)
           }
           return
         }
 
-        if (res.status === 422 && data?.code === 'transaction_account_match_required' && data?.parseSessionId) {
+        if (
+          res.status === 422 &&
+          data?.code === 'transaction_account_match_required' &&
+          data?.parseSessionId
+        ) {
           initializeRecoveryState({
             parseSessionId: data.parseSessionId,
-            error: data.error || 'Account matching needs your review before import can continue.',
-            unmatchedAccountDescriptors: (data.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
-            suggestedExistingAccounts: (data.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
+            error:
+              data.error ||
+              'Account matching needs your review before import can continue.',
+            unmatchedAccountDescriptors:
+              (data.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
+            suggestedExistingAccounts:
+              (data.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
           })
-          toast.error('Account matching needs your review. Continue import below without re-uploading.')
+          toast.error(
+            'Account matching needs your review. Continue import below without re-uploading.'
+          )
           return
         }
 
@@ -338,7 +649,9 @@ export default function StatementsPage() {
     for (const descriptor of parseRecovery.unmatchedAccountDescriptors) {
       const state = descriptorResolutions[descriptor.descriptorKey]
       if (!state) {
-        toast.error('Missing resolution state for one or more unmatched descriptors.')
+        toast.error(
+          'Missing resolution state for one or more unmatched descriptors.'
+        )
         return
       }
 
@@ -357,7 +670,9 @@ export default function StatementsPage() {
 
       const create = state.createAccount
       if (!create.institution_name.trim() || !create.product_name.trim()) {
-        toast.error(`Institution and product name are required for: ${descriptor.label}`)
+        toast.error(
+          `Institution and product name are required for: ${descriptor.label}`
+        )
         return
       }
 
@@ -390,14 +705,23 @@ export default function StatementsPage() {
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        if (res.status === 422 && data?.code === 'transaction_account_match_required' && data?.parseSessionId) {
+        if (
+          res.status === 422 &&
+          data?.code === 'transaction_account_match_required' &&
+          data?.parseSessionId
+        ) {
           initializeRecoveryState({
             parseSessionId: data.parseSessionId,
-            error: data.error || 'Some transactions still need account resolution.',
-            unmatchedAccountDescriptors: (data.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
-            suggestedExistingAccounts: (data.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
+            error:
+              data.error || 'Some transactions still need account resolution.',
+            unmatchedAccountDescriptors:
+              (data.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
+            suggestedExistingAccounts:
+              (data.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
           })
-          toast.error('Some transactions still need account resolution. Please review and continue.')
+          toast.error(
+            'Some transactions still need account resolution. Please review and continue.'
+          )
           return
         }
 
@@ -407,6 +731,7 @@ export default function StatementsPage() {
 
       setParseRecovery(null)
       setDescriptorResolutions({})
+      setRecoverySheetOpen(false)
       toast.success(`Import continued. Parsed ${data.transactionsCount} transactions.`)
       router.push(data.reviewUrl)
     } catch {
@@ -431,7 +756,9 @@ export default function StatementsPage() {
 
   async function handleReopenImport(importId: string) {
     try {
-      const res = await fetch(`/api/ai/statement/${importId}/reopen`, { method: 'POST' })
+      const res = await fetch(`/api/ai/statement/${importId}/reopen`, {
+        method: 'POST',
+      })
       const data = await res.json()
       if (!res.ok) {
         toast.error(data.error || 'Failed to reopen import')
@@ -449,37 +776,73 @@ export default function StatementsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="size-8 animate-spin text-muted-foreground" />
+        <div className="flex flex-col items-center gap-2">
+          <div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm text-muted-foreground">Loading statements...</p>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Statements</h1>
-        <p className="text-muted-foreground">
-          Upload bank and credit card statements to import transactions.
-        </p>
+      {/* Header */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Statements</h1>
+          <p className="text-sm text-muted-foreground">
+            Import and manage your bank and credit card statements
+          </p>
+        </div>
+        <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+          <Plus className="mr-2 size-4" />
+          Import Statement
+        </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Upload className="size-5" />
-            Import Statement
-          </CardTitle>
-          <CardDescription>
-            Account selection is optional. If you leave it blank, the parser will try to match the statement to one of your existing accounts automatically.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-end gap-4">
+      {/* Stats Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatsCard
+          label="Total Imports"
+          value={stats.totalImports}
+          subvalue={`${stats.committed} committed`}
+          icon={FileText}
+        />
+        <StatsCard
+          label="In Review"
+          value={stats.inReview}
+          subvalue="Awaiting approval"
+          icon={Clock}
+        />
+        <StatsCard
+          label="Transactions"
+          value={stats.totalTransactions.toLocaleString()}
+          subvalue="Successfully imported"
+          icon={Check}
+        />
+        <StatsCard
+          label="Accounts"
+          value={accounts.length}
+          subvalue="Available for linking"
+          icon={Upload}
+        />
+      </div>
+
+      {/* Upload Section */}
+      <div className="overflow-hidden rounded-2xl border bg-card">
+        <div className="border-b px-6 py-4">
+          <h2 className="font-semibold">Upload Statement</h2>
+          <p className="text-sm text-muted-foreground">
+            Drop a file or click to browse. Account matching is automatic.
+          </p>
+        </div>
+        <div className="p-6">
+          <div className="mb-4 flex flex-wrap items-end gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Link to Account</label>
+              <Label className="text-xs font-medium">Link to Account (Optional)</Label>
               <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-                <SelectTrigger className="w-[320px]">
-                  <SelectValue placeholder="Auto-detect from statement (recommended)" />
+                <SelectTrigger className="w-[300px]">
+                  <SelectValue placeholder="Auto-detect from statement" />
                 </SelectTrigger>
                 <SelectContent>
                   {accounts.map((account) => (
@@ -489,24 +852,25 @@ export default function StatementsPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span>
-                  Leave blank to auto-match after parsing. Choose an account only if you want to override the detected match.
-                </span>
-                {selectedAccountId && (
-                  <Button variant="ghost" size="sm" className="h-auto px-0 py-0 text-xs" onClick={() => setSelectedAccountId('')}>
-                    Clear
-                  </Button>
-                )}
-              </div>
             </div>
+            {selectedAccountId && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedAccountId('')}
+              >
+                Clear selection
+              </Button>
+            )}
           </div>
 
           <div
             className={cn(
-              'flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-colors',
-              dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-muted-foreground/50',
-              uploading && 'pointer-events-none opacity-60',
+              'flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed py-12 transition-all',
+              dragOver
+                ? 'border-primary bg-primary/5'
+                : 'border-muted-foreground/20 hover:border-primary/50 hover:bg-muted/30',
+              uploading && 'pointer-events-none opacity-60'
             )}
             onDragOver={(event) => {
               event.preventDefault()
@@ -525,376 +889,380 @@ export default function StatementsPage() {
             />
             {uploading ? (
               <>
-                <Loader2 className="mb-3 size-10 animate-spin text-muted-foreground" />
-                <p className="text-sm font-medium">Parsing statement…</p>
-                <p className="text-xs text-muted-foreground">This may take 10–30 seconds</p>
+                <Loader2 className="mb-3 size-10 animate-spin text-primary" />
+                <p className="font-medium">Processing statement...</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  This may take 10-30 seconds
+                </p>
               </>
             ) : (
               <>
-                <FileUp className="mb-3 size-10 text-muted-foreground" />
-                <p className="text-sm font-medium">
+                <div className="mb-3 rounded-xl bg-muted p-3">
+                  <FileUp className="size-8 text-muted-foreground" />
+                </div>
+                <p className="font-medium">
                   Drop your statement here or click to browse
                 </p>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Supports PDF, JPEG, PNG, ZIP, TXT
                 </p>
               </>
             )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      {parseRecovery && (
-        <Card className="border-amber-300/60 bg-amber-50/50 dark:border-amber-700/50 dark:bg-amber-950/20">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <AlertTriangle className="size-4 text-amber-600" />
-              Account Matching Needs Review
-            </CardTitle>
-            <CardDescription className="text-amber-900 dark:text-amber-100">
-              {parseRecovery.error}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-amber-900/80 dark:text-amber-100/80">
-              Continue import from this parsed session without re-uploading the statement.
-            </p>
+      {/* Recovery Alert */}
+      {parseRecovery && !recoverySheetOpen && (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-warning/30 bg-warning/10 p-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-warning/20 p-2">
+              <AlertTriangle className="size-5 text-warning-foreground" />
+            </div>
+            <div>
+              <p className="font-medium">Account matching needs review</p>
+              <p className="text-sm text-muted-foreground">
+                Some transactions need to be matched to accounts
+              </p>
+            </div>
+          </div>
+          <Button onClick={() => setRecoverySheetOpen(true)}>
+            Continue Import
+            <ChevronRight className="ml-1.5 size-4" />
+          </Button>
+        </div>
+      )}
 
-            <div className="space-y-4">
-              {parseRecovery.unmatchedAccountDescriptors.map((descriptor) => {
-                const resolution = descriptorResolutions[descriptor.descriptorKey]
-                if (!resolution) return null
+      {/* Import History */}
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">Import History</h2>
+          <div className="flex items-center gap-2">
+            {/* Search */}
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search imports..."
+                className="w-[200px] pl-9"
+              />
+            </div>
 
-                return (
-                  <div key={descriptor.descriptorKey} className="rounded-md border bg-background p-4">
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                      <div>
+            {/* Filter Toggle */}
+            <Button
+              variant={showFilters ? 'secondary' : 'outline'}
+              size="icon"
+              onClick={() => setShowFilters(!showFilters)}
+            >
+              <Filter className="size-4" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Filters */}
+        {showFilters && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-3">
+            <Select value={uploaderFilter} onValueChange={setUploaderFilter}>
+              <SelectTrigger className="w-[180px] bg-background">
+                <SelectValue placeholder="All uploaders" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All uploaders</SelectItem>
+                <SelectItem value="me">Me</SelectItem>
+                {uploaderOptions.map((householdUser) => (
+                  <SelectItem key={householdUser.id} value={householdUser.id}>
+                    {householdUser.display_name ||
+                      householdUser.email ||
+                      'Unnamed user'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[150px] bg-background">
+                <SelectValue placeholder="All statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                <SelectItem value="in_review">In Review</SelectItem>
+                <SelectItem value="committed">Committed</SelectItem>
+                <SelectItem value="committing">Committing</SelectItem>
+                <SelectItem value="failed">Failed</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setUploaderFilter('all')
+                setStatusFilter('all')
+                setSearchQuery('')
+              }}
+            >
+              Clear filters
+            </Button>
+          </div>
+        )}
+
+        {/* Timeline */}
+        {filteredImports.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed py-12 text-center">
+            <div className="rounded-full bg-muted p-4">
+              <FileText className="size-6 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="font-medium">No imports found</p>
+              <p className="text-sm text-muted-foreground">
+                {imports.length === 0
+                  ? 'Upload your first statement to get started'
+                  : 'No imports match your current filters'}
+              </p>
+            </div>
+            {imports.length === 0 && (
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="mr-2 size-4" />
+                Import Statement
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-xl border bg-card p-6">
+            {filteredImports.map((importRow) => (
+              <ImportTimelineItem
+                key={importRow.id}
+                importRow={importRow}
+                currentUserId={currentUserId}
+                onReview={() => router.push(`/statements/review/${importRow.id}`)}
+                onReopen={() => void handleReopenImport(importRow.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recovery Sheet */}
+      <Sheet open={recoverySheetOpen} onOpenChange={setRecoverySheetOpen}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <AlertTriangle className="size-5 text-warning" />
+              Account Matching Required
+            </SheetTitle>
+            <SheetDescription>
+              {parseRecovery?.error || 'Some transactions need to be matched to accounts before the import can continue.'}
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="mt-6 space-y-6">
+            {parseRecovery?.unmatchedAccountDescriptors.map((descriptor) => {
+              const resolution = descriptorResolutions[descriptor.descriptorKey]
+              if (!resolution) return null
+
+              return (
+                <Collapsible key={descriptor.descriptorKey} defaultOpen>
+                  <div className="rounded-xl border">
+                    <CollapsibleTrigger className="flex w-full items-center justify-between px-4 py-3 hover:bg-muted/50">
+                      <div className="text-left">
                         <p className="font-medium">{descriptor.label}</p>
                         <p className="text-xs text-muted-foreground">
-                          {descriptor.transactionCount} transaction(s) need this account mapping.
+                          {descriptor.transactionCount} transaction(s)
                         </p>
                       </div>
                       {descriptor.suggestedExistingAccountLabel && (
-                        <Badge variant="outline">Suggested: {descriptor.suggestedExistingAccountLabel}</Badge>
+                        <Badge variant="secondary" className="text-xs">
+                          Suggested: {descriptor.suggestedExistingAccountLabel}
+                        </Badge>
                       )}
-                    </div>
-
-                    <div className="mb-3 w-full max-w-xs space-y-2">
-                      <Label>Resolution Mode</Label>
-                      <Select
-                        value={resolution.mode}
-                        onValueChange={(value) => {
-                          updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                            ...current,
-                            mode: value as ResolutionMode,
-                          }))
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="existing">Use Existing Account</SelectItem>
-                          <SelectItem value="create">Create Account (Prefilled)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {resolution.mode === 'existing' ? (
-                      <div className="w-full max-w-xl space-y-2">
-                        <Label>Existing Account</Label>
-                        <Select
-                          value={resolution.existingAccountId}
-                          onValueChange={(value) => {
-                            updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                              ...current,
-                              existingAccountId: value,
-                            }))
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select an account" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {accounts.map((account) => (
-                              <SelectItem key={account.id} value={account.id}>
-                                {getAccountLabel(account)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label>Institution Name</Label>
-                          <Input
-                            value={resolution.createAccount.institution_name}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                              ...current,
-                              createAccount: {
-                                ...current.createAccount,
-                                institution_name: event.target.value,
-                              },
-                            }))}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Product Name</Label>
-                          <Input
-                            value={resolution.createAccount.product_name}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                              ...current,
-                              createAccount: {
-                                ...current.createAccount,
-                                product_name: event.target.value,
-                              },
-                            }))}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Account Type</Label>
-                          <Select
-                            value={resolution.createAccount.account_type}
-                            onValueChange={(value) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                              ...current,
-                              createAccount: {
-                                ...current.createAccount,
-                                account_type: value,
-                              },
-                            }))}
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="space-y-4 border-t px-4 py-4">
+                        <div className="space-y-2">
+                          <Label>Resolution Mode</Label>
+                          <Tabs
+                            value={resolution.mode}
+                            onValueChange={(value) =>
+                              updateDescriptorResolution(
+                                descriptor.descriptorKey,
+                                (current) => ({
+                                  ...current,
+                                  mode: value as ResolutionMode,
+                                })
+                              )
+                            }
                           >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="savings">Savings</SelectItem>
-                              <SelectItem value="current">Current</SelectItem>
-                              <SelectItem value="credit_card">Credit Card</SelectItem>
-                              <SelectItem value="investment">Investment</SelectItem>
-                              <SelectItem value="crypto_exchange">Crypto Exchange</SelectItem>
-                              <SelectItem value="loan">Loan</SelectItem>
-                              <SelectItem value="fixed_deposit">Fixed Deposit</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Currency</Label>
-                          <Input
-                            value={resolution.createAccount.currency}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                              ...current,
-                              createAccount: {
-                                ...current.createAccount,
-                                currency: event.target.value,
-                              },
-                            }))}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Identifier Hint</Label>
-                          <Input
-                            value={resolution.createAccount.identifier_hint}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                              ...current,
-                              createAccount: {
-                                ...current.createAccount,
-                                identifier_hint: event.target.value,
-                              },
-                            }))}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Nickname (Optional)</Label>
-                          <Input
-                            value={resolution.createAccount.nickname}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                              ...current,
-                              createAccount: {
-                                ...current.createAccount,
-                                nickname: event.target.value,
-                              },
-                            }))}
-                          />
+                            <TabsList className="w-full">
+                              <TabsTrigger value="existing" className="flex-1">
+                                Use Existing
+                              </TabsTrigger>
+                              <TabsTrigger value="create" className="flex-1">
+                                Create New
+                              </TabsTrigger>
+                            </TabsList>
+                          </Tabs>
                         </div>
 
-                        {resolution.createAccount.account_type === 'credit_card' && (
-                          <>
-                            <div className="space-y-1.5">
-                              <Label>Card Name</Label>
-                              <Input
-                                value={resolution.createAccount.card_name}
-                                onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                                  ...current,
-                                  createAccount: {
-                                    ...current.createAccount,
-                                    card_name: event.target.value,
-                                  },
-                                }))}
-                              />
+                        {resolution.mode === 'existing' ? (
+                          <div className="space-y-2">
+                            <Label>Select Account</Label>
+                            <Select
+                              value={resolution.existingAccountId}
+                              onValueChange={(value) =>
+                                updateDescriptorResolution(
+                                  descriptor.descriptorKey,
+                                  (current) => ({
+                                    ...current,
+                                    existingAccountId: value,
+                                  })
+                                )
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select an account" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {accounts.map((account) => (
+                                  <SelectItem key={account.id} value={account.id}>
+                                    {getAccountLabel(account)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : (
+                          <div className="grid gap-3">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs">Institution</Label>
+                                <Input
+                                  value={resolution.createAccount.institution_name}
+                                  onChange={(event) =>
+                                    updateDescriptorResolution(
+                                      descriptor.descriptorKey,
+                                      (current) => ({
+                                        ...current,
+                                        createAccount: {
+                                          ...current.createAccount,
+                                          institution_name: event.target.value,
+                                        },
+                                      })
+                                    )
+                                  }
+                                  placeholder="Bank name"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs">Product Name</Label>
+                                <Input
+                                  value={resolution.createAccount.product_name}
+                                  onChange={(event) =>
+                                    updateDescriptorResolution(
+                                      descriptor.descriptorKey,
+                                      (current) => ({
+                                        ...current,
+                                        createAccount: {
+                                          ...current.createAccount,
+                                          product_name: event.target.value,
+                                        },
+                                      })
+                                    )
+                                  }
+                                  placeholder="Account name"
+                                />
+                              </div>
                             </div>
-                            <div className="space-y-1.5">
-                              <Label>Card Last 4</Label>
-                              <Input
-                                value={resolution.createAccount.card_last4}
-                                onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
-                                  ...current,
-                                  createAccount: {
-                                    ...current.createAccount,
-                                    card_last4: event.target.value.replace(/[^0-9]/g, '').slice(0, 4),
-                                  },
-                                }))}
-                              />
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs">Account Type</Label>
+                                <Select
+                                  value={resolution.createAccount.account_type}
+                                  onValueChange={(value) =>
+                                    updateDescriptorResolution(
+                                      descriptor.descriptorKey,
+                                      (current) => ({
+                                        ...current,
+                                        createAccount: {
+                                          ...current.createAccount,
+                                          account_type: value,
+                                        },
+                                      })
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="savings">Savings</SelectItem>
+                                    <SelectItem value="current">Current</SelectItem>
+                                    <SelectItem value="credit_card">Credit Card</SelectItem>
+                                    <SelectItem value="investment">Investment</SelectItem>
+                                    <SelectItem value="loan">Loan</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs">Currency</Label>
+                                <Input
+                                  value={resolution.createAccount.currency}
+                                  onChange={(event) =>
+                                    updateDescriptorResolution(
+                                      descriptor.descriptorKey,
+                                      (current) => ({
+                                        ...current,
+                                        createAccount: {
+                                          ...current.createAccount,
+                                          currency: event.target.value,
+                                        },
+                                      })
+                                    )
+                                  }
+                                  placeholder="SGD"
+                                />
+                              </div>
                             </div>
-                          </>
+                          </div>
                         )}
                       </div>
-                    )}
+                    </CollapsibleContent>
                   </div>
-                )
-              })}
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void handleContinueRecoveryImport()} disabled={resolvingRecovery} className="gap-2">
-                {resolvingRecovery ? <Loader2 className="size-4 animate-spin" /> : null}
-                Continue Import
-              </Button>
-              <Button variant="outline" onClick={() => setParseRecovery(null)} disabled={resolvingRecovery}>
-                Dismiss
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Separator />
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="size-5" />
-            Import History
-          </CardTitle>
-          <CardDescription>
-            Previously uploaded statements and their processing status
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
-            <div className="space-y-2">
-              <Label>Uploader</Label>
-              <Select value={uploaderFilter} onValueChange={setUploaderFilter}>
-                <SelectTrigger className="w-[260px]">
-                  <SelectValue placeholder="All household users" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All household users</SelectItem>
-                  <SelectItem value="me">Me</SelectItem>
-                  {uploaderOptions.map((householdUser) => (
-                    <SelectItem key={householdUser.id} value={householdUser.id}>
-                      {householdUser.display_name || householdUser.email || 'Unnamed user'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                </Collapsible>
+              )
+            })}
           </div>
 
-          {filteredImports.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              {imports.length === 0 ? 'No statements imported yet.' : 'No statement imports match this uploader filter.'}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-3 pr-4 font-medium">File</th>
-                    <th className="pb-3 pr-4 font-medium">Institution</th>
-                    <th className="pb-3 pr-4 font-medium">Period</th>
-                    <th className="pb-3 pr-4 font-medium">Rows</th>
-                    <th className="pb-3 pr-4 font-medium">Status</th>
-                    <th className="pb-3 pr-4 font-medium">Uploader</th>
-                    <th className="pb-3 pr-4 font-medium">Uploaded</th>
-                    <th className="pb-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredImports.map((importRow) => {
-                    const status = statusConfig[importRow.status] ?? statusConfig.received
-                    return (
-                      <tr key={importRow.id} className="border-b last:border-0">
-                        <td className="max-w-[200px] truncate py-3 pr-4 font-medium">
-                          {importRow.file_name}
-                        </td>
-                        <td className="py-3 pr-4 text-muted-foreground">
-                          {importRow.institution_code ?? '—'}
-                        </td>
-                        <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">
-                          {importRow.statement_period_start && importRow.statement_period_end
-                            ? `${formatDate(importRow.statement_period_start)} – ${formatDate(importRow.statement_period_end)}`
-                            : '—'}
-                        </td>
-                        <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">
-                          {importRow.total_rows != null ? (
-                            <span>
-                              {importRow.committed_rows ?? 0}/{importRow.total_rows}
-                              {(importRow.duplicate_rows ?? 0) > 0 && (
-                                <span className="ml-1 text-orange-500">({importRow.duplicate_rows} dup)</span>
-                              )}
-                            </span>
-                          ) : '—'}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <Badge className={cn('border-0 text-xs', status.className)}>
-                            {status.label}
-                          </Badge>
-                        </td>
-                        <td className="py-3 pr-4">
-                          <div className="font-medium">{getUploaderName(importRow)}</div>
-                          {importRow.uploadedByEmail && (
-                            <div className="text-xs text-muted-foreground">{importRow.uploadedByEmail}</div>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">
-                          {formatDate(importRow.created_at)}
-                        </td>
-                        <td className="py-3">
-                          <div className="flex items-center gap-2">
-                            {(importRow.status === 'in_review' || importRow.status === 'committed' || importRow.status === 'committing') && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="gap-1 text-xs"
-                                onClick={() => router.push(`/statements/review/${importRow.id}`)}
-                              >
-                                <ExternalLink className="size-3" />
-                                {importRow.status === 'in_review' ? 'Review' : 'View'}
-                              </Button>
-                            )}
-                            {importRow.status === 'committed' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="gap-1 text-xs"
-                                onClick={() => void handleReopenImport(importRow.id)}
-                              >
-                                <Pencil className="size-3" />
-                                Reopen
-                              </Button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          <SheetFooter className="mt-6">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRecoverySheetOpen(false)
+                setParseRecovery(null)
+              }}
+              disabled={resolvingRecovery}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void handleContinueRecoveryImport()}
+              disabled={resolvingRecovery}
+            >
+              {resolvingRecovery ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                'Continue Import'
+              )}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
