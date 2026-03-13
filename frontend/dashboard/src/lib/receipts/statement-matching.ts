@@ -1,4 +1,5 @@
 import { normalizeMerchantName } from '@/lib/receipts/normalization'
+import { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
 
 const AUTO_SUGGESTION_THRESHOLD = 0.7
 const AUTO_SUGGESTION_LEAD_GAP = 0.1
@@ -181,7 +182,7 @@ export function scoreStatementCandidate(receipt: ReceiptMatchInput, statementTxn
   const date = scoreDate(normalizedReceiptDate, normalizedTxnDate)
   const merchant = scoreMerchant(receipt.merchantRaw, statementTxn.merchant_raw, statementTxn.merchant_normalized)
 
-  const isPurchasePreferred = statementTxn.txn_type === 'debit' || statementTxn.txn_type === 'unknown'
+  const isPurchasePreferred = normalizeTxnDirection(statementTxn.txn_type) === 'debit' || statementTxn.txn_type === 'unknown'
 
   const confidence = clamp01(
     amount.score * AMOUNT_WEIGHT

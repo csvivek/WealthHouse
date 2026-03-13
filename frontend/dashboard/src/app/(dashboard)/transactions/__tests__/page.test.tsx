@@ -48,7 +48,7 @@ function createSupabaseClientMock(params?: {
       id: 'txn-1',
       txn_date: '2026-03-10',
       amount: 42.5,
-      txn_type: 'debit',
+      txn_type: 'purchase',
       merchant_normalized: 'Cafe Example',
       merchant_raw: 'Cafe Example',
       description: 'Lunch',
@@ -62,7 +62,7 @@ function createSupabaseClientMock(params?: {
       id: 'txn-2',
       txn_date: '2025-01-10',
       amount: 1800,
-      txn_type: 'credit',
+      txn_type: 'payment',
       merchant_normalized: 'Salary Payment',
       merchant_raw: 'Salary Payment',
       description: 'Monthly salary',
@@ -76,7 +76,7 @@ function createSupabaseClientMock(params?: {
       id: 'txn-3',
       txn_date: '2026-03-10',
       amount: 42.5,
-      txn_type: 'credit',
+      txn_type: 'payment',
       merchant_normalized: 'Transfer In',
       merchant_raw: 'Transfer In',
       description: 'Own transfer',
@@ -170,16 +170,23 @@ function createSupabaseClientMock(params?: {
 
       if (table === 'transaction_links') {
         return {
-          select: () => ({
-            eq: (_column: string, _value: string) => ({
-              eq: (_statusColumn: string, _statusValue: string) => ({
-                in: async (transactionColumn: string, transactionIds: string[]) => ({
-                  data: transactionLinks.filter((link) => transactionIds.includes(String(link[transactionColumn]))),
-                  error: null,
-                }),
+          select: () => {
+            const filters: Array<[string, unknown]> = []
+            const builder = {
+              eq: (column: string, value: unknown) => {
+                filters.push([column, value])
+                return builder
+              },
+              in: async (transactionColumn: string, transactionIds: string[]) => ({
+                data: transactionLinks.filter((link) => (
+                  filters.every(([column, value]) => link[column] === value)
+                  && transactionIds.includes(String(link[transactionColumn]))
+                )),
+                error: null,
               }),
-            }),
-          }),
+            }
+            return builder
+          },
         }
       }
 
@@ -272,6 +279,8 @@ describe('TransactionsPage', () => {
 
     expect(await screen.findByText('Cafe Example')).toBeInTheDocument()
     expect(screen.getByText('Salary Payment')).toBeInTheDocument()
+    expect(screen.getByText(/-.*42\.50/)).toBeInTheDocument()
+    expect(screen.getByText(/\+.*1,800\.00/)).toBeInTheDocument()
 
     const typeTrigger = screen.getByRole('combobox', { name: 'Transaction type' })
     await userEvent.click(typeTrigger)

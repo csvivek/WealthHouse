@@ -134,26 +134,41 @@ function buildStatementSummaryInsert(params: {
   return { summaryInsert, warnings }
 }
 
-function resolveFinalTxnType(row: { txn_type: string; merchant_raw: string; description: string | null; original_data: Record<string, unknown> }) {
-  const statementType = readString(row.original_data.statementType)?.toLowerCase()
+function resolveCommittedTxnType(row: {
+  txn_type: string
+  merchant_raw: string
+  description: string | null
+  original_data: Record<string, unknown>
+}): Database['public']['Enums']['txn_type'] {
+  const statementType = (
+    readString(row.original_data.statement_type)
+    ?? readString(row.original_data.statementType)
+    ?? ''
+  ).toLowerCase()
   const categoryType = readString(row.original_data.categoryType)?.toLowerCase()
   const merchant = row.merchant_raw.toLowerCase()
   const description = (row.description || '').toLowerCase()
   const haystack = `${merchant} ${description}`
 
   if (statementType) {
-    if (statementType.includes('refund')) return 'refund'
-    if (statementType.includes('payment')) return 'payment'
-    if (statementType.includes('transfer')) return 'transfer'
-    if (statementType.includes('purchase')) return 'purchase'
+    if (statementType.includes('refund') || statementType.includes('reversal')) return 'refund' as Database['public']['Enums']['txn_type']
+    if (statementType.includes('payment') || statementType.includes('deposit') || statementType.includes('salary') || statementType.includes('interest')) {
+      return 'payment' as Database['public']['Enums']['txn_type']
+    }
+    if (statementType.includes('transfer')) return 'transfer' as Database['public']['Enums']['txn_type']
+    if (statementType.includes('purchase') || statementType.includes('fee') || statementType.includes('withdrawal') || statementType.includes('giro')) {
+      return 'purchase' as Database['public']['Enums']['txn_type']
+    }
   }
 
-  if (categoryType === 'transfer') return 'transfer'
-  if (haystack.includes('refund')) return 'refund'
-  if (haystack.includes('payment') || haystack.includes('internet/wireless') || haystack.includes('bill payment')) return 'payment'
-  if (haystack.includes('transfer')) return 'transfer'
-  if (String(row.txn_type).toLowerCase() === 'debit') return 'purchase'
-  if (String(row.txn_type).toLowerCase() === 'credit') return 'payment'
+  if (categoryType === 'transfer') return 'transfer' as Database['public']['Enums']['txn_type']
+  if (haystack.includes('refund') || haystack.includes('reversal')) return 'refund' as Database['public']['Enums']['txn_type']
+  if (haystack.includes('payment') || haystack.includes('internet/wireless') || haystack.includes('bill payment')) {
+    return 'payment' as Database['public']['Enums']['txn_type']
+  }
+  if (haystack.includes('transfer')) return 'transfer' as Database['public']['Enums']['txn_type']
+  if (String(row.txn_type).toLowerCase() === 'debit') return 'purchase' as Database['public']['Enums']['txn_type']
+  if (String(row.txn_type).toLowerCase() === 'credit') return 'payment' as Database['public']['Enums']['txn_type']
   return 'unknown'
 }
 
@@ -381,12 +396,12 @@ export async function processStatementCommit(params: {
       merchant_normalized: merchantDisplayName,
       description: row.description,
       amount: row.amount,
-      txn_type: resolveFinalTxnType({
+      txn_type: resolveCommittedTxnType({
         txn_type: row.txn_type,
         merchant_raw: row.merchant_raw,
         description: row.description,
         original_data: originalData,
-      }) as Database['public']['Enums']['txn_type'],
+      }),
       currency: row.currency,
       original_amount: row.original_amount,
       original_currency: row.original_currency,

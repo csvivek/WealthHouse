@@ -53,7 +53,7 @@ function createServiceDbMock(params?: {
     (params?.transactions ?? [
       {
         id: 'txn-1',
-        txn_type: 'debit',
+        txn_type: 'purchase',
         txn_date: '2026-03-10',
         amount: 42.5,
         merchant_normalized: 'Cafe Example',
@@ -66,7 +66,7 @@ function createServiceDbMock(params?: {
       },
       {
         id: 'txn-2',
-        txn_type: 'credit',
+        txn_type: 'payment',
         txn_date: '2026-03-10',
         amount: 42.5,
         merchant_normalized: 'Transfer In',
@@ -79,7 +79,7 @@ function createServiceDbMock(params?: {
       },
       {
         id: 'txn-same-account',
-        txn_type: 'credit',
+        txn_type: 'refund',
         txn_date: '2026-03-10',
         amount: 42.5,
         merchant_normalized: 'Same Account',
@@ -92,7 +92,7 @@ function createServiceDbMock(params?: {
       },
       {
         id: 'txn-same-direction',
-        txn_type: 'debit',
+        txn_type: 'purchase',
         txn_date: '2026-03-11',
         amount: 42.5,
         merchant_normalized: 'Debit Counterpart',
@@ -105,7 +105,7 @@ function createServiceDbMock(params?: {
       },
       {
         id: 'txn-linked-elsewhere',
-        txn_type: 'credit',
+        txn_type: 'payment',
         txn_date: '2026-03-12',
         amount: 42.5,
         merchant_normalized: 'Already Linked',
@@ -118,7 +118,7 @@ function createServiceDbMock(params?: {
       },
       {
         id: 'txn-linked-source',
-        txn_type: 'debit',
+        txn_type: 'purchase',
         txn_date: '2026-03-12',
         amount: 42.5,
         merchant_normalized: 'Other Transfer',
@@ -131,7 +131,7 @@ function createServiceDbMock(params?: {
       },
       {
         id: 'txn-outside',
-        txn_type: 'credit',
+        txn_type: 'payment',
         txn_date: '2026-03-10',
         amount: 42.5,
         merchant_normalized: 'Outside Household',
@@ -173,6 +173,20 @@ function createServiceDbMock(params?: {
         domain_type: 'payment',
         payment_subtype: 'transfer',
         category_group: { id: 6, name: 'Transfers' },
+        category_subgroup: null,
+      },
+      {
+        id: 55,
+        name: 'Salary',
+        type: 'income',
+        group_id: 8,
+        subgroup_id: null,
+        icon_key: 'salary',
+        color_token: 'chart-1',
+        color_hex: null,
+        domain_type: 'payment',
+        payment_subtype: 'income',
+        category_group: { id: 8, name: 'Income' },
         category_subgroup: null,
       },
     ]).map((category) => [Number(category.id), { ...category }]),
@@ -540,6 +554,26 @@ describe('PATCH /api/statement-transactions/[id]', () => {
       transactionId: 'txn-1',
       tagIds: ['tag-1'],
       actorUserId: 'user-1',
+    })
+  })
+
+  it('accepts an income category for a committed credit transaction', async () => {
+    const db = createServiceDbMock()
+    mockedCreateServiceSupabaseClient.mockReturnValue(db as never)
+
+    const response = await PATCH(createRequest({ categoryId: 55, tagIds: [] }), {
+      params: Promise.resolve({ id: 'txn-2' }),
+    })
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload.success).toBe(true)
+    expect(payload.transaction).toEqual({
+      id: 'txn-2',
+      categoryId: 55,
+      category: expect.objectContaining({ id: 55, name: 'Salary', type: 'income' }),
+      tags: [],
+      internalTransferLink: null,
     })
   })
 

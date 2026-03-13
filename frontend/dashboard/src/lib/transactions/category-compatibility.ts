@@ -1,14 +1,12 @@
 import type { Database } from '@/types/database'
+import { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
 
-type TxnType = Database['public']['Enums']['txn_type']
+export { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
+
 type PaymentCategoryType = Database['public']['Enums']['category_type']
 
 const CREDIT_COMPATIBLE_TYPES: PaymentCategoryType[] = ['income', 'transfer']
 const DEBIT_COMPATIBLE_TYPES: PaymentCategoryType[] = ['expense', 'transfer']
-
-export function normalizeTxnDirection(txnType: string | null | undefined): TxnType {
-  return String(txnType).toLowerCase() === 'credit' ? 'credit' : 'debit'
-}
 
 export function getCompatiblePaymentCategoryTypes(txnType: string | null | undefined): PaymentCategoryType[] {
   return normalizeTxnDirection(txnType) === 'credit' ? CREDIT_COMPATIBLE_TYPES : DEBIT_COMPATIBLE_TYPES

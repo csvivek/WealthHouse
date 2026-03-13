@@ -33,9 +33,11 @@ import {
   computeCashFlowData,
   DEFAULT_OVERVIEW_FILTERS,
   deriveOverviewFilterOptions,
+  isDefaultOverviewFilterSelection,
   resolveScopedCategoryIds,
   type OverviewCategory,
 } from '@/lib/overview-filters'
+import { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
 
 interface Account {
   id: string
@@ -362,6 +364,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<OverviewTabValue>('payments')
   const [filters, setFilters] = useState<OverviewFilters>({ ...DEFAULT_OVERVIEW_FILTERS })
+  const [autoExpandedToAllHistory, setAutoExpandedToAllHistory] = useState(false)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [recentTxns, setRecentTxns] = useState<StatementTransaction[]>([])
   const [allTxns, setAllTxns] = useState<StatementTransaction[]>([])
@@ -486,7 +489,7 @@ export default function DashboardPage() {
           return query
         }
 
-        let [paymentsRes, receiptsRes, cardsRes, balancesRes] = await Promise.all([
+        const [initialPaymentsRes, initialReceiptsRes, cardsRes, balancesRes] = await Promise.all([
           buildPaymentsQuery(true),
           buildReceiptsQuery(true),
           scopedAccountIds.length > 0
@@ -502,6 +505,8 @@ export default function DashboardPage() {
                 .in('account_id', scopedAccountIds)
             : Promise.resolve({ data: [] as AssetBalance[] }),
         ])
+        let paymentsRes = initialPaymentsRes
+        let receiptsRes = initialReceiptsRes
 
         if (isMerchantSchemaNotReadyError(paymentsRes.error, 'merchants')) {
           paymentsRes = await buildPaymentsQuery(false)
@@ -517,13 +522,55 @@ export default function DashboardPage() {
         if (!isActive) return
 
         const paymentRows = (paymentsRes.data as unknown as StatementTransaction[] | null) ?? []
+        const receiptRows = (receiptsRes.data as unknown as ReceiptRow[] | null) ?? []
+        const cardRows = (cardsRes.data as CardRow[] | null) ?? []
+        const balanceRows = (balancesRes.data as AssetBalance[] | null) ?? []
+
+        if (
+          isDefaultOverviewFilterSelection(filters)
+          && paymentRows.length === 0
+          && receiptRows.length === 0
+        ) {
+          const [historicalPaymentsRes, historicalReceiptsRes] = await Promise.all([
+            scopedAccountIds.length > 0
+              ? supabase
+                  .from('statement_transactions')
+                  .select('id')
+                  .in('account_id', scopedAccountIds)
+                  .limit(1)
+              : Promise.resolve({ data: [] as Array<{ id: string }>, error: null }),
+            supabase
+              .from('receipts')
+              .select('id')
+              .eq('status', 'confirmed')
+              .limit(1),
+          ])
+
+          if (historicalPaymentsRes.error) throw historicalPaymentsRes.error
+          if (historicalReceiptsRes.error) throw historicalReceiptsRes.error
+
+          const hasHistoricalActivity =
+            ((historicalPaymentsRes.data as Array<{ id: string }> | null) ?? []).length > 0
+            || ((historicalReceiptsRes.data as Array<{ id: string }> | null) ?? []).length > 0
+
+          if (hasHistoricalActivity) {
+            setAutoExpandedToAllHistory(true)
+            setFilters((current) =>
+              isDefaultOverviewFilterSelection(current)
+                ? { ...current, period: 'all_history' }
+                : current,
+            )
+            return
+          }
+        }
+
         setAccounts(accountList)
         setCategories(categoryRows)
         setAllTxns(paymentRows)
         setRecentTxns(paymentRows.slice(0, 8))
-        setReceipts((receiptsRes.data as unknown as ReceiptRow[] | null) ?? [])
-        setCards((cardsRes.data as CardRow[] | null) ?? [])
-        setAssetBalances((balancesRes.data as AssetBalance[] | null) ?? [])
+        setReceipts(receiptRows)
+        setCards(cardRows)
+        setAssetBalances(balanceRows)
       } catch (error) {
         console.error('Failed to load dashboard data:', error)
         if (!isActive) return
@@ -565,10 +612,10 @@ export default function DashboardPage() {
 
   const monthlyCashFlow = useMemo(() => {
     const income = allTxns
-      .filter((transaction) => transaction.txn_type === 'credit')
+      .filter((transaction) => normalizeTxnDirection(transaction.txn_type) === 'credit')
       .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0)
     const expenses = allTxns
-      .filter((transaction) => transaction.txn_type === 'debit')
+      .filter((transaction) => normalizeTxnDirection(transaction.txn_type) === 'debit')
       .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0)
     return income - expenses
   }, [allTxns])
@@ -595,6 +642,16 @@ export default function DashboardPage() {
     return selected?.is_active ? 1 : 0
   }, [accounts, filters.accountId])
 
+  const handleFiltersChange = (nextFilters: OverviewFilters) => {
+    setAutoExpandedToAllHistory(false)
+    setFilters(nextFilters)
+  }
+
+  const handleFiltersReset = () => {
+    setAutoExpandedToAllHistory(false)
+    setFilters({ ...DEFAULT_OVERVIEW_FILTERS })
+  }
+
   if (loading) {
     return (
       <div className="flex h-[60vh] items-center justify-center">
@@ -619,9 +676,14 @@ export default function DashboardPage() {
         categoryOptions={categoryOptions}
         groupOptions={groupOptions}
         subgroupOptions={subgroupOptions}
-        onChange={setFilters}
-        onReset={() => setFilters({ ...DEFAULT_OVERVIEW_FILTERS })}
+        onChange={handleFiltersChange}
+        onReset={handleFiltersReset}
       />
+      {autoExpandedToAllHistory ? (
+        <p className="text-sm text-muted-foreground">
+          Showing all history because no activity was found for this month.
+        </p>
+      ) : null}
 
       {activeTab === 'receipts' ? (
         <Card>
@@ -741,7 +803,7 @@ export default function DashboardPage() {
                   {recentTxns.map((transaction) => {
                     const category =
                       transaction.category_id != null ? categoryMap.get(transaction.category_id) : undefined
-                    const isCredit = transaction.txn_type === 'credit'
+                    const isCredit = normalizeTxnDirection(transaction.txn_type) === 'credit'
                     const merchantName =
                       transaction.merchant?.name ??
                       transaction.merchant_normalized ??

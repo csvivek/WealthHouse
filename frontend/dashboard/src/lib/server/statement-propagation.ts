@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import { resolveOrCreatePaymentCategory } from '@/lib/server/category-service'
+import { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
 
 type CategoryType = Database['public']['Enums']['category_type']
 type ImportStagingRow = Database['public']['Tables']['import_staging']['Row']
@@ -60,10 +61,6 @@ function readString(value: unknown) {
 
 function readNumber(value: unknown) {
   return typeof value === 'number' ? value : null
-}
-
-export function normalizeTxnDirection(txnType: string | null | undefined): 'credit' | 'debit' {
-  return String(txnType).toLowerCase() === 'credit' ? 'credit' : 'debit'
 }
 
 export function isCategoryCompatible(txnType: string | null | undefined, categoryType: CategoryType | null): boolean {

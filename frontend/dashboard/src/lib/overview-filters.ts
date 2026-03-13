@@ -1,4 +1,5 @@
 import type { DatePeriod } from '@/lib/date-periods'
+import { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
 
 export interface DashboardFilters {
   period: DatePeriod
@@ -46,6 +47,16 @@ export const DEFAULT_OVERVIEW_FILTERS: DashboardFilters = {
   categoryId: 'all',
   groupId: 'all',
   subgroupId: 'all',
+}
+
+export function isDefaultOverviewFilterSelection(filters: DashboardFilters): boolean {
+  return (
+    filters.period === DEFAULT_OVERVIEW_FILTERS.period
+    && filters.accountId === DEFAULT_OVERVIEW_FILTERS.accountId
+    && filters.categoryId === DEFAULT_OVERVIEW_FILTERS.categoryId
+    && filters.groupId === DEFAULT_OVERVIEW_FILTERS.groupId
+    && filters.subgroupId === DEFAULT_OVERVIEW_FILTERS.subgroupId
+  )
 }
 
 export function nextFiltersForGroupChange(filters: DashboardFilters, groupId: string): DashboardFilters {
@@ -146,9 +157,9 @@ export function computeCashFlowData(
   for (const transaction of transactions) {
     const monthKey = transaction.txn_date.slice(0, 7)
     const existing = rowsByMonth.get(monthKey) ?? { income: 0, expenses: 0 }
-    if (transaction.txn_type === 'credit') {
+    if (normalizeTxnDirection(transaction.txn_type) === 'credit') {
       existing.income += Math.abs(Number(transaction.amount) || 0)
-    } else if (transaction.txn_type === 'debit') {
+    } else if (normalizeTxnDirection(transaction.txn_type) === 'debit') {
       existing.expenses += Math.abs(Number(transaction.amount) || 0)
     }
     rowsByMonth.set(monthKey, existing)

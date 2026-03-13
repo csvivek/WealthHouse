@@ -5,6 +5,7 @@ import {
   normalizeMerchantAlias,
   normalizeMerchantCanonicalName,
 } from '@/lib/merchants/normalization'
+import { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
 import { resolveMerchantStyle } from '@/lib/server/merchant-style'
 
 // Merchant support is applied lazily through migrations, so keep DB access tolerant to drift.
@@ -247,7 +248,7 @@ async function loadMerchantStats(db: AnyDb, householdId: string, merchantIds: st
     const merchantId = typeof row.merchant_id === 'string' ? row.merchant_id : null
     if (!merchantId) continue
     transactionCounts.set(merchantId, (transactionCounts.get(merchantId) ?? 0) + 1)
-    if (row.txn_type === 'debit') {
+    if (normalizeTxnDirection(row.txn_type) === 'debit') {
       spendTotals.set(merchantId, (spendTotals.get(merchantId) ?? 0) + Math.abs(toNumber(row.amount)))
     }
   }

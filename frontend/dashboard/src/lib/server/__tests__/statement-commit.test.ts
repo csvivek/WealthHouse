@@ -380,6 +380,96 @@ describe('processStatementCommit summary handling', () => {
     })
   })
 
+  it('commits semantic txn types while preserving credit-like reversals', async () => {
+    const context = createMutableDb({
+      approvedRows: [
+        {
+          id: 'row-1',
+          file_import_id: 'import-1',
+          household_id: 'hh-1',
+          account_id: 'acct-1',
+          row_index: 1,
+          review_status: 'approved',
+          duplicate_status: 'none',
+          duplicate_transaction_id: null,
+          txn_hash: 'txn-hash-1',
+          source_txn_hash: 'src-hash-1',
+          txn_date: '2026-02-10',
+          posting_date: '2026-02-11',
+          merchant_raw: 'ACME Store',
+          description: 'Monthly spend',
+          reference: 'REF-1',
+          amount: 69.04,
+          txn_type: 'debit',
+          currency: 'SGD',
+          original_amount: null,
+          original_currency: null,
+          confidence: 0.98,
+          original_data: {
+            matchedAccountName: 'My Card',
+            tagIds: [],
+          },
+          is_edited: false,
+          review_note: null,
+          last_reviewed_by: null,
+          last_reviewed_at: null,
+          committed_transaction_id: null,
+          created_at: '2026-03-12T00:00:00.000Z',
+          updated_at: '2026-03-12T00:00:00.000Z',
+        },
+        {
+          id: 'row-2',
+          file_import_id: 'import-1',
+          household_id: 'hh-1',
+          account_id: 'acct-1',
+          row_index: 2,
+          review_status: 'approved',
+          duplicate_status: 'none',
+          duplicate_transaction_id: null,
+          txn_hash: 'txn-hash-2',
+          source_txn_hash: 'src-hash-2',
+          txn_date: '2026-02-12',
+          posting_date: '2026-02-13',
+          merchant_raw: 'ANNUAL FEE REVERSAL',
+          description: 'Fee waiver',
+          reference: 'REF-2',
+          amount: 69.04,
+          txn_type: 'credit',
+          currency: 'SGD',
+          original_amount: null,
+          original_currency: null,
+          confidence: 0.98,
+          original_data: {
+            matchedAccountName: 'My Card',
+            tagIds: [],
+            statement_type: 'fee_reversal',
+          },
+          is_edited: false,
+          review_note: null,
+          last_reviewed_by: null,
+          last_reviewed_at: null,
+          committed_transaction_id: null,
+          created_at: '2026-03-12T00:00:00.000Z',
+          updated_at: '2026-03-12T00:00:00.000Z',
+        },
+      ],
+    })
+    mockedCreateServiceSupabaseClient.mockReturnValue(context.db as never)
+
+    const result = await processStatementCommit({ importId: 'import-1', householdId: 'hh-1', userId: 'user-1' })
+
+    expect(result.status).toBe('committed')
+    expect(context.tables.statement_transactions).toHaveLength(2)
+    expect(context.tables.statement_transactions[0]).toMatchObject({
+      merchant_raw: 'ACME Store',
+      txn_type: 'purchase',
+    })
+    expect(context.tables.statement_transactions[1]).toMatchObject({
+      merchant_raw: 'ANNUAL FEE REVERSAL',
+      txn_type: 'refund',
+    })
+  })
+
   it('commits successfully when staging transaction links schema is unavailable', async () => {
     const context = createMutableDb({
       stagingLinksSelectError: {

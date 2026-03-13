@@ -39,8 +39,10 @@ export function normalizeDirection(
   const statementType = (transaction.statement_type || '').toLowerCase()
 
   if (
+    statementType.includes('credit_card_payment') ||
     statementType.includes('payment') ||
     statementType.includes('refund') ||
+    statementType.includes('reversal') ||
     statementType.includes('interest') ||
     statementType.includes('salary') ||
     statementType.includes('transfer_in') ||

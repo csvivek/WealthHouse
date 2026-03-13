@@ -3,6 +3,7 @@ import {
   computeCashFlowData,
   DEFAULT_OVERVIEW_FILTERS,
   deriveOverviewFilterOptions,
+  isDefaultOverviewFilterSelection,
   nextFiltersForGroupChange,
   nextFiltersForSubgroupChange,
   resolveScopedCategoryIds,
@@ -37,6 +38,16 @@ const categories: OverviewCategory[] = [
 ]
 
 describe('overview filter helpers', () => {
+  it('identifies untouched default dashboard filters', () => {
+    expect(isDefaultOverviewFilterSelection({ ...DEFAULT_OVERVIEW_FILTERS })).toBe(true)
+    expect(
+      isDefaultOverviewFilterSelection({ ...DEFAULT_OVERVIEW_FILTERS, period: 'all_history' }),
+    ).toBe(false)
+    expect(
+      isDefaultOverviewFilterSelection({ ...DEFAULT_OVERVIEW_FILTERS, accountId: 'account-1' }),
+    ).toBe(false)
+  })
+
   it('resets subgroup and category when group changes', () => {
     const next = nextFiltersForGroupChange(
       { ...DEFAULT_OVERVIEW_FILTERS, subgroupId: '100', categoryId: '1' },
@@ -87,9 +98,9 @@ describe('cash flow helper', () => {
   it('builds six-month data points and aggregates by month', () => {
     const rows = computeCashFlowData(
       [
-        { txn_date: '2026-01-15', txn_type: 'credit', amount: 1000 },
-        { txn_date: '2026-01-20', txn_type: 'debit', amount: 250 },
-        { txn_date: '2026-02-01', txn_type: 'debit', amount: 100 },
+        { txn_date: '2026-01-15', txn_type: 'payment', amount: 1000 },
+        { txn_date: '2026-01-20', txn_type: 'purchase', amount: 250 },
+        { txn_date: '2026-02-01', txn_type: 'purchase', amount: 100 },
       ],
       new Date('2026-02-10T00:00:00.000Z'),
     )

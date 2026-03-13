@@ -95,7 +95,7 @@ Return only valid JSON with this exact shape:
 
 General rules:
 - Concatenate multi-line statement descriptions into a single readable description.
-- statement_type must be specific, not generic. Prefer values like credit_card_payment, purchase, paynow, fast_transfer, giro, wallet_topup, interest, salary, investment_purchase, investment_sale, refund, fee, cash_deposit, transfer_in, transfer_out, internal_transfer.
+- statement_type must be specific, not generic. Prefer values like credit_card_payment, purchase, paynow, fast_transfer, giro, wallet_topup, interest, salary, investment_purchase, investment_sale, refund, fee, fee_reversal, cash_deposit, transfer_in, transfer_out, internal_transfer.
 - category_hint must be one of these WealthHouse categories only: Groceries, Eating Out, General Household, Transport, Shopping, Kids, Subscriptions, Dining, Flowers / Gifts, Other.
 - Skip statement summary rows such as opening balance, carried forward, subtotal, total, grand total, points summaries, and rewards sections.
 - Keep transaction amount as a positive absolute value. Direction is encoded by statement_type context and later processing.
@@ -111,6 +111,7 @@ DBS-specific rules:
 - Interest is interest and category Other.
 - Buy - ... is investment_purchase and category Other; Sell - ... is investment_sale and category Other.
 - DBS credit-card rows with PAYMENT - ... or amounts suffixed with CR are credit_card_payment or refund, not purchases, and category Other unless the merchant context clearly indicates something else.
+- DBS credit-card fee reversals such as ANNUAL FEE REVERSAL are incoming credits. Classify them as refund or fee_reversal, not fee or purchase.
 - Standard DBS credit-card merchant spend rows should have category hints inferred from the merchant, for example GOPAY-GOJEK -> Transport, BUS/MRT -> Transport, SP DIGITAL -> Other, YA KUN / TOAST BOX / OLD CHANG KEE -> Eating Out, SHENG SIONG / NTUC / U STARS -> Groceries, OPENAI / NETFLIX / CIRCLES.LIFE -> Subscriptions.
 
 If you cannot confidently detect a field, use null or unknown rather than inventing data.`
