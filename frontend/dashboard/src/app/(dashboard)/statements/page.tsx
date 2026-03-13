@@ -45,6 +45,15 @@ interface FileImportRow {
   uploadedByDisplayName: string | null
   uploadedByEmail: string | null
   institution_code: string | null
+  raw_parse_result: {
+    institution_name?: string | null
+    matched_accounts?: Array<{
+      label?: string | null
+    }>
+    account?: {
+      account_type?: string | null
+    } | null
+  } | null
   status: string
   total_rows: number | null
   approved_rows: number | null
@@ -73,6 +82,7 @@ interface UnmatchedAccountDescriptor {
   transactionCount: number
   sampleRowIndexes: number[]
   institution_name: string | null
+  institution_code: string | null
   account_type: string | null
   product_name: string | null
   identifier_hint: string | null
@@ -98,6 +108,7 @@ interface DescriptorResolutionState {
   existingAccountId: string
   createAccount: {
     institution_name: string
+    institution_code: string
     product_name: string
     account_type: string
     identifier_hint: string
@@ -169,7 +180,7 @@ export default function StatementsPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('file_imports')
-        .select('id, file_name, uploaded_by, institution_code, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at')
+        .select('id, file_name, uploaded_by, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at')
         .eq('household_id', profile.household_id)
         .order('created_at', { ascending: false })
         .limit(50),
@@ -236,6 +247,18 @@ export default function StatementsPage() {
     return importRow.uploadedByDisplayName || importRow.uploadedByEmail || 'Unknown user'
   }
 
+  function getImportInstitutionLabel(importRow: FileImportRow) {
+    return importRow.raw_parse_result?.institution_name || importRow.institution_code || '—'
+  }
+
+  function getImportMatchedAccountLabel(importRow: FileImportRow) {
+    return importRow.raw_parse_result?.matched_accounts?.find((entry) => entry?.label)?.label || null
+  }
+
+  function getImportParsedAccountType(importRow: FileImportRow) {
+    return importRow.raw_parse_result?.account?.account_type || null
+  }
+
   function initializeRecoveryState(payload: ParseRecoveryState) {
     setParseRecovery(payload)
 
@@ -247,6 +270,7 @@ export default function StatementsPage() {
         existingAccountId: descriptor.suggestedExistingAccountId || '',
         createAccount: {
           institution_name: descriptor.institution_name || '',
+          institution_code: descriptor.institution_code || '',
           product_name: descriptor.card_name || descriptor.product_name || '',
           account_type: descriptor.account_type || 'savings',
           identifier_hint: descriptor.identifier_hint || descriptor.card_last4 || '',
@@ -365,6 +389,7 @@ export default function StatementsPage() {
         descriptorKey: descriptor.descriptorKey,
         createAccount: {
           institution_name: create.institution_name.trim(),
+          institution_code: create.institution_code.trim() || null,
           product_name: create.product_name.trim(),
           account_type: create.account_type,
           identifier_hint: create.identifier_hint.trim() || null,
@@ -826,10 +851,20 @@ export default function StatementsPage() {
                     return (
                       <tr key={importRow.id} className="border-b last:border-0">
                         <td className="max-w-[200px] truncate py-3 pr-4 font-medium">
-                          {importRow.file_name}
+                          <div>{importRow.file_name}</div>
+                          {getImportMatchedAccountLabel(importRow) && (
+                            <div className="truncate text-xs font-normal text-muted-foreground">
+                              {getImportMatchedAccountLabel(importRow)}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground">
-                          {importRow.institution_code ?? '—'}
+                          <div>{getImportInstitutionLabel(importRow)}</div>
+                          {getImportParsedAccountType(importRow) && (
+                            <div className="text-xs">
+                              {String(getImportParsedAccountType(importRow)).replace(/_/g, ' ')}
+                            </div>
+                          )}
                         </td>
                         <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">
                           {importRow.statement_period_start && importRow.statement_period_end

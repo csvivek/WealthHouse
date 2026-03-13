@@ -44,6 +44,11 @@ function createSupabaseClientMock() {
       file_name: 'owner-statement.pdf',
       uploaded_by: 'user-1',
       institution_code: 'dbs',
+      raw_parse_result: {
+        institution_name: 'DBS Bank Ltd',
+        account: { account_type: 'credit_card' },
+        matched_accounts: [{ label: 'DBS Bank Ltd — Altitude Card' }],
+      },
       status: 'in_review',
       total_rows: 10,
       approved_rows: 7,
@@ -59,6 +64,11 @@ function createSupabaseClientMock() {
       file_name: 'alex-statement.pdf',
       uploaded_by: 'user-2',
       institution_code: 'ocbc',
+      raw_parse_result: {
+        institution_name: 'OCBC Bank',
+        account: { account_type: 'savings' },
+        matched_accounts: [{ label: 'OCBC Bank — 360 Account' }],
+      },
       status: 'committed',
       total_rows: 12,
       approved_rows: 12,

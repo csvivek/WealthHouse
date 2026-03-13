@@ -76,7 +76,6 @@ interface ReceiptRow {
   merchant_raw: string
   merchant: { name: string | null } | null
   total_amount: number
-  category_id: number | null
   suggested_account_id: string | null
 }
 
@@ -98,6 +97,27 @@ interface AssetBalance {
 interface AssetAllocationDataPoint {
   label: string
   value: number
+}
+
+function describeDashboardLoadError(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message
+  }
+
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>
+    const message = typeof record.message === 'string' ? record.message : ''
+    const details = typeof record.details === 'string' ? record.details : ''
+    const hint = typeof record.hint === 'string' ? record.hint : ''
+    const code = typeof record.code === 'string' ? record.code : ''
+
+    const summary = [message, details, hint].filter((value) => value.trim().length > 0).join(' ')
+    if (summary.length > 0) {
+      return code ? `${summary} (${code})` : summary
+    }
+  }
+
+  return 'Failed to load dashboard data.'
 }
 
 function CashFlowChart({ data }: { data: ReturnType<typeof computeCashFlowData> }) {
@@ -362,6 +382,7 @@ function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<OverviewTabValue>('payments')
   const [filters, setFilters] = useState<OverviewFilters>({ ...DEFAULT_OVERVIEW_FILTERS })
   const [autoExpandedToAllHistory, setAutoExpandedToAllHistory] = useState(false)
@@ -378,6 +399,7 @@ export default function DashboardPage() {
 
     async function fetchData() {
       setLoading(true)
+      setLoadError(null)
       try {
         const supabase = createClient()
         const {
@@ -402,7 +424,7 @@ export default function DashboardPage() {
           .eq('id', user.id)
           .single()
 
-        if (!profile) {
+        if (!profile?.household_id) {
           if (!isActive) return
           setAccounts([])
           setRecentTxns([])
@@ -450,8 +472,8 @@ export default function DashboardPage() {
 
           if (scopedAccountIds.length > 0) {
             query = query.in('account_id', scopedAccountIds)
-          } else {
-            query = query.in('account_id', [''])
+          } else if (filters.accountId !== 'all') {
+            query = query.eq('account_id', filters.accountId)
           }
 
           if (hasCategoryFilters) {
@@ -469,18 +491,14 @@ export default function DashboardPage() {
             .from('receipts')
             .select(
               includeMerchantJoin
-                ? 'id, receipt_datetime, merchant_raw, merchant:merchants(name), total_amount, category_id, suggested_account_id'
-                : 'id, receipt_datetime, merchant_raw, total_amount, category_id, suggested_account_id',
+                ? 'id, receipt_datetime, merchant_raw, merchant:merchants(name), total_amount, suggested_account_id'
+                : 'id, receipt_datetime, merchant_raw, total_amount, suggested_account_id',
             )
             .eq('status', 'confirmed')
             .order('receipt_datetime', { ascending: false, nullsFirst: false })
 
           if (filters.accountId !== 'all') {
             query = query.eq('suggested_account_id', filters.accountId)
-          }
-
-          if (hasCategoryFilters) {
-            query = query.in('category_id', scopedCategoryIds.length > 0 ? scopedCategoryIds : [-1])
           }
 
           if (start) query = query.gte('receipt_datetime', `${start}T00:00:00.000Z`)
@@ -531,19 +549,30 @@ export default function DashboardPage() {
           && paymentRows.length === 0
           && receiptRows.length === 0
         ) {
+          let historicalPaymentsQuery = supabase
+            .from('statement_transactions')
+            .select('id')
+            .limit(1)
+
+          if (scopedAccountIds.length > 0) {
+            historicalPaymentsQuery = historicalPaymentsQuery.in('account_id', scopedAccountIds)
+          } else if (filters.accountId !== 'all') {
+            historicalPaymentsQuery = historicalPaymentsQuery.eq('account_id', filters.accountId)
+          }
+
+          let historicalReceiptsQuery = supabase
+            .from('receipts')
+            .select('id')
+            .eq('status', 'confirmed')
+            .limit(1)
+
+          if (filters.accountId !== 'all') {
+            historicalReceiptsQuery = historicalReceiptsQuery.eq('suggested_account_id', filters.accountId)
+          }
+
           const [historicalPaymentsRes, historicalReceiptsRes] = await Promise.all([
-            scopedAccountIds.length > 0
-              ? supabase
-                  .from('statement_transactions')
-                  .select('id')
-                  .in('account_id', scopedAccountIds)
-                  .limit(1)
-              : Promise.resolve({ data: [] as Array<{ id: string }>, error: null }),
-            supabase
-              .from('receipts')
-              .select('id')
-              .eq('status', 'confirmed')
-              .limit(1),
+            historicalPaymentsQuery,
+            historicalReceiptsQuery,
           ])
 
           if (historicalPaymentsRes.error) throw historicalPaymentsRes.error
@@ -574,6 +603,7 @@ export default function DashboardPage() {
       } catch (error) {
         console.error('Failed to load dashboard data:', error)
         if (!isActive) return
+        setLoadError(describeDashboardLoadError(error))
         setAccounts([])
         setRecentTxns([])
         setAllTxns([])
@@ -668,6 +698,14 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
         <p className="text-muted-foreground">Your financial overview at a glance.</p>
       </div>
+      {loadError ? (
+        <Card className="border-destructive/40">
+          <CardHeader>
+            <CardTitle className="text-base">Unable to load dashboard data</CardTitle>
+            <CardDescription className="text-destructive">{loadError}</CardDescription>
+          </CardHeader>
+        </Card>
+      ) : null}
 
       <OverviewTabs value={activeTab} onValueChange={setActiveTab} />
       <OverviewFilterBar

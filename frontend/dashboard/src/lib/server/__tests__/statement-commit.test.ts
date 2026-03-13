@@ -380,6 +380,24 @@ describe('processStatementCommit summary handling', () => {
     })
   })
 
+  it('resets approved row counters when a replacement commit finishes with no approved rows', async () => {
+    const context = createMutableDb({
+      approvedRows: [],
+      existingStatementImports: [{ id: 'stmt-existing-1', file_import_id: 'import-1' }],
+    })
+    mockedCreateServiceSupabaseClient.mockReturnValue(context.db as never)
+
+    const result = await processStatementCommit({ importId: 'import-1', householdId: 'hh-1', userId: 'user-1' })
+
+    expect(result.status).toBe('committed')
+    expect(result.committedCount).toBe(0)
+    expect(context.tables.file_imports[0]).toMatchObject({
+      approved_rows: 0,
+      committed_rows: 0,
+      committed_statement_import_id: null,
+    })
+  })
+
   it('commits semantic txn types while preserving credit-like reversals', async () => {
     const context = createMutableDb({
       approvedRows: [

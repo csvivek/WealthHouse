@@ -1,6 +1,6 @@
 import { geminiProVision } from './gemini'
 import { extractStatementArchiveEntries, isZipArchive } from '@/lib/statements/archive'
-import type { ParsedStatementResult } from '@/lib/statements/helpers'
+import { normalizeParsedStatement, type ParsedStatementResult } from '@/lib/statements/helpers'
 
 function extractJson(text: string) {
   const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
@@ -47,7 +47,7 @@ export async function parseStatement(
 
 Return only valid JSON with this exact shape:
 {
-  "institution_code": "dbs_bank | dbs_cc | ocbc | uob | trust_bank | wise | unknown",
+  "institution_code": "dbs_bank | dbs_cc | ocbc | uob | trust_bank | wise | citibank | unknown",
   "institution_name": "Institution display name",
   "statement_date": "YYYY-MM-DD or null",
   "period_start": "YYYY-MM-DD or null",
@@ -114,6 +114,11 @@ DBS-specific rules:
 - DBS credit-card fee reversals such as ANNUAL FEE REVERSAL are incoming credits. Classify them as refund or fee_reversal, not fee or purchase.
 - Standard DBS credit-card merchant spend rows should have category hints inferred from the merchant, for example GOPAY-GOJEK -> Transport, BUS/MRT -> Transport, SP DIGITAL -> Other, YA KUN / TOAST BOX / OLD CHANG KEE -> Eating Out, SHENG SIONG / NTUC / U STARS -> Groceries, OPENAI / NETFLIX / CIRCLES.LIFE -> Subscriptions.
 
+Citibank-specific rules:
+- Citibank and Citi branded statements must use institution_code "citibank".
+- Citi Ready Credit is a loan / credit line product. Set account_type to loan, not credit_card, even if the statement resembles a card bill.
+- Product labels containing Ready Credit, credit line, or line of credit should stay tied to that loan product name.
+
 If you cannot confidently detect a field, use null or unknown rather than inventing data.`
 
   const promptParts: Array<string | { inlineData: { mimeType: string; data: string } }> = [prompt]
@@ -153,7 +158,7 @@ If you cannot confidently detect a field, use null or unknown rather than invent
   const payload = extractJson(text)
 
   try {
-    return JSON.parse(payload) as ParsedStatementResult
+    return normalizeParsedStatement(JSON.parse(payload) as ParsedStatementResult)
   } catch (error) {
     console.error('Failed to parse statement JSON from AI response:', payload, error)
     return {

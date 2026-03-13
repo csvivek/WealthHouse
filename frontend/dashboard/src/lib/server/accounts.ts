@@ -1,4 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  canonicalizeInstitutionName,
+  getKnownInstitutionMetadata,
+  normalizeAccountType as normalizeSharedAccountType,
+} from '@/lib/accounts/normalization'
 import type { Database } from '@/types/database'
 
 export type AppSupabaseClient = SupabaseClient
@@ -23,39 +28,50 @@ interface CreateAccountOptions {
   cardLast4?: string | null
 }
 
-const KNOWN_INSTITUTIONS: Record<string, { name: string; countryCode: string; type: Database['public']['Enums']['institution_type'] }> = {
-  dbs_bank: { name: 'DBS Bank Ltd', countryCode: 'SG', type: 'bank' },
-  dbs_cc: { name: 'DBS Bank Ltd', countryCode: 'SG', type: 'bank' },
-  ocbc: { name: 'OCBC Bank', countryCode: 'SG', type: 'bank' },
-  uob: { name: 'UOB', countryCode: 'SG', type: 'bank' },
-  posb: { name: 'POSB', countryCode: 'SG', type: 'bank' },
-  trust_bank: { name: 'Trust Bank', countryCode: 'SG', type: 'bank' },
-  wise: { name: 'Wise', countryCode: 'SG', type: 'other' },
+interface UpdateAccountOptions {
+  householdId: string
+  accountId: string
+  institutionName: string
+  productName: string
+  nickname?: string | null
+  identifierHint?: string | null
+  currency?: string | null
+  isActive?: boolean
+  cardName?: string | null
+  cardLast4?: string | null
+  accountType?: string | null
 }
 
-export function normalizeAccountType(raw?: string | null): AccountType {
-  const value = (raw ?? '').toLowerCase().trim()
+export class AccountMutationError extends Error {
+  status: number
 
-  if (value.includes('credit')) return 'credit_card'
-  if (value.includes('card')) return 'credit_card'
-  if (value.includes('crypto')) return 'crypto_exchange'
-  if (value.includes('exchange')) return 'crypto_exchange'
-  if (value.includes('invest')) return 'investment'
-  if (value.includes('loan')) return 'loan'
-  if (value.includes('deposit')) return 'fixed_deposit'
-  if (value.includes('current')) return 'current'
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'AccountMutationError'
+    this.status = status
+  }
+}
 
-  return 'savings'
+function normalizeCardLast4(cardLast4?: string | null, identifierHint?: string | null) {
+  const digits = (cardLast4 ?? identifierHint ?? '').replace(/\D/g, '')
+  return digits ? digits.slice(-4).padStart(4, '0') : '0000'
+}
+
+export function normalizeAccountType(raw?: string | null, extraValues: Array<string | null | undefined> = []): AccountType {
+  return normalizeSharedAccountType(raw, extraValues) as AccountType
 }
 
 export function normalizeInstitutionMetadata(options: InstitutionOptions) {
-  const key = (options.institutionCode ?? '').toLowerCase().trim()
-  const known = key ? KNOWN_INSTITUTIONS[key] : null
+  const known = getKnownInstitutionMetadata(options.institutionCode, [options.institutionName])
+  const canonicalName = canonicalizeInstitutionName({
+    institutionCode: options.institutionCode,
+    institutionName: options.institutionName,
+  })
 
   return {
-    name: options.institutionName?.trim() || known?.name || 'Manual Institution',
+    name: canonicalName || 'Manual Institution',
     countryCode: options.countryCode?.trim() || known?.countryCode || 'SG',
-    type: known?.type || 'bank',
+    type: (known?.type || 'bank') as Database['public']['Enums']['institution_type'],
   }
 }
 
@@ -109,7 +125,7 @@ export async function createAccountWithRelatedRecords(
   supabase: AppSupabaseClient,
   options: CreateAccountOptions,
 ) {
-  const accountType = normalizeAccountType(options.accountType)
+  const accountType = normalizeAccountType(options.accountType, [options.productName, options.cardName])
 
   const { data: account, error } = await supabase
     .from('accounts')
@@ -130,7 +146,7 @@ export async function createAccountWithRelatedRecords(
   }
 
   if (accountType === 'credit_card') {
-    const last4 = (options.cardLast4 || options.identifierHint || '0000').slice(-4).padStart(4, '0')
+    const last4 = normalizeCardLast4(options.cardLast4, options.identifierHint)
     await supabase.from('cards').upsert({
       account_id: account.id,
       card_name: options.cardName || options.productName,
@@ -147,4 +163,73 @@ export async function createAccountWithRelatedRecords(
   }
 
   return account
+}
+
+export async function updateAccountWithRelatedRecords(
+  supabase: AppSupabaseClient,
+  options: UpdateAccountOptions,
+) {
+  const { data: existing, error: existingError } = await supabase
+    .from('accounts')
+    .select('id, account_type, product_name, nickname, identifier_hint, currency, institution_id, is_active')
+    .eq('id', options.accountId)
+    .eq('household_id', options.householdId)
+    .maybeSingle()
+
+  if (existingError) {
+    throw new Error(existingError.message || 'Failed to load account')
+  }
+
+  if (!existing) {
+    throw new AccountMutationError('Account not found', 404)
+  }
+
+  if (options.accountType) {
+    const requestedType = normalizeAccountType(options.accountType)
+    if (requestedType !== existing.account_type) {
+      throw new AccountMutationError('Account type cannot be changed.', 400)
+    }
+  }
+
+  const institution = await findOrCreateInstitution(supabase, {
+    institutionName: options.institutionName,
+  })
+
+  const { data: account, error: updateError } = await supabase
+    .from('accounts')
+    .update({
+      institution_id: institution.id,
+      product_name: options.productName,
+      nickname: options.nickname ?? null,
+      identifier_hint: options.identifierHint ?? null,
+      currency: options.currency || 'SGD',
+      is_active: typeof options.isActive === 'boolean' ? options.isActive : existing.is_active,
+    })
+    .eq('id', options.accountId)
+    .eq('household_id', options.householdId)
+    .select('id, product_name, nickname, account_type, institution_id, currency, identifier_hint, is_active')
+    .single()
+
+  if (updateError || !account) {
+    throw new Error(updateError?.message || 'Failed to update account')
+  }
+
+  if (existing.account_type === 'credit_card') {
+    const last4 = normalizeCardLast4(options.cardLast4, options.identifierHint)
+    await supabase.from('cards').upsert({
+      account_id: account.id,
+      card_name: options.cardName || options.productName,
+      card_last4: last4,
+    })
+  }
+
+  if (existing.account_type === 'crypto_exchange') {
+    await supabase.from('exchange_accounts').upsert({
+      account_id: account.id,
+      exchange_name: options.productName,
+      account_label: options.nickname ?? options.productName,
+    })
+  }
+
+  return { account, institution }
 }

@@ -71,6 +71,13 @@ interface ImportMeta {
   status: string
   fileName: string
   institutionCode: string | null
+  institutionName: string | null
+  parsedAccountType: string | null
+  parsedProductName: string | null
+  parsedIdentifierHint: string | null
+  parsedCardName: string | null
+  parsedCardLast4: string | null
+  matchedAccountLabel: string | null
   statementDate: string | null
   period: { start: string | null; end: string | null }
   summary: Record<string, unknown> | null
@@ -85,6 +92,15 @@ interface ImportMeta {
   hasCommittedVersion: boolean
   isRevision: boolean
   canReopen: boolean
+}
+
+interface ReviewAccountOption {
+  id: string
+  label: string
+  accountType: string | null
+  institutionName: string | null
+  productName: string | null
+  nickname: string | null
 }
 
 interface StagingLink {
@@ -231,6 +247,24 @@ interface PendingPropagationDialog {
   preview: PropagationPreviewResponse
 }
 
+type RerouteMode = 'existing' | 'create'
+
+interface RerouteDraft {
+  mode: RerouteMode
+  existingAccountId: string
+  createAccount: {
+    institution_name: string
+    institution_code: string
+    product_name: string
+    account_type: string
+    identifier_hint: string
+    currency: string
+    nickname: string
+    card_name: string
+    card_last4: string
+  }
+}
+
 type FilterStatus = 'all' | 'pending' | 'approved' | 'rejected' | 'committed' | 'already_imported' | 'duplicate'
 
 const CREATE_CATEGORY_VALUE = '__create_category__'
@@ -255,6 +289,15 @@ const sourceLabelMap: Record<string, string> = {
   genai_suggestion: 'AI',
   web_enriched: 'Web + AI',
   manual_override: 'Manual',
+}
+
+function formatAccountTypeLabel(value?: string | null) {
+  if (!value) return null
+
+  return value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 
@@ -343,6 +386,7 @@ export default function ReviewPage() {
   const [loading, setLoading] = useState(true)
   const [importMeta, setImportMeta] = useState<ImportMeta | null>(null)
   const [rows, setRows] = useState<StagingRow[]>([])
+  const [accounts, setAccounts] = useState<ReviewAccountOption[]>([])
   const [categories, setCategories] = useState<ReviewCategory[]>([])
   const [tags, setTags] = useState<ReviewTag[]>([])
 
@@ -356,6 +400,23 @@ export default function ReviewPage() {
   const [propagationDialog, setPropagationDialog] = useState<PendingPropagationDialog | null>(null)
   const [selectedPropagationIds, setSelectedPropagationIds] = useState<Set<string>>(new Set())
   const [linkSheetRowId, setLinkSheetRowId] = useState<string | null>(null)
+  const [rerouteDialogOpen, setRerouteDialogOpen] = useState(false)
+  const [rerouting, setRerouting] = useState(false)
+  const [rerouteDraft, setRerouteDraft] = useState<RerouteDraft>({
+    mode: 'existing',
+    existingAccountId: '',
+    createAccount: {
+      institution_name: '',
+      institution_code: '',
+      product_name: '',
+      account_type: 'savings',
+      identifier_hint: '',
+      currency: 'SGD',
+      nickname: '',
+      card_name: '',
+      card_last4: '',
+    },
+  })
 
   const [actionLoading, setActionLoading] = useState(false)
   const [commitLoading, setCommitLoading] = useState(false)
@@ -372,6 +433,7 @@ export default function ReviewPage() {
       }
       const data = await res.json()
       setImportMeta(data.import)
+      setAccounts(data.accounts ?? [])
       setRows(data.rows)
       setCategories(data.categories ?? [])
       setTags(data.tags ?? [])
@@ -383,6 +445,31 @@ export default function ReviewPage() {
   }, [importId])
 
   useEffect(() => { void fetchReviewData() }, [fetchReviewData])
+
+  useEffect(() => {
+    if (!importMeta) return
+
+    const parsedAccountType = importMeta.parsedAccountType || 'savings'
+    const currentMatchedAccount = accounts.find((account) => account.label === importMeta.matchedAccountLabel)
+    const suggestedExistingAccount = accounts.find((account) => account.accountType === parsedAccountType)
+    const existingAccountId = currentMatchedAccount?.id || suggestedExistingAccount?.id || accounts[0]?.id || ''
+
+    setRerouteDraft({
+      mode: existingAccountId ? 'existing' : 'create',
+      existingAccountId,
+      createAccount: {
+        institution_name: importMeta.institutionName || '',
+        institution_code: importMeta.institutionCode || '',
+        product_name: importMeta.parsedProductName || importMeta.parsedCardName || '',
+        account_type: parsedAccountType,
+        identifier_hint: importMeta.parsedIdentifierHint || importMeta.parsedCardLast4 || '',
+        currency: importMeta.currency || 'SGD',
+        nickname: '',
+        card_name: importMeta.parsedCardName || importMeta.parsedProductName || '',
+        card_last4: importMeta.parsedCardLast4 || '',
+      },
+    })
+  }, [accounts, importMeta])
 
   const latestImportJob = useMemo(
     () => commitJobs.find((job) => job.importId === importId),
@@ -913,6 +1000,64 @@ export default function ReviewPage() {
     }
   }
 
+  async function handleRerouteImport() {
+    if (!importMeta) return
+
+    if (rerouteDraft.mode === 'existing' && !rerouteDraft.existingAccountId) {
+      toast.error('Select an existing account to reroute this import.')
+      return
+    }
+
+    if (rerouteDraft.mode === 'create') {
+      const create = rerouteDraft.createAccount
+      if (!create.institution_name.trim() || !create.product_name.trim()) {
+        toast.error('Institution and product name are required to create a reroute account.')
+        return
+      }
+    }
+
+    setRerouting(true)
+    try {
+      const payload = rerouteDraft.mode === 'existing'
+        ? {
+            targetAccountId: rerouteDraft.existingAccountId,
+          }
+        : {
+            createAccount: {
+              institution_name: rerouteDraft.createAccount.institution_name.trim(),
+              institution_code: rerouteDraft.createAccount.institution_code.trim() || null,
+              product_name: rerouteDraft.createAccount.product_name.trim(),
+              account_type: rerouteDraft.createAccount.account_type,
+              identifier_hint: rerouteDraft.createAccount.identifier_hint.trim() || null,
+              currency: rerouteDraft.createAccount.currency.trim() || null,
+              nickname: rerouteDraft.createAccount.nickname.trim() || null,
+              card_name: rerouteDraft.createAccount.card_name.trim() || null,
+              card_last4: rerouteDraft.createAccount.card_last4.trim() || null,
+            },
+          }
+
+      const res = await fetch(`/api/ai/statement/${importId}/reroute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        toast.error(data?.error || 'Failed to reroute import account')
+        return
+      }
+
+      setRerouteDialogOpen(false)
+      toast.success(`Import rerouted to ${data.accountLabel}`)
+      await fetchReviewData()
+    } catch {
+      toast.error('Failed to reroute import account')
+    } finally {
+      setRerouting(false)
+    }
+  }
+
   async function handleCommit() {
     if (stats.approved === 0) {
       toast.error('No approved rows to commit')
@@ -1004,12 +1149,24 @@ You can leave this page while the commit continues.`,
             <h1 className="text-2xl font-bold tracking-tight">Review Import</h1>
             <p className="text-sm text-muted-foreground">
               {importMeta.fileName}
-              {importMeta.institutionCode && ` · ${importMeta.institutionCode}`}
+              {importMeta.institutionName && ` · ${importMeta.institutionName}`}
+              {!importMeta.institutionName && importMeta.institutionCode && ` · ${importMeta.institutionCode}`}
               {importMeta.statementDate && ` · ${formatDate(importMeta.statementDate)}`}
               {(importMeta.uploadedBy.displayName || importMeta.uploadedBy.email) && (
                 ` · Uploaded by ${importMeta.uploadedBy.displayName || importMeta.uploadedBy.email}`
               )}
             </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {importMeta.parsedAccountType && (
+                <Badge variant="outline">Parsed as {formatAccountTypeLabel(importMeta.parsedAccountType)}</Badge>
+              )}
+              {importMeta.matchedAccountLabel && (
+                <Badge variant="outline">Matched to {importMeta.matchedAccountLabel}</Badge>
+              )}
+              {importMeta.institutionCode && importMeta.institutionName && (
+                <Badge variant="outline">Code {importMeta.institutionCode}</Badge>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -1026,8 +1183,17 @@ You can leave this page while the commit continues.`,
           )}
           {!isReadOnly && (
             <Button
+              variant="outline"
+              onClick={() => setRerouteDialogOpen(true)}
+              disabled={actionLoading || commitLoading || commitJobActive || rerouting}
+            >
+              Reroute Account
+            </Button>
+          )}
+          {!isReadOnly && (
+            <Button
               onClick={handleCommit}
-              disabled={commitLoading || commitJobActive || stats.approved === 0}
+              disabled={commitLoading || commitJobActive || rerouting || stats.approved === 0}
               className="gap-2"
             >
               {commitLoading || commitJobActive ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
@@ -1072,6 +1238,196 @@ You can leave this page while the commit continues.`,
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={rerouteDialogOpen} onOpenChange={setRerouteDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Reroute Import Account</DialogTitle>
+            <DialogDescription>
+              Reassign every staged row in this import to a different account, then re-commit as a replacement.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Resolution Mode</label>
+              <Select
+                value={rerouteDraft.mode}
+                onValueChange={(value) => setRerouteDraft((current) => ({
+                  ...current,
+                  mode: value as RerouteMode,
+                }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="existing">Use Existing Account</SelectItem>
+                  <SelectItem value="create">Create Account</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {rerouteDraft.mode === 'existing' ? (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Existing Account</label>
+                <Select
+                  value={rerouteDraft.existingAccountId}
+                  onValueChange={(value) => setRerouteDraft((current) => ({
+                    ...current,
+                    existingAccountId: value,
+                  }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {account.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Institution Name</label>
+                  <Input
+                    value={rerouteDraft.createAccount.institution_name}
+                    onChange={(event) => setRerouteDraft((current) => ({
+                      ...current,
+                      createAccount: {
+                        ...current.createAccount,
+                        institution_name: event.target.value,
+                      },
+                    }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Product Name</label>
+                  <Input
+                    value={rerouteDraft.createAccount.product_name}
+                    onChange={(event) => setRerouteDraft((current) => ({
+                      ...current,
+                      createAccount: {
+                        ...current.createAccount,
+                        product_name: event.target.value,
+                      },
+                    }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Account Type</label>
+                  <Select
+                    value={rerouteDraft.createAccount.account_type}
+                    onValueChange={(value) => setRerouteDraft((current) => ({
+                      ...current,
+                      createAccount: {
+                        ...current.createAccount,
+                        account_type: value,
+                      },
+                    }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="savings">Savings</SelectItem>
+                      <SelectItem value="current">Current</SelectItem>
+                      <SelectItem value="credit_card">Credit Card</SelectItem>
+                      <SelectItem value="investment">Investment</SelectItem>
+                      <SelectItem value="crypto_exchange">Crypto Exchange</SelectItem>
+                      <SelectItem value="loan">Loan</SelectItem>
+                      <SelectItem value="fixed_deposit">Fixed Deposit</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Currency</label>
+                  <Input
+                    value={rerouteDraft.createAccount.currency}
+                    onChange={(event) => setRerouteDraft((current) => ({
+                      ...current,
+                      createAccount: {
+                        ...current.createAccount,
+                        currency: event.target.value,
+                      },
+                    }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Identifier Hint</label>
+                  <Input
+                    value={rerouteDraft.createAccount.identifier_hint}
+                    onChange={(event) => setRerouteDraft((current) => ({
+                      ...current,
+                      createAccount: {
+                        ...current.createAccount,
+                        identifier_hint: event.target.value,
+                      },
+                    }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Nickname (Optional)</label>
+                  <Input
+                    value={rerouteDraft.createAccount.nickname}
+                    onChange={(event) => setRerouteDraft((current) => ({
+                      ...current,
+                      createAccount: {
+                        ...current.createAccount,
+                        nickname: event.target.value,
+                      },
+                    }))}
+                  />
+                </div>
+                {rerouteDraft.createAccount.account_type === 'credit_card' && (
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium">Card Name</label>
+                      <Input
+                        value={rerouteDraft.createAccount.card_name}
+                        onChange={(event) => setRerouteDraft((current) => ({
+                          ...current,
+                          createAccount: {
+                            ...current.createAccount,
+                            card_name: event.target.value,
+                          },
+                        }))}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium">Card Last 4</label>
+                      <Input
+                        value={rerouteDraft.createAccount.card_last4}
+                        onChange={(event) => setRerouteDraft((current) => ({
+                          ...current,
+                          createAccount: {
+                            ...current.createAccount,
+                            card_last4: event.target.value.replace(/[^0-9]/g, '').slice(0, 4),
+                          },
+                        }))}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRerouteDialogOpen(false)} disabled={rerouting}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleRerouteImport()} disabled={rerouting}>
+              {rerouting ? <Loader2 className="size-4 animate-spin" /> : null}
+              Apply Reroute
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(propagationDialog)} onOpenChange={() => undefined}>
         <DialogContent

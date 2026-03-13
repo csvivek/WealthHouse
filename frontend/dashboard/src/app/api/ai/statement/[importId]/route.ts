@@ -30,6 +30,12 @@ function readStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
+function readObject(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
 function readTagSuggestions(value: unknown) {
   if (!Array.isArray(value)) return []
   return value
@@ -300,6 +306,13 @@ export async function GET(
       loadUploaderProfile(enrichmentSupabase, serviceSupabase, fileImport.uploaded_by, importId),
     ])
 
+    const { data: householdAccounts } = await supabase
+      .from('accounts')
+      .select('id, product_name, nickname, account_type, institutions(name)')
+      .eq('household_id', profile.household_id)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+
     if (rowsResult.error) {
       return NextResponse.json({ error: 'Failed to fetch staged rows' }, { status: 500 })
     }
@@ -312,6 +325,24 @@ export async function GET(
     const hasCommittedVersion = committedImportCount > 0 || stagingRows.some((row) => row.committed_transaction_id)
     const isRevision = fileImport.status === 'in_review' && hasCommittedVersion
     const canReopen = fileImport.status === 'committed' && hasCommittedVersion
+    const rawParseResult = readObject(fileImport.raw_parse_result)
+    const parsedAccount = readObject(rawParseResult?.account)
+    const cardInfo = readObject(fileImport.card_info_json)
+    const matchedAccounts = Array.isArray(rawParseResult?.matched_accounts)
+      ? rawParseResult?.matched_accounts
+      : Array.isArray(cardInfo?.matchedAccounts)
+        ? cardInfo?.matchedAccounts
+        : []
+    const matchedAccountLabel = matchedAccounts
+      .map((entry) => readObject(entry))
+      .find((entry) => entry)?.label
+    const matchedAccountLabelText = typeof matchedAccountLabel === 'string' ? matchedAccountLabel : null
+    const parsedAccountType = readString(parsedAccount?.account_type)
+    const parsedInstitutionName = readString(rawParseResult?.institution_name)
+    const parsedProductName = readString(parsedAccount?.product_name)
+    const parsedIdentifierHint = readString(parsedAccount?.identifier_hint)
+    const parsedCardName = readString(parsedAccount?.card_name)
+    const parsedCardLast4 = readString(parsedAccount?.card_last4)
 
     const similarPreviewMap = new Map<string, { count: number; examples: string[] }>()
 
@@ -384,6 +415,13 @@ export async function GET(
         status: fileImport.status,
         fileName: fileImport.file_name,
         institutionCode: fileImport.institution_code,
+        institutionName: parsedInstitutionName,
+        parsedAccountType,
+        parsedProductName,
+        parsedIdentifierHint,
+        parsedCardName,
+        parsedCardLast4,
+        matchedAccountLabel: matchedAccountLabelText,
         statementDate: fileImport.statement_date,
         period: {
           start: fileImport.statement_period_start,
@@ -398,6 +436,22 @@ export async function GET(
         isRevision,
         canReopen,
       },
+      accounts: ((householdAccounts ?? []) as Array<Record<string, unknown>>).map((account) => {
+        const institution = readObject(account.institutions)
+        const institutionName = readString(institution?.name)
+        const label = institutionName
+          ? `${institutionName} — ${String(account.nickname ?? account.product_name ?? '')}`
+          : String(account.nickname ?? account.product_name ?? '')
+
+        return {
+          id: String(account.id),
+          label,
+          accountType: readString(account.account_type),
+          institutionName,
+          productName: readString(account.product_name),
+          nickname: readString(account.nickname),
+        }
+      }),
       categories: reviewCategories.map((category) => ({
         id: category.id,
         name: category.name,

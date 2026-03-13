@@ -276,6 +276,7 @@ export async function processStatementCommit(params: {
 
     const emptyCommitUpdate: FileImportUpdate = {
       status: 'committed',
+      approved_rows: 0,
       committed_at: new Date().toISOString(),
       committed_rows: 0,
       committed_statement_import_id: null,
@@ -565,6 +566,7 @@ export async function processStatementCommit(params: {
   const statementImportIds = Array.from(statementImportsByAccount.values())
   const committedImportUpdate: FileImportUpdate = {
     status: 'committed',
+    approved_rows: approvedRows.length,
     committed_statement_import_id: statementImportIds[0] ?? null,
     committed_at: new Date().toISOString(),
     committed_rows: committedCount,

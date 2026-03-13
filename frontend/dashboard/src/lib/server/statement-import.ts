@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as crypto from 'crypto'
+import { institutionsMatch, normalizeAccountType } from '@/lib/accounts/normalization'
 import { normalizeDirection, type ParsedStatementAccount, type ParsedStatementResult, type ParsedStatementTransaction } from '@/lib/statements/helpers'
 import type { AvailableCategory } from '@/lib/knowledge/categories'
 import { normalizeMerchantName } from '@/lib/knowledge/merchant-categories'
 import { resolveMerchantCategory, type MerchantIntelligenceResult } from '@/lib/knowledge/merchant-intelligence'
-import { normalizeAccountType } from '@/lib/server/accounts'
 import { suggestTags, type TagSuggestion } from '@/lib/tags/suggestions'
 import { refreshLinkSuggestionsForImport } from '@/lib/statement-linking'
 
@@ -75,6 +75,7 @@ export interface UnmatchedAccountDescriptor {
   transactionCount: number
   sampleRowIndexes: number[]
   institution_name: string | null
+  institution_code: string | null
   account_type: string | null
   product_name: string | null
   identifier_hint: string | null
@@ -130,6 +131,15 @@ function extractLast4(value?: string | null) {
 function includesEither(left: string, right: string) {
   if (!left || !right) return false
   return left.includes(right) || right.includes(left)
+}
+
+interface AccountCandidateScore {
+  score: number
+  hasIdentifierMatch: boolean
+  hasProductMatch: boolean
+  hasInstitutionMatch: boolean
+  hasStrongSignal: boolean
+  requiresStrongSignal: boolean
 }
 
 export function computeFileHash(bytes: Buffer): string {
@@ -191,22 +201,33 @@ function scoreAccountCandidate(
   account: AccountCandidate,
   institutionName: string,
   descriptor: ParsedStatementAccount | null,
-) {
+) : AccountCandidateScore {
   let score = 0
+  let hasIdentifierMatch = false
+  let hasProductMatch = false
+  let hasInstitutionMatch = false
 
   const parsedLast4 = extractLast4(descriptor?.card_last4 || descriptor?.identifier_hint)
   const accountLast4 = extractLast4(account.identifier_hint)
   const cardLast4s = getAccountCards(account).map((card) => extractLast4(card.card_last4))
 
   if (parsedLast4) {
-    if (accountLast4 && accountLast4 === parsedLast4) score += 90
-    if (cardLast4s.includes(parsedLast4)) score += 120
+    if (accountLast4 && accountLast4 === parsedLast4) {
+      score += 90
+      hasIdentifierMatch = true
+    }
+    if (cardLast4s.includes(parsedLast4)) {
+      score += 120
+      hasIdentifierMatch = true
+    }
   }
 
+  const accountInstitutionName = getInstitutionName(account)
   const parsedInstitution = normalizeText(institutionName)
-  const accountInstitution = normalizeText(getInstitutionName(account))
-  if (includesEither(parsedInstitution, accountInstitution)) {
+  const accountInstitution = normalizeText(accountInstitutionName)
+  if (institutionsMatch(institutionName, accountInstitutionName) || includesEither(parsedInstitution, accountInstitution)) {
     score += 25
+    hasInstitutionMatch = true
   }
 
   const parsedProduct = normalizeText(descriptor?.card_name || descriptor?.product_name)
@@ -215,18 +236,40 @@ function scoreAccountCandidate(
 
   if (includesEither(parsedProduct, accountName)) {
     score += 40
+    hasProductMatch = true
   }
 
   if (cardNames.some((cardName) => includesEither(parsedProduct, cardName))) {
     score += 50
+    hasProductMatch = true
   }
 
-  const parsedAccountType = normalizeAccountType(descriptor?.account_type)
-  if (parsedAccountType === account.account_type) {
+  const parsedAccountType = normalizeAccountType(descriptor?.account_type, [
+    descriptor?.product_name,
+    descriptor?.card_name,
+  ])
+  const candidateAccountType = normalizeAccountType(account.account_type, [
+    account.product_name,
+    account.nickname,
+    ...getAccountCards(account).map((card) => card.card_name),
+  ])
+
+  if (parsedAccountType === candidateAccountType) {
     score += 15
+  } else if (parsedAccountType && candidateAccountType) {
+    score -= 20
   }
 
-  return score
+  const requiresStrongSignal = parsedAccountType === 'credit_card' || parsedAccountType === 'loan'
+
+  return {
+    score,
+    hasIdentifierMatch,
+    hasProductMatch,
+    hasInstitutionMatch,
+    hasStrongSignal: hasIdentifierMatch || hasProductMatch,
+    requiresStrongSignal,
+  }
 }
 
 export function resolveAccountCandidate(params: {
@@ -243,34 +286,22 @@ export function resolveAccountCandidate(params: {
   const scored = candidates
     .map((account) => ({
       account,
-      score: scoreAccountCandidate(account, institutionName, descriptor),
+      breakdown: scoreAccountCandidate(account, institutionName, descriptor),
     }))
-    .sort((left, right) => right.score - left.score)
+    .sort((left, right) => right.breakdown.score - left.breakdown.score)
 
   const top = scored[0]
   const second = scored[1]
 
-  if (candidates.length === 1 && top) {
-    const primaryCard = getPrimaryCard(top.account)
-    return {
-      account: {
-        id: top.account.id,
-        institutionId: top.account.institution_id,
-        label: getAccountLabel(top.account),
-        matchedBy: 'auto' as const,
-        cardId: primaryCard?.id ?? null,
-        cardName: primaryCard?.card_name ?? null,
-        cardLast4: primaryCard?.card_last4 ?? null,
-      },
-      scored,
-    }
-  }
-
-  if (!top || top.score < 40) {
+  if (!top || top.breakdown.score < 40) {
     return { error: 'No confident account match found.' as const, scored }
   }
 
-  if (second && top.score - second.score < 15) {
+  if (top.breakdown.requiresStrongSignal && !top.breakdown.hasStrongSignal) {
+    return { error: 'No confident account match found.' as const, scored }
+  }
+
+  if (second && top.breakdown.score - second.breakdown.score < 15) {
     return { error: 'This transaction could match more than one account.' as const, scored }
   }
 
@@ -297,17 +328,18 @@ function findSuggestedExistingAccount(params: {
   const scored = params.candidates
     .map((candidate) => ({
       candidate,
-      score: scoreAccountCandidate(candidate, params.institutionName, params.descriptor),
+      breakdown: scoreAccountCandidate(candidate, params.institutionName, params.descriptor),
     }))
-    .sort((left, right) => right.score - left.score)
+    .sort((left, right) => right.breakdown.score - left.breakdown.score)
 
   const top = scored[0]
-  if (!top || top.score <= 0) return null
+  if (!top || top.breakdown.score < 40) return null
+  if (top.breakdown.requiresStrongSignal && !top.breakdown.hasStrongSignal) return null
 
   return {
     accountId: top.candidate.id,
     label: getAccountLabel(top.candidate),
-    score: top.score,
+    score: top.breakdown.score,
   }
 }
 
@@ -427,6 +459,7 @@ export async function routeParsedTransactions(params: {
           transactionCount: 1,
           sampleRowIndexes: [index],
           institution_name: params.parsed.institution_name || params.parsed.institution_code || null,
+          institution_code: params.parsed.institution_code || null,
           account_type: accountDescriptor?.account_type || null,
           product_name: accountDescriptor?.product_name || null,
           identifier_hint: accountDescriptor?.identifier_hint || null,

@@ -48,11 +48,35 @@ function createSupabaseMock(options?: {
     status: 'in_review',
     file_name: 'statement.pdf',
     institution_code: 'amex',
+    raw_parse_result: {
+      institution_name: 'Citibank Singapore Ltd',
+      account: {
+        account_type: 'loan',
+        product_name: 'CITIBANK READY CREDIT',
+        identifier_hint: '1-905379-255',
+        card_name: 'CITIBANK READY CREDIT',
+        card_last4: '255',
+      },
+      matched_accounts: [
+        {
+          label: 'Citibank Singapore Ltd — Citi Ready Credit',
+        },
+      ],
+    },
     statement_date: '2026-02-28',
     statement_period_start: '2026-02-01',
     statement_period_end: '2026-02-28',
     summary_json: null,
-    card_info_json: null,
+    card_info_json: {
+      statementAccount: {
+        account_type: 'loan',
+      },
+      matchedAccounts: [
+        {
+          label: 'Citibank Singapore Ltd — Citi Ready Credit',
+        },
+      ],
+    },
     currency: 'USD',
     created_at: '2026-03-01T00:00:00.000Z',
   }
@@ -128,6 +152,28 @@ function createSupabaseMock(options?: {
       if (table === 'categories') {
         return {
           select: () => createOrderChain({ data: categories, error: null }, 3),
+        }
+      }
+
+      if (table === 'accounts') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: async () => ({
+                  data: [
+                    {
+                      id: 'acct-1',
+                      product_name: 'CITIBANK READY CREDIT',
+                      nickname: 'Ready Credit',
+                      account_type: 'loan',
+                      institutions: { name: 'Citibank Singapore Ltd' },
+                    },
+                  ],
+                }),
+              }),
+            }),
+          }),
         }
       }
 
@@ -260,6 +306,19 @@ describe('GET /api/ai/statement/[importId]', () => {
       displayName: 'Alex Example',
       email: 'alex@example.com',
     })
+    expect(payload.import).toEqual(expect.objectContaining({
+      institutionName: 'Citibank Singapore Ltd',
+      parsedAccountType: 'loan',
+      parsedProductName: 'CITIBANK READY CREDIT',
+      matchedAccountLabel: 'Citibank Singapore Ltd — Citi Ready Credit',
+    }))
+    expect(payload.accounts).toEqual([
+      expect.objectContaining({
+        id: 'acct-1',
+        label: 'Citibank Singapore Ltd — Ready Credit',
+        accountType: 'loan',
+      }),
+    ])
   })
 
   it('returns review data when links, committed import metadata, and uploader enrichment are unavailable', async () => {

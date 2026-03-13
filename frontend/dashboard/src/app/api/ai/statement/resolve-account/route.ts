@@ -175,13 +175,16 @@ export async function POST(request: NextRequest) {
 
       const institution = await findOrCreateInstitution(supabase as any, {
         institutionName,
-        institutionCode: create.institution_code || null,
+        institutionCode: create.institution_code || pickString(descriptor.institution_code) || null,
       })
 
       const createdAccount = await createAccountWithRelatedRecords(supabase as any, {
         householdId: profile.household_id,
         institutionId: institution.id,
-        accountType: normalizeAccountType(create.account_type || pickString(descriptor.account_type)),
+        accountType: normalizeAccountType(create.account_type || pickString(descriptor.account_type), [
+          productName,
+          create.card_name || pickString(descriptor.card_name),
+        ]),
         productName,
         nickname: create.nickname || null,
         identifierHint: create.identifier_hint || pickString(descriptor.identifier_hint) || null,

@@ -1,3 +1,9 @@
+import {
+  canonicalizeInstitutionName,
+  normalizeAccountType,
+  normalizeInstitutionCode,
+} from '@/lib/accounts/normalization'
+
 export interface ParsedStatementAccount {
   account_type?: string | null
   product_name?: string | null
@@ -31,6 +37,58 @@ export interface ParsedStatementResult {
   summary_json?: Record<string, unknown> | null
   account?: ParsedStatementAccount | null
   transactions?: ParsedStatementTransaction[]
+}
+
+function normalizeParsedAccount(
+  account: ParsedStatementAccount | null | undefined,
+  fallbackCurrency?: string | null,
+): ParsedStatementAccount | null {
+  if (!account) return null
+
+  const normalized = {
+    ...account,
+    account_type: normalizeAccountType(account.account_type, [
+      account.product_name,
+      account.card_name,
+      account.identifier_hint,
+    ]),
+    currency: account.currency || fallbackCurrency || null,
+  }
+
+  return Object.values(normalized).some(Boolean) ? normalized : null
+}
+
+export function normalizeParsedStatement(parsed: ParsedStatementResult): ParsedStatementResult {
+  const normalizedTransactions = (parsed.transactions ?? []).map((transaction) => ({
+    ...transaction,
+    account: normalizeParsedAccount(transaction.account, transaction.currency || parsed.currency || null),
+  }))
+
+  const normalizedAccount = normalizeParsedAccount(parsed.account, parsed.currency || null)
+  const institutionSignals = [
+    parsed.institution_name,
+    normalizedAccount?.product_name,
+    normalizedAccount?.card_name,
+    ...normalizedTransactions.flatMap((transaction) => [
+      transaction.account?.product_name,
+      transaction.account?.card_name,
+    ]),
+  ]
+
+  const institutionCode = normalizeInstitutionCode(parsed.institution_code, institutionSignals) || parsed.institution_code || null
+  const institutionName = canonicalizeInstitutionName({
+    institutionCode,
+    institutionName: parsed.institution_name,
+    fallbackValues: institutionSignals,
+  })
+
+  return {
+    ...parsed,
+    institution_code: institutionCode,
+    institution_name: institutionName,
+    account: normalizedAccount,
+    transactions: normalizedTransactions,
+  }
 }
 
 export function normalizeDirection(

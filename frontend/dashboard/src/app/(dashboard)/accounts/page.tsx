@@ -1,21 +1,21 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  Plus,
+  Banknote,
   Building2,
+  Coins,
   CreditCard,
-  PiggyBank,
-  TrendingUp,
   Landmark,
   Loader2,
-  Coins,
-  Banknote,
+  PencilLine,
+  PiggyBank,
+  Plus,
+  TrendingUp,
 } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -23,7 +23,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,8 +33,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { createClient } from '@/lib/supabase/client'
+import { Separator } from '@/components/ui/separator'
 import { formatCurrency } from '@/lib/format'
+import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -70,19 +70,40 @@ type AccountType =
   | 'loan'
   | 'fixed_deposit'
 
+type AccountFormMode = 'create' | 'edit'
+
+interface AccountFormState {
+  institutionName: string
+  productName: string
+  nickname: string
+  identifierHint: string
+  currency: string
+  accountType: AccountType
+  cardName: string
+  cardLast4: string
+  isActive: boolean
+}
+
+const EMPTY_FORM_STATE: AccountFormState = {
+  institutionName: '',
+  productName: '',
+  nickname: '',
+  identifierHint: '',
+  currency: 'SGD',
+  accountType: 'savings',
+  cardName: '',
+  cardLast4: '',
+  isActive: true,
+}
+
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [formMode, setFormMode] = useState<AccountFormMode>('create')
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null)
   const [savingAccount, setSavingAccount] = useState(false)
-  const [institutionName, setInstitutionName] = useState('')
-  const [productName, setProductName] = useState('')
-  const [nickname, setNickname] = useState('')
-  const [identifierHint, setIdentifierHint] = useState('')
-  const [currency, setCurrency] = useState('SGD')
-  const [accountType, setAccountType] = useState<AccountType>('savings')
-  const [cardName, setCardName] = useState('')
-  const [cardLast4, setCardLast4] = useState('')
+  const [formState, setFormState] = useState<AccountFormState>(EMPTY_FORM_STATE)
 
   async function fetchAccounts() {
     const supabase = createClient()
@@ -114,7 +135,7 @@ export default function AccountsPage() {
       .eq('household_id', profile.household_id)
       .order('created_at', { ascending: false })
 
-    setAccounts((data as unknown as AccountRow[]) ?? [])
+    setAccounts((data as AccountRow[] | null) ?? [])
     setLoading(false)
   }
 
@@ -126,59 +147,107 @@ export default function AccountsPage() {
     void loadAccounts()
   }, [])
 
-  function resetForm() {
-    setInstitutionName('')
-    setProductName('')
-    setNickname('')
-    setIdentifierHint('')
-    setCurrency('SGD')
-    setAccountType('savings')
-    setCardName('')
-    setCardLast4('')
+  function updateForm<K extends keyof AccountFormState>(field: K, value: AccountFormState[K]) {
+    setFormState((current) => ({ ...current, [field]: value }))
   }
 
-  async function handleCreateAccount() {
-    if (!institutionName.trim() || !productName.trim()) {
+  function resetForm() {
+    setFormMode('create')
+    setEditingAccountId(null)
+    setFormState(EMPTY_FORM_STATE)
+  }
+
+  function handleDialogOpenChange(open: boolean) {
+    if (!open) {
+      resetForm()
+    }
+    setDialogOpen(open)
+  }
+
+  function openCreateDialog() {
+    resetForm()
+    setDialogOpen(true)
+  }
+
+  function openEditDialog(account: AccountRow) {
+    const primaryCard = account.cards?.[0]
+
+    setFormMode('edit')
+    setEditingAccountId(account.id)
+    setFormState({
+      institutionName: account.institutions?.name ?? '',
+      productName: account.product_name,
+      nickname: account.nickname ?? '',
+      identifierHint: account.identifier_hint ?? '',
+      currency: account.currency || 'SGD',
+      accountType: account.account_type as AccountType,
+      cardName: primaryCard?.card_name ?? account.product_name,
+      cardLast4: primaryCard?.card_last4 ?? account.identifier_hint ?? '',
+      isActive: account.is_active,
+    })
+    setDialogOpen(true)
+  }
+
+  async function handleSaveAccount() {
+    if (!formState.institutionName.trim() || !formState.productName.trim()) {
       toast.error('Institution name and product name are required.')
       return
+    }
+
+    if (formMode === 'edit' && !editingAccountId) {
+      toast.error('Account could not be loaded for editing.')
+      return
+    }
+
+    const payload: Record<string, unknown> = {
+      institution_name: formState.institutionName.trim(),
+      product_name: formState.productName.trim(),
+      nickname: formState.nickname.trim() || null,
+      identifier_hint: formState.identifierHint.trim() || null,
+      currency: formState.currency,
+    }
+
+    if (formMode === 'edit') {
+      payload.is_active = formState.isActive
+    }
+
+    if (formState.accountType === 'credit_card') {
+      payload.card_name = formState.cardName.trim() || null
+      payload.card_last4 = formState.cardLast4.trim() || null
     }
 
     setSavingAccount(true)
 
     try {
-      const response = await fetch('/api/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          institution_name: institutionName.trim(),
-          product_name: productName.trim(),
-          nickname: nickname.trim() || null,
-          identifier_hint: identifierHint.trim() || null,
-          currency,
-          account_type: accountType,
-          card_name: accountType === 'credit_card' ? cardName.trim() || null : null,
-          card_last4: accountType === 'credit_card' ? cardLast4.trim() || null : null,
-        }),
-      })
+      const response = await fetch(
+        formMode === 'edit' ? `/api/accounts/${editingAccountId}` : '/api/accounts',
+        {
+          method: formMode === 'edit' ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+      )
 
-      const data = await response.json()
+      const data = await response.json().catch(() => null)
 
       if (!response.ok) {
-        toast.error(data.error || 'Failed to add account.')
+        toast.error(data?.error || `Failed to ${formMode === 'edit' ? 'update' : 'add'} account.`)
         return
       }
 
-      toast.success('Account added.')
+      toast.success(formMode === 'edit' ? 'Account updated.' : 'Account added.')
       setDialogOpen(false)
       resetForm()
       await fetchAccounts()
     } catch {
-      toast.error('Failed to add account.')
+      toast.error(`Failed to ${formMode === 'edit' ? 'update' : 'add'} account.`)
     } finally {
       setSavingAccount(false)
     }
   }
 
+  const isEditing = formMode === 'edit'
+  const isCreditCard = formState.accountType === 'credit_card'
   const activeCount = accounts.filter((account) => account.is_active).length
   const creditCardCount = accounts.filter((account) => account.account_type === 'credit_card').length
   const totalOutstanding = accounts
@@ -197,50 +266,60 @@ export default function AccountsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Accounts</h1>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus />
-              Add Account
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add Account</DialogTitle>
-              <DialogDescription>
-                Create a manual account so you can link uploaded statements.
-              </DialogDescription>
-            </DialogHeader>
+        <Button onClick={openCreateDialog}>
+          <Plus />
+          Add Account
+        </Button>
+      </div>
 
-            <div className="space-y-4">
+      <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{isEditing ? 'Edit Account' : 'Add Account'}</DialogTitle>
+            <DialogDescription>
+              {isEditing
+                ? 'Update account details and status without changing the account type.'
+                : 'Create a manual account so you can link uploaded statements.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="institution-name">Institution Name</Label>
+              <Input
+                id="institution-name"
+                value={formState.institutionName}
+                onChange={(event) => updateForm('institutionName', event.target.value)}
+                placeholder="DBS Bank, OCBC, UOB, Wise..."
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="product-name">Product Name</Label>
+              <Input
+                id="product-name"
+                value={formState.productName}
+                onChange={(event) => updateForm('productName', event.target.value)}
+                placeholder="Multiplier Account, Visa Platinum..."
+              />
+            </div>
+
+            <div className={cn('grid grid-cols-1 gap-4', isEditing ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
               <div className="space-y-2">
-                <Label htmlFor="institution-name">Institution Name</Label>
-                <Input
-                  id="institution-name"
-                  value={institutionName}
-                  onChange={(event) => setInstitutionName(event.target.value)}
-                  placeholder="DBS Bank, OCBC, UOB, Wise..."
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="product-name">Product Name</Label>
-                <Input
-                  id="product-name"
-                  value={productName}
-                  onChange={(event) => setProductName(event.target.value)}
-                  placeholder="Multiplier Account, Visa Platinum..."
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Account Type</Label>
+                <Label htmlFor="account-type-display">Account Type</Label>
+                {isEditing ? (
+                  <Input
+                    id="account-type-display"
+                    value={typeConfig[formState.accountType]?.label ?? formState.accountType}
+                    readOnly
+                    aria-readonly="true"
+                  />
+                ) : (
                   <Select
-                    value={accountType}
-                    onValueChange={(value) => setAccountType(value as AccountType)}
+                    value={formState.accountType}
+                    onValueChange={(value) => updateForm('accountType', value as AccountType)}
                   >
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger className="w-full" aria-label="Account Type">
                       <SelectValue placeholder="Select account type" />
                     </SelectTrigger>
                     <SelectContent>
@@ -253,92 +332,107 @@ export default function AccountsPage() {
                       <SelectItem value="fixed_deposit">Fixed Deposit</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                )}
+              </div>
 
+              <div className="space-y-2">
+                <Label>Currency</Label>
+                <Select value={formState.currency} onValueChange={(value) => updateForm('currency', value)}>
+                  <SelectTrigger className="w-full" aria-label="Currency">
+                    <SelectValue placeholder="Select currency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SGD">SGD</SelectItem>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="EUR">EUR</SelectItem>
+                    <SelectItem value="INR">INR</SelectItem>
+                    <SelectItem value="GBP">GBP</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {isEditing && (
                 <div className="space-y-2">
-                  <Label>Currency</Label>
-                  <Select value={currency} onValueChange={setCurrency}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select currency" />
+                  <Label>Status</Label>
+                  <Select
+                    value={formState.isActive ? 'active' : 'inactive'}
+                    onValueChange={(value) => updateForm('isActive', value === 'active')}
+                  >
+                    <SelectTrigger className="w-full" aria-label="Status">
+                      <SelectValue placeholder="Select status" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="SGD">SGD</SelectItem>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="EUR">EUR</SelectItem>
-                      <SelectItem value="INR">INR</SelectItem>
-                      <SelectItem value="GBP">GBP</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="nickname">Nickname</Label>
-                  <Input
-                    id="nickname"
-                    value={nickname}
-                    onChange={(event) => setNickname(event.target.value)}
-                    placeholder="Optional display name"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="identifier-hint">Identifier Hint</Label>
-                  <Input
-                    id="identifier-hint"
-                    value={identifierHint}
-                    onChange={(event) => setIdentifierHint(event.target.value)}
-                    placeholder="Last 4 digits or masked account"
-                  />
-                </div>
-              </div>
-
-              {accountType === 'credit_card' && (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="card-name">Card Name</Label>
-                    <Input
-                      id="card-name"
-                      value={cardName}
-                      onChange={(event) => setCardName(event.target.value)}
-                      placeholder="Visa Platinum"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="card-last4">Card Last 4</Label>
-                    <Input
-                      id="card-last4"
-                      value={cardLast4}
-                      onChange={(event) => setCardLast4(event.target.value.replace(/[^0-9]/g, ''))}
-                      maxLength={4}
-                      placeholder="1234"
-                    />
-                  </div>
                 </div>
               )}
             </div>
 
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setDialogOpen(false)
-                  resetForm()
-                }}
-                disabled={savingAccount}
-              >
-                Cancel
-              </Button>
-              <Button onClick={handleCreateAccount} disabled={savingAccount}>
-                {savingAccount ? <Loader2 className="animate-spin" /> : <Plus />}
-                Save Account
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="nickname">Nickname</Label>
+                <Input
+                  id="nickname"
+                  value={formState.nickname}
+                  onChange={(event) => updateForm('nickname', event.target.value)}
+                  placeholder="Optional display name"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="identifier-hint">Identifier Hint</Label>
+                <Input
+                  id="identifier-hint"
+                  value={formState.identifierHint}
+                  onChange={(event) => updateForm('identifierHint', event.target.value)}
+                  placeholder="Last 4 digits or masked account"
+                />
+              </div>
+            </div>
+
+            {isCreditCard && (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="card-name">Card Name</Label>
+                  <Input
+                    id="card-name"
+                    value={formState.cardName}
+                    onChange={(event) => updateForm('cardName', event.target.value)}
+                    placeholder="Visa Platinum"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="card-last4">Card Last 4</Label>
+                  <Input
+                    id="card-last4"
+                    value={formState.cardLast4}
+                    onChange={(event) => updateForm('cardLast4', event.target.value.replace(/[^0-9]/g, ''))}
+                    maxLength={4}
+                    placeholder="1234"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => handleDialogOpenChange(false)}
+              disabled={savingAccount}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSaveAccount} disabled={savingAccount}>
+              {savingAccount ? <Loader2 className="animate-spin" /> : isEditing ? <PencilLine /> : <Plus />}
+              {isEditing ? 'Save Changes' : 'Save Account'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
@@ -380,7 +474,7 @@ export default function AccountsPage() {
             return (
               <Card key={account.id}>
                 <CardHeader>
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div className={cn('rounded-lg p-2', config?.bgColor)}>
                         <Icon className={cn('size-5', config?.color)} />
@@ -393,8 +487,11 @@ export default function AccountsPage() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={cn('size-2 rounded-full', account.is_active ? 'bg-green-500' : 'bg-gray-400')} />
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className={cn('size-2 rounded-full', account.is_active ? 'bg-green-500' : 'bg-gray-400')} />
+                        <span className="text-xs text-muted-foreground">{account.is_active ? 'Active' : 'Inactive'}</span>
+                      </div>
                       {config && (
                         <Badge className={cn(config.bgColor, config.color, 'border-0')}>
                           {config.label}
@@ -418,6 +515,14 @@ export default function AccountsPage() {
                     </div>
                   )}
                   <p className="mt-2 text-xs text-muted-foreground">{account.currency}</p>
+                  <Button
+                    variant="outline"
+                    className="mt-4 w-full"
+                    onClick={() => openEditDialog(account)}
+                  >
+                    <PencilLine />
+                    Edit
+                  </Button>
                 </CardContent>
               </Card>
             )
