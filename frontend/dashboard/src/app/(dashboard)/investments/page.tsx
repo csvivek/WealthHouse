@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
-import { DollarSign, PieChart, BarChart3, Loader2 } from 'lucide-react'
+import { DollarSign, BarChart3, Loader2, TrendingUp } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
+import { EmptyState } from '@/components/empty-state'
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899']
 
@@ -129,11 +130,13 @@ export default function InvestmentsPage() {
       <div className="space-y-6">
         <h1 className="text-2xl font-bold">Investments</h1>
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-            <PieChart className="mb-4 h-12 w-12 text-muted-foreground" />
-            <p className="text-lg font-medium text-muted-foreground">
-              No investment holdings tracked yet. Add an investment account to see portfolio analytics.
-            </p>
+          <CardContent>
+            <EmptyState
+              icon={TrendingUp}
+              title="No investment holdings"
+              description="Import a brokerage or crypto statement to start tracking your portfolio."
+              action={{ label: 'Import Statement', href: '/statements' }}
+            />
           </CardContent>
         </Card>
       </div>

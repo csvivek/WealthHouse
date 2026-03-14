@@ -3,23 +3,24 @@
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
-  LayoutDashboard,
-  Wallet,
   ArrowLeftRight,
-  TrendingUp,
-  Tags,
-  Tag,
-  Store,
-  Receipt,
-  FileUp,
-  Coins,
   Bot,
-  Shield,
+  Coins,
+  FolderTree,
   HandCoins,
-  Settings,
+  Home,
+  LayoutDashboard,
   LogOut,
-  ChevronsUpDown,
+  Receipt,
+  Settings,
+  Shield,
+  Store,
+  Tag,
+  TrendingUp,
   User,
+  Wallet,
+  ChevronsUpDown,
+  FileUp,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -55,39 +56,67 @@ interface AppSidebarProps {
   } | null
 }
 
-const mainNavItems = [
-  { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { title: "Accounts", href: "/accounts", icon: Wallet },
-  { title: "Transactions", href: "/transactions", icon: ArrowLeftRight },
-  { title: "Categories", href: "/categories", icon: Tags },
-  { title: "Tags", href: "/tags", icon: Tag },
-  { title: "Merchants", href: "/merchants", icon: Store },
-  { title: "Investments", href: "/investments", icon: TrendingUp },
-  { title: "Statements", href: "/statements", icon: FileUp },
-  { title: "Receipts", href: "/receipts", icon: Receipt },
-  { title: "Crypto", href: "/crypto", icon: Coins },
-  { title: "AI Chat", href: "/chat", icon: Bot },
-]
-
-const secondaryNavItems = [
-  { title: "Data Health", href: "/data-health", icon: Shield },
-  { title: "Advances", href: "/advances", icon: HandCoins },
-  { title: "Settings", href: "/settings", icon: Settings },
-]
+const navigationGroups = [
+  {
+    label: "Overview",
+    items: [{ title: "Dashboard", href: "/dashboard", icon: LayoutDashboard }],
+  },
+  {
+    label: "Money",
+    items: [
+      { title: "Accounts", href: "/accounts", icon: Wallet },
+      { title: "Transactions", href: "/transactions", icon: ArrowLeftRight },
+      { title: "Advances", href: "/advances", icon: HandCoins },
+    ],
+  },
+  {
+    label: "Import",
+    items: [
+      { title: "Statements", href: "/statements", icon: FileUp },
+      { title: "Receipts", href: "/receipts", icon: Receipt },
+    ],
+  },
+  {
+    label: "Assets",
+    items: [
+      { title: "Investments", href: "/investments", icon: TrendingUp },
+      { title: "Crypto", href: "/crypto", icon: Coins },
+    ],
+  },
+  {
+    label: "Manage",
+    items: [
+      { title: "Categories", href: "/categories", icon: FolderTree },
+      { title: "Tags", href: "/tags", icon: Tag },
+      { title: "Merchants", href: "/merchants", icon: Store },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { title: "Data Health", href: "/data-health", icon: Shield },
+      { title: "Settings", href: "/settings", icon: Settings },
+    ],
+  },
+] as const
 
 export function AppSidebar({ user, profile }: AppSidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
 
   const displayName = profile?.display_name || user.email || "User"
+  const householdName = profile?.households?.name || "Personal Finance"
   const initials = profile?.display_name
     ? profile.display_name
         .split(" ")
-        .map((n) => n[0])
+        .map((name) => name[0])
         .join("")
         .toUpperCase()
         .slice(0, 2)
     : (user.email?.[0]?.toUpperCase() ?? "U")
+
+  const isItemActive = (href: string) =>
+    href === "/dashboard" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`)
 
   async function handleSignOut() {
     const supabase = createClient()
@@ -102,14 +131,12 @@ export function AppSidebar({ user, profile }: AppSidebarProps) {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <Link href="/dashboard">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                  <TrendingUp className="size-4" />
+                <div className="flex aspect-square size-9 items-center justify-center rounded-xl bg-primary/12 text-primary">
+                  <Home className="size-4.5" />
                 </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">WealthHouse</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    Financial Dashboard
-                  </span>
+                <div className="grid flex-1 text-left leading-tight">
+                  <span className="truncate text-base font-bold tracking-tight">WealthHouse</span>
+                  <span className="truncate text-xs text-muted-foreground">{householdName}</span>
                 </div>
               </Link>
             </SidebarMenuButton>
@@ -118,54 +145,48 @@ export function AppSidebar({ user, profile }: AppSidebarProps) {
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Main</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {mainNavItems.map((item) => (
-                <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={pathname === item.href}
-                    tooltip={item.title}
-                  >
-                    <Link href={item.href}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarSeparator />
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Other</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {secondaryNavItems.map((item) => (
-                <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={pathname === item.href}
-                    tooltip={item.title}
-                  >
-                    <Link href={item.href}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {navigationGroups.map((group, index) => (
+          <div key={group.label}>
+            {index > 0 ? <SidebarSeparator /> : null}
+            <SidebarGroup>
+              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {group.items.map((item) => (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={isItemActive(item.href)}
+                        tooltip={item.title}
+                      >
+                        <Link href={item.href}>
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </div>
+        ))}
       </SidebarContent>
 
       <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip="AI Chat">
+              <Link href="/chat">
+                <Bot />
+                <span>AI Chat</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+
+        <SidebarSeparator />
+
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
@@ -175,18 +196,13 @@ export function AppSidebar({ user, profile }: AppSidebarProps) {
                   className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
                   <Avatar className="size-8">
-                    {profile?.avatar_url && (
-                      <AvatarImage
-                        src={profile.avatar_url}
-                        alt={displayName}
-                      />
-                    )}
+                    {profile?.avatar_url ? (
+                      <AvatarImage src={profile.avatar_url} alt={displayName} />
+                    ) : null}
                     <AvatarFallback>{initials}</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">
-                      {displayName}
-                    </span>
+                    <span className="truncate font-semibold">{displayName}</span>
                     <span className="truncate text-xs text-muted-foreground">
                       {user.email}
                     </span>

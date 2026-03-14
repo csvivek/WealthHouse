@@ -1,7 +1,9 @@
 import { AccountSummaryCard } from '@/components/dashboard/AccountSummaryCard'
+import { EmptyState } from '@/components/empty-state'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDashboardAccounts } from '@/hooks/useDashboardAccounts'
+import { Wallet } from 'lucide-react'
 
 function AccountCardSkeleton() {
   return (
@@ -38,9 +40,12 @@ export function AccountPortfolioSection() {
               ))}
             </div>
           ) : accounts.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No household accounts found yet.
-            </p>
+            <EmptyState
+              icon={Wallet}
+              title="No household accounts"
+              description="Add accounts under Accounts to start tracking balances, cards, and payment metrics."
+              action={{ label: 'Go to Accounts', href: '/accounts' }}
+            />
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {accounts.map((account) => (

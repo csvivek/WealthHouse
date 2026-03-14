@@ -1,5 +1,6 @@
 import { openai } from '@/lib/ai/openai'
 import { searchMerchantOnWeb } from '@/lib/ai/web-search'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   backfillMerchantKnowledgeCategoryIds,
   buildMerchantFamilyName,
@@ -14,6 +15,8 @@ import {
 } from '@/lib/knowledge/categories'
 
 export interface MerchantIntelligenceInput {
+  supabase: SupabaseClient<any>
+  householdId: string
   merchantName: string
   description?: string | null
   amount: number
@@ -125,9 +128,18 @@ Rules:
 export async function resolveMerchantCategory(
   input: MerchantIntelligenceInput,
 ): Promise<MerchantIntelligenceResult> {
-  backfillMerchantKnowledgeCategoryIds(input.availableCategories.map((category) => ({ id: category.id, name: category.name })))
+  await backfillMerchantKnowledgeCategoryIds(
+    input.supabase,
+    input.householdId,
+    input.availableCategories.map((category) => ({ id: category.id, name: category.name })),
+  )
 
-  const knowledgeMatch = findMerchantKnowledgeMatch(input.merchantName, input.description)
+  const knowledgeMatch = await findMerchantKnowledgeMatch(
+    input.supabase,
+    input.householdId,
+    input.merchantName,
+    input.description,
+  )
   if (knowledgeMatch) {
     const byId =
       typeof knowledgeMatch.record.approved_category_id === 'number'

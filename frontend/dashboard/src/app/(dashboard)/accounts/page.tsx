@@ -12,6 +12,7 @@ import {
   PiggyBank,
   Plus,
   TrendingUp,
+  Wallet,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -37,6 +38,7 @@ import { Separator } from '@/components/ui/separator'
 import { formatCurrency } from '@/lib/format'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
+import { EmptyState } from '@/components/empty-state'
 import { toast } from 'sonner'
 
 const typeConfig: Record<string, { label: string; color: string; bgColor: string; icon: React.ElementType }> = {
@@ -460,9 +462,12 @@ export default function AccountsPage() {
       <Separator />
 
       {accounts.length === 0 ? (
-        <div className="py-12 text-center text-muted-foreground">
-          No accounts linked yet. Add your first account to get started.
-        </div>
+        <EmptyState
+          icon={Wallet}
+          title="No accounts yet"
+          description="Add your first account to get started."
+          action={{ label: 'Add Account', onClick: openCreateDialog }}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {accounts.map((account) => {

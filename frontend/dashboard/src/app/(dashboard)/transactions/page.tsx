@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Clock, Loader2, Search, Shapes, Tags } from 'lucide-react'
+import { ArrowLeftRight, Clock, Loader2, Pencil, Search, Shapes, Tags } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -27,6 +27,7 @@ import { CategoryBadge } from '@/components/category-badge'
 import { CategoryIcon } from '@/components/category-icon'
 import { TagBadge, type TagPresentation } from '@/components/tag-badge'
 import { TagSelector } from '@/components/tag-selector'
+import { EmptyState } from '@/components/empty-state'
 import { isPaymentCategoryTypeCompatible, normalizeTxnDirection } from '@/lib/transactions/category-compatibility'
 import {
   buildInternalTransferLinkSummary,
@@ -107,8 +108,6 @@ interface StatementTxn {
 }
 
 type EditorFocusTarget = 'category' | 'tags'
-
-const UNCATEGORIZED_VALUE = 'uncategorized'
 
 function flattenTags(value: unknown): TagPresentation[] {
   if (!Array.isArray(value)) return []
@@ -890,17 +889,20 @@ export default function TransactionsPage() {
                     const merchantName = txn.merchant_normalized ?? txn.merchant_raw ?? txn.description ?? 'Unknown'
 
                     return (
-                      <tr key={txn.id} className="border-b last:border-0">
+                      <tr key={txn.id} className="group border-b last:border-0">
                         <td className="py-3 pr-4 align-top">
                           <Checkbox checked={selectedIds.has(txn.id)} onCheckedChange={() => toggleSelected(txn.id)} aria-label={`Select ${merchantName}`} />
                         </td>
                         <td className="py-3 pr-4 whitespace-nowrap text-muted-foreground">{formatDate(txn.txn_date)}</td>
                         <td className="py-3 pr-4 align-top">
-                          <div className="space-y-1">
-                            <p className="font-medium">{merchantName}</p>
-                            {txn.description && txn.description !== merchantName && (
-                              <p className="text-xs text-muted-foreground">{txn.description}</p>
-                            )}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <p className="font-medium">{merchantName}</p>
+                              {txn.description && txn.description !== merchantName && (
+                                <p className="text-xs text-muted-foreground">{txn.description}</p>
+                              )}
+                            </div>
+                            <Pencil className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                           </div>
                         </td>
                         <td className="py-3 pr-4 align-top">
@@ -968,8 +970,13 @@ export default function TransactionsPage() {
                   })}
                   {filtered.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="py-8 text-center text-muted-foreground">
-                        No transactions found.
+                      <td colSpan={8} className="py-10">
+                        <EmptyState
+                          icon={ArrowLeftRight}
+                          title="No transactions found"
+                          description="Try adjusting your filters or import a new statement."
+                          action={{ label: 'Import Statement', href: '/statements' }}
+                        />
                       </td>
                     </tr>
                   )}
@@ -1022,14 +1029,25 @@ export default function TransactionsPage() {
                 </div>
 
                 <div className="space-y-3">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">Category</p>
-                    <p className="text-xs text-muted-foreground">Assign a compatible category or clear it to uncategorized.</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">Category</p>
+                      <p className="text-xs text-muted-foreground">Assign a compatible category. Leave it unset to keep the transaction uncategorized.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingCategoryId(null)}
+                      disabled={editingCategoryId == null}
+                    >
+                      Clear
+                    </Button>
                   </div>
                   <Select
-                    value={editingCategoryId != null ? String(editingCategoryId) : UNCATEGORIZED_VALUE}
+                    value={editingCategoryId != null ? String(editingCategoryId) : undefined}
                     onValueChange={(value) => {
-                      setEditingCategoryId(value === UNCATEGORIZED_VALUE ? null : Number(value))
+                      setEditingCategoryId(Number(value))
                     }}
                   >
                     <SelectTrigger
@@ -1037,10 +1055,9 @@ export default function TransactionsPage() {
                       aria-label="Transaction category"
                       data-editor-focus-target="category"
                     >
-                      <SelectValue placeholder="Choose a category" />
+                      <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={UNCATEGORIZED_VALUE}>Uncategorized</SelectItem>
                       {incompatibleCurrentCategory && (
                         <>
                           <SelectSeparator />

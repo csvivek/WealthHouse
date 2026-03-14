@@ -78,7 +78,9 @@ function applyCategoryToOriginalData(
   originalData.categoryConfidence = 1
 }
 
-function learnCategoryForRow(
+async function learnCategoryForRow(
+  supabase: ReturnType<typeof createServiceSupabaseClient>,
+  householdId: string,
   row: ImportStagingRow,
   merchantName: string,
   originalData: Record<string, unknown>,
@@ -88,24 +90,32 @@ function learnCategoryForRow(
     return
   }
 
-  rememberMerchantCategory({
-    merchant: merchantName,
-    categoryId: nextCategory.id,
-    categoryName: nextCategory.name,
-    canonicalMerchantName:
-      typeof originalData.merchantCanonicalName === 'string'
-        ? originalData.merchantCanonicalName
-        : merchantName,
-    familyName:
-      typeof originalData.similarMerchantKey === 'string' ? originalData.similarMerchantKey : undefined,
-    businessType:
-      typeof originalData.merchantBusinessType === 'string'
-        ? originalData.merchantBusinessType
-        : undefined,
-    aliases: readStringArray(originalData.merchantAliases),
-    confidence: 1,
-    decisionSource: 'manual_override',
-  })
+  try {
+    await rememberMerchantCategory(supabase as never, householdId, {
+      merchant: merchantName,
+      categoryId: nextCategory.id,
+      categoryName: nextCategory.name,
+      canonicalMerchantName:
+        typeof originalData.merchantCanonicalName === 'string'
+          ? originalData.merchantCanonicalName
+          : merchantName,
+      familyName:
+        typeof originalData.similarMerchantKey === 'string' ? originalData.similarMerchantKey : undefined,
+      businessType:
+        typeof originalData.merchantBusinessType === 'string'
+          ? originalData.merchantBusinessType
+          : undefined,
+      aliases: readStringArray(originalData.merchantAliases),
+      confidence: 1,
+      decisionSource: 'manual_override',
+    })
+  } catch (error) {
+    console.warn(
+      `Failed to learn merchant category for staging row ${row.id}: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    )
+  }
 }
 
 async function updateFileImportCounters(
@@ -277,27 +287,35 @@ export async function PATCH(
 
           const merchantForLearning = (update.fields.merchant_raw ?? currentRow.merchant_raw)?.trim()
           if (merchantForLearning) {
-            learnCategoryForRow(currentRow, merchantForLearning, originalData, nextCategory)
+            await learnCategoryForRow(serviceSupabase, profile.household_id, currentRow, merchantForLearning, originalData, nextCategory)
           }
         } else if (update.fields.merchant_raw && typeof originalData.categoryName === 'string') {
-          rememberMerchantCategory({
-            merchant: update.fields.merchant_raw,
-            categoryId: typeof originalData.categoryId === 'number' ? originalData.categoryId : null,
-            categoryName: originalData.categoryName,
-            canonicalMerchantName:
-              typeof originalData.merchantCanonicalName === 'string'
-                ? originalData.merchantCanonicalName
-                : update.fields.merchant_raw,
-            familyName:
-              typeof originalData.similarMerchantKey === 'string' ? originalData.similarMerchantKey : undefined,
-            businessType:
-              typeof originalData.merchantBusinessType === 'string'
-                ? originalData.merchantBusinessType
-                : undefined,
-            aliases: readStringArray(originalData.merchantAliases),
-            confidence: 1,
-            decisionSource: 'manual_override',
-          })
+          try {
+            await rememberMerchantCategory(serviceSupabase as never, profile.household_id, {
+              merchant: update.fields.merchant_raw,
+              categoryId: typeof originalData.categoryId === 'number' ? originalData.categoryId : null,
+              categoryName: originalData.categoryName,
+              canonicalMerchantName:
+                typeof originalData.merchantCanonicalName === 'string'
+                  ? originalData.merchantCanonicalName
+                  : update.fields.merchant_raw,
+              familyName:
+                typeof originalData.similarMerchantKey === 'string' ? originalData.similarMerchantKey : undefined,
+              businessType:
+                typeof originalData.merchantBusinessType === 'string'
+                  ? originalData.merchantBusinessType
+                  : undefined,
+              aliases: readStringArray(originalData.merchantAliases),
+              confidence: 1,
+              decisionSource: 'manual_override',
+            })
+          } catch (error) {
+            console.warn(
+              `Failed to learn merchant category for staging row ${currentRow.id}: ${
+                error instanceof Error ? error.message : 'unknown error'
+              }`,
+            )
+          }
         }
 
         let nextTagIds = Array.isArray(tagIds) ? dedupeTagIds(tagIds) : readStringArray(originalData.tagIds)
@@ -416,7 +434,14 @@ export async function PATCH(
             }
 
             updatedRowIds.add(selectedRow.id)
-            learnCategoryForRow(selectedRow, selectedRow.merchant_raw, targetOriginalData, nextCategory)
+            await learnCategoryForRow(
+              serviceSupabase,
+              profile.household_id,
+              selectedRow,
+              selectedRow.merchant_raw,
+              targetOriginalData,
+              nextCategory,
+            )
           }
         }
 

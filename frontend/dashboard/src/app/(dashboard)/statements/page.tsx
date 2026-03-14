@@ -28,6 +28,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
 import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { EmptyState } from '@/components/empty-state'
 import { toast } from 'sonner'
 
 interface AccountOption {
@@ -119,15 +120,29 @@ interface DescriptorResolutionState {
   }
 }
 
-const statusConfig: Record<string, { label: string; className: string }> = {
-  received: { label: 'Received', className: 'bg-gray-100 text-gray-700 dark:bg-gray-900/40 dark:text-gray-400' },
-  parsing: { label: 'Parsing', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400' },
-  in_review: { label: 'In Review', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400' },
-  committing: { label: 'Committing', className: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-400' },
-  committed: { label: 'Committed', className: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
-  rejected: { label: 'Rejected', className: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400' },
-  duplicate: { label: 'Duplicate', className: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400' },
-  failed: { label: 'Failed', className: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400' },
+function getStatementStatusBadge(status: string) {
+  switch (status) {
+    case 'committed':
+      return <Badge className="border-emerald-200 bg-emerald-100 text-emerald-800">Committed</Badge>
+    case 'pending':
+    case 'processing':
+    case 'parsing':
+    case 'committing':
+    case 'received':
+      return <Badge variant="outline" className="border-amber-300 text-amber-700">Processing</Badge>
+    case 'requires_review':
+    case 'in_review':
+      return <Badge variant="outline" className="border-orange-300 text-orange-700">Needs Review</Badge>
+    case 'failed':
+    case 'error':
+      return <Badge variant="destructive">Failed</Badge>
+    case 'duplicate':
+      return <Badge variant="outline" className="border-orange-300 text-orange-700">Duplicate</Badge>
+    case 'rejected':
+      return <Badge variant="secondary">Rejected</Badge>
+    default:
+      return <Badge variant="outline">{status}</Badge>
+  }
 }
 
 export default function StatementsPage() {
@@ -488,7 +503,7 @@ export default function StatementsPage() {
         </p>
       </div>
 
-      <Card>
+      <Card id="statement-upload">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Upload className="size-5" />
@@ -827,9 +842,20 @@ export default function StatementsPage() {
           </div>
 
           {filteredImports.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              {imports.length === 0 ? 'No statements imported yet.' : 'No statement imports match this uploader filter.'}
-            </p>
+            imports.length === 0 ? (
+              <EmptyState
+                icon={FileUp}
+                title="No statements imported"
+                description="Upload your first bank statement to start building your transaction history."
+                action={{ label: 'Upload Statement', href: '#statement-upload' }}
+              />
+            ) : (
+              <EmptyState
+                icon={FileText}
+                title="No matching statement imports"
+                description="Try changing the uploader filter to view uploads from another household member."
+              />
+            )
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -847,7 +873,6 @@ export default function StatementsPage() {
                 </thead>
                 <tbody>
                   {filteredImports.map((importRow) => {
-                    const status = statusConfig[importRow.status] ?? statusConfig.received
                     return (
                       <tr key={importRow.id} className="border-b last:border-0">
                         <td className="max-w-[200px] truncate py-3 pr-4 font-medium">
@@ -882,9 +907,7 @@ export default function StatementsPage() {
                           ) : '—'}
                         </td>
                         <td className="py-3 pr-4">
-                          <Badge className={cn('border-0 text-xs', status.className)}>
-                            {status.label}
-                          </Badge>
+                          {getStatementStatusBadge(importRow.status)}
                         </td>
                         <td className="py-3 pr-4">
                           <div className="font-medium">{getUploaderName(importRow)}</div>

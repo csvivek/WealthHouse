@@ -484,6 +484,8 @@ export async function routeParsedTransactions(params: {
     let merchantDecision = merchantResolutionCache.get(merchantCacheKey)
     if (!merchantDecision) {
       merchantDecision = await resolveMerchantCategory({
+        supabase: params.supabase,
+        householdId: params.householdId,
         merchantName: merchantRaw,
         description: transaction.description,
         amount,
