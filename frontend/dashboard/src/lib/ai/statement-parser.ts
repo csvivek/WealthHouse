@@ -104,6 +104,7 @@ General rules:
 
 DBS-specific rules:
 - DBS consolidated bank statements contain multiple account blocks. Extract transactions only from the transaction details section.
+- When a DBS bank statement contains multiple savings/current account blocks, every transaction must include the originating account block in transactions[].account.
 - DBS credit-card statements may contain multiple card sections. Each transaction must include the card/account block it belongs to in transactions[].account.
 - For DBS bank lines with FAST Payment / Receipt, inspect continuation lines and classify as paynow, transfer_in, transfer_out, or internal_transfer instead of a generic payment.
 - TOP-UP TO PAYLAH! is wallet_topup and category Other.

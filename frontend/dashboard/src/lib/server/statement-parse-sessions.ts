@@ -81,6 +81,7 @@ export async function cleanupExpiredStatementParseSessions(params: {
 
 export async function createStatementParseSession(params: {
   supabase: any
+  statementUploadId?: string | null
   householdId: string
   userId: string
   fileName: string
@@ -93,10 +94,12 @@ export async function createStatementParseSession(params: {
   suggestedExistingAccounts: Array<Record<string, unknown>>
   storageBucket?: string | null
   storagePath?: string | null
+  resolutionPayload?: Array<Record<string, unknown>>
 }) {
   const { data, error } = await params.supabase
     .from(STATEMENT_PARSE_SESSIONS_TABLE)
     .insert({
+      statement_upload_id: params.statementUploadId ?? null,
       household_id: params.householdId,
       user_id: params.userId,
       file_name: params.fileName,
@@ -107,6 +110,7 @@ export async function createStatementParseSession(params: {
       parsed_payload: params.parsedPayload,
       unresolved_descriptors: params.unmatchedAccountDescriptors,
       suggested_existing_accounts: params.suggestedExistingAccounts,
+      resolution_payload: params.resolutionPayload ?? [],
       storage_bucket: params.storageBucket ?? null,
       storage_path: params.storagePath ?? null,
       status: STATEMENT_PARSE_SESSION_STATUS.NEEDS_ACCOUNT_RESOLUTION,
@@ -166,6 +170,7 @@ export async function updateStatementParseSessionUnresolved(params: {
     .update({
       unresolved_descriptors: params.unmatchedAccountDescriptors,
       suggested_existing_accounts: params.suggestedExistingAccounts,
+      resolution_payload: [],
       status: STATEMENT_PARSE_SESSION_STATUS.NEEDS_ACCOUNT_RESOLUTION,
       updated_at: new Date().toISOString(),
     })
@@ -182,10 +187,31 @@ export async function markStatementParseSessionResolved(params: {
     .from(STATEMENT_PARSE_SESSIONS_TABLE)
     .update({
       status: STATEMENT_PARSE_SESSION_STATUS.RESOLVED,
+      resolution_payload: [],
       resolved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
     .eq('id', params.parseSessionId)
 
   throwIfParseSessionSchemaMissing(error)
+}
+
+export async function updateStatementParseSessionResolutionPayload(params: {
+  supabase: any
+  parseSessionId: string
+  resolutionPayload: Array<Record<string, unknown>>
+}) {
+  const { error } = await params.supabase
+    .from(STATEMENT_PARSE_SESSIONS_TABLE)
+    .update({
+      resolution_payload: params.resolutionPayload,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.parseSessionId)
+
+  throwIfParseSessionSchemaMissing(error)
+
+  if (error) {
+    throw new Error(error.message || 'Failed to save parse session resolutions')
+  }
 }

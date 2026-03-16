@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { mapStatementStorageErrorMessage } from '@/lib/statements/config'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { resolveStatementStorageForImport } from '@/lib/server/statement-storage'
 
 function buildContentDisposition(fileName: string) {
   const safeAscii = fileName.replace(/[^a-zA-Z0-9._-]+/g, '_')
@@ -36,7 +37,7 @@ export async function GET(
 
     const { data: fileImport, error: fileImportError } = await supabase
       .from('file_imports')
-      .select('id, household_id, file_name, mime_type, storage_bucket, storage_path')
+      .select('id, household_id, file_name, mime_type')
       .eq('id', importId)
       .eq('household_id', profile.household_id)
       .single()
@@ -45,13 +46,19 @@ export async function GET(
       return NextResponse.json({ error: 'Statement import not found' }, { status: 404 })
     }
 
-    if (!fileImport.storage_bucket || !fileImport.storage_path) {
+    const resolvedStorage = await resolveStatementStorageForImport({
+      supabase,
+      importId,
+      householdId: profile.household_id,
+    })
+
+    if (!resolvedStorage?.storageBucket || !resolvedStorage.storagePath) {
       return NextResponse.json({ error: 'Original statement unavailable for this import' }, { status: 404 })
     }
 
     const { data: fileBlob, error: downloadError } = await supabase.storage
-      .from(fileImport.storage_bucket)
-      .download(fileImport.storage_path)
+      .from(resolvedStorage.storageBucket)
+      .download(resolvedStorage.storagePath)
 
     if (downloadError || !fileBlob) {
       const mapped = mapStatementStorageErrorMessage(downloadError?.message || 'Failed to download statement')

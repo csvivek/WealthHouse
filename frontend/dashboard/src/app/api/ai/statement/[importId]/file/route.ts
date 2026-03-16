@@ -5,11 +5,7 @@ import {
   assertStatementStorageConfig,
   mapStatementStorageErrorMessage,
 } from '@/lib/statements/config'
-import { createStatementSignedUrl } from '@/lib/server/statement-storage'
-
-function readString(value: unknown) {
-  return typeof value === 'string' && value.trim() ? value : null
-}
+import { createStatementSignedUrl, resolveStatementStorageForImport } from '@/lib/server/statement-storage'
 
 export async function GET(
   _request: NextRequest,
@@ -36,19 +32,17 @@ export async function GET(
       return NextResponse.json({ error: 'No profile found' }, { status: 404 })
     }
 
-    const { data: fileImport, error } = await supabase
-      .from('file_imports')
-      .select('id, storage_bucket, storage_path')
-      .eq('id', importId)
-      .eq('household_id', profile.household_id)
-      .maybeSingle()
+    const resolvedStorage = await resolveStatementStorageForImport({
+      supabase,
+      importId,
+      householdId: profile.household_id,
+    })
 
-    if (error || !fileImport) {
+    if (!resolvedStorage) {
       return NextResponse.json({ error: 'Import not found' }, { status: 404 })
     }
 
-    const storageBucket = readString(fileImport.storage_bucket)
-    const storagePath = readString(fileImport.storage_path)
+    const { storageBucket, storagePath } = resolvedStorage
     if (!storageBucket || !storagePath) {
       return NextResponse.json({ error: 'Stored statement file not found' }, { status: 404 })
     }

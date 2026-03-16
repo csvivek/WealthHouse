@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Upload,
   FileUp,
@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createClient } from '@/lib/supabase/client'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
+import { useStatementIngestionJobs } from '@/lib/statement-ingestion-jobs'
 import { getKnownInstitutionMetadataByCode } from '@/lib/accounts/normalization'
 import { formatDate } from '@/lib/format'
 import { isStatementStorageSchemaNotReadyError } from '@/lib/statements/config'
@@ -47,6 +48,7 @@ interface FileImportRow {
   id: string
   file_name: string
   uploaded_by: string
+  statement_upload_id?: string | null
   storage_bucket: string | null
   storage_path: string | null
   uploadedByDisplayName: string | null
@@ -73,8 +75,8 @@ interface FileImportRow {
   hasStoredFile: boolean
 }
 
-const FILE_IMPORTS_SELECT_WITH_STORAGE = 'id, file_name, uploaded_by, storage_bucket, storage_path, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
-const FILE_IMPORTS_SELECT_FALLBACK = 'id, file_name, uploaded_by, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
+const FILE_IMPORTS_SELECT_WITH_STORAGE = 'id, file_name, uploaded_by, statement_upload_id, storage_bucket, storage_path, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
+const FILE_IMPORTS_SELECT_FALLBACK = 'id, file_name, uploaded_by, statement_upload_id, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
 
 interface HouseholdUploaderProfile {
   id: string
@@ -107,6 +109,8 @@ interface UnmatchedAccountDescriptor {
 
 interface ParseRecoveryState {
   parseSessionId: string
+  statementUploadId: string | null
+  fileName: string | null
   error: string
   unmatchedAccountDescriptors: UnmatchedAccountDescriptor[]
   suggestedExistingAccounts: SuggestedExistingAccount[]
@@ -160,6 +164,7 @@ function getStatementStatusBadge(status: string) {
 
 export default function StatementsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [imports, setImports] = useState<FileImportRow[]>([])
   const [householdUsers, setHouseholdUsers] = useState<HouseholdUploaderProfile[]>([])
@@ -168,12 +173,17 @@ export default function StatementsPage() {
   const [uploaderFilter, setUploaderFilter] = useState<string>('all')
 
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
-  const [uploading, setUploading] = useState(false)
-  const [resolvingRecovery, setResolvingRecovery] = useState(false)
-  const [parseRecovery, setParseRecovery] = useState<ParseRecoveryState | null>(null)
-  const [descriptorResolutions, setDescriptorResolutions] = useState<Record<string, DescriptorResolutionState>>({})
+  const [uploadingCount, setUploadingCount] = useState(0)
+  const [resolvingRecoveryId, setResolvingRecoveryId] = useState<string | null>(null)
+  const [parseRecoveries, setParseRecoveries] = useState<Record<string, ParseRecoveryState>>({})
+  const [descriptorResolutions, setDescriptorResolutions] = useState<Record<string, Record<string, DescriptorResolutionState>>>({})
 
-  const { hasActiveJobs } = useStatementCommitJobs()
+  const { hasActiveJobs: hasActiveCommitJobs } = useStatementCommitJobs()
+  const {
+    jobs: ingestionJobs,
+    hasActiveJobs: hasActiveIngestionJobs,
+    trackJob,
+  } = useStatementIngestionJobs()
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -253,7 +263,7 @@ export default function StatementsPage() {
         const uploader = uploadersById.get(importRow.uploaded_by)
         return {
           ...importRow,
-          hasStoredFile: Boolean(importRow.storage_bucket && importRow.storage_path),
+          hasStoredFile: Boolean(importRow.statement_upload_id || (importRow.storage_bucket && importRow.storage_path)),
           uploadedByDisplayName: uploader?.display_name ?? null,
           uploadedByEmail: uploader?.email ?? null,
         }
@@ -270,7 +280,7 @@ export default function StatementsPage() {
   }, [fetchData])
 
   useEffect(() => {
-    if (!hasActiveJobs) return
+    if (!hasActiveCommitJobs && !hasActiveIngestionJobs) return
 
     void fetchData()
     const interval = window.setInterval(() => {
@@ -278,7 +288,51 @@ export default function StatementsPage() {
     }, 3000)
 
     return () => window.clearInterval(interval)
-  }, [hasActiveJobs, fetchData])
+  }, [hasActiveCommitJobs, hasActiveIngestionJobs, fetchData])
+
+  useEffect(() => {
+    const pausedJobs = ingestionJobs.filter((job) => job.status === 'needs_action' && job.result?.status === 'needs_account_resolution')
+
+    for (const job of pausedJobs) {
+      const parseSessionId = job.result?.status === 'needs_account_resolution' ? job.result.parseSessionId : null
+      if (!parseSessionId || parseRecoveries[parseSessionId]) continue
+
+      void (async () => {
+        const response = await fetch(`/api/ai/statement/parse-session/${parseSessionId}`, { cache: 'no-store' })
+        const payload = await response.json().catch(() => null)
+        if (!response.ok || !payload) return
+
+        initializeRecoveryState({
+          parseSessionId,
+          statementUploadId: typeof payload.statementUploadId === 'string' ? payload.statementUploadId : null,
+          fileName: typeof payload.fileName === 'string' ? payload.fileName : null,
+          error: 'Account matching needs your review before import can continue.',
+          unmatchedAccountDescriptors: (payload.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
+          suggestedExistingAccounts: (payload.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
+        })
+      })()
+    }
+  }, [ingestionJobs, parseRecoveries])
+
+  useEffect(() => {
+    const resumeParseSessionId = searchParams.get('parseSessionId')
+    if (!resumeParseSessionId || parseRecoveries[resumeParseSessionId]) return
+
+    void (async () => {
+      const response = await fetch(`/api/ai/statement/parse-session/${resumeParseSessionId}`, { cache: 'no-store' })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || !payload) return
+
+      initializeRecoveryState({
+        parseSessionId: resumeParseSessionId,
+        statementUploadId: typeof payload.statementUploadId === 'string' ? payload.statementUploadId : null,
+        fileName: typeof payload.fileName === 'string' ? payload.fileName : null,
+        error: 'Account matching needs your review before import can continue.',
+        unmatchedAccountDescriptors: (payload.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
+        suggestedExistingAccounts: (payload.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
+      })
+    })()
+  }, [parseRecoveries, searchParams])
 
   function getAccountLabel(option: AccountOption) {
     return `${option.institutions?.name ? `${option.institutions.name} — ` : ''}${option.nickname ?? option.product_name}`
@@ -315,7 +369,10 @@ export default function StatementsPage() {
   }
 
   function initializeRecoveryState(payload: ParseRecoveryState) {
-    setParseRecovery(payload)
+    setParseRecoveries((current) => ({
+      ...current,
+      [payload.parseSessionId]: payload,
+    }))
 
     const next: Record<string, DescriptorResolutionState> = {}
     for (const descriptor of payload.unmatchedAccountDescriptors ?? []) {
@@ -340,85 +397,98 @@ export default function StatementsPage() {
       }
     }
 
-    setDescriptorResolutions(next)
+    setDescriptorResolutions((current) => ({
+      ...current,
+      [payload.parseSessionId]: next,
+    }))
   }
 
-  function updateDescriptorResolution(descriptorKey: string, updater: (current: DescriptorResolutionState) => DescriptorResolutionState) {
+  function updateDescriptorResolution(
+    parseSessionId: string,
+    descriptorKey: string,
+    updater: (current: DescriptorResolutionState) => DescriptorResolutionState,
+  ) {
     setDescriptorResolutions((current) => {
-      const existing = current[descriptorKey]
+      const sessionState = current[parseSessionId]
+      if (!sessionState) return current
+      const existing = sessionState[descriptorKey]
       if (!existing) return current
       return {
         ...current,
-        [descriptorKey]: updater(existing),
+        [parseSessionId]: {
+          ...sessionState,
+          [descriptorKey]: updater(existing),
+        },
       }
     })
   }
 
-  async function handleUpload(file: File) {
-    if (!file) return
+  async function uploadSingleFile(file: File) {
+    const formData = new FormData()
+    formData.append('statement', file)
+    if (selectedAccountId) {
+      formData.append('account_id', selectedAccountId)
+    }
 
-    setUploading(true)
-    try {
-      const formData = new FormData()
-      formData.append('statement', file)
-      if (selectedAccountId) {
-        formData.append('account_id', selectedAccountId)
-      }
+    const response = await fetch('/api/ai/statement', {
+      method: 'POST',
+      body: formData,
+    })
 
-      const res = await fetch('/api/ai/statement', {
-        method: 'POST',
-        body: formData,
-      })
+    const payload = await response.json().catch(() => ({}))
 
-      const data = await res.json().catch(() => ({}))
-
-      if (!res.ok) {
-        if (res.status === 409) {
-          toast.error(`This file has already been processed: ${data.existingFileName}`)
-          if (data.existingStatus === 'in_review') {
-            router.push(`/statements/review/${data.existingImportId}`)
-          }
-          return
-        }
-
-        if (res.status === 422 && data?.code === 'transaction_account_match_required' && data?.parseSessionId) {
-          initializeRecoveryState({
-            parseSessionId: data.parseSessionId,
-            error: data.error || 'Account matching needs your review before import can continue.',
-            unmatchedAccountDescriptors: (data.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
-            suggestedExistingAccounts: (data.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
-          })
-          toast.error('Account matching needs your review. Continue import below without re-uploading.')
-          return
-        }
-
-        toast.error(data.error || 'Failed to parse statement')
+    if (!response.ok) {
+      if (response.status === 409) {
+        const count = typeof payload.existingImportCount === 'number' ? payload.existingImportCount : 0
+        toast.error(
+          count > 1
+            ? `${payload.existingFileName || file.name} was already imported into ${count} account-specific reviews.`
+            : `${payload.existingFileName || file.name} was already imported.`,
+        )
         return
       }
 
-      setParseRecovery(null)
-      setDescriptorResolutions({})
+      throw new Error(payload.error || `Failed to queue ${file.name}`)
+    }
 
-      const importMessage = data.importLabel
-        ? `Parsed ${data.transactionsCount} transactions and linked to ${data.importLabel}. Imported successfully.`
-        : `Parsed ${data.transactionsCount} transactions. Imported successfully.`
-
-      toast.success(importMessage)
-      router.push(data.reviewUrl)
-    } catch {
-      toast.error('Failed to upload statement')
-    } finally {
-      setUploading(false)
+    if (payload?.job) {
+      trackJob(payload.job)
     }
   }
 
-  async function handleContinueRecoveryImport() {
+  async function handleUpload(files: File[]) {
+    if (files.length === 0) return
+
+    setUploadingCount((current) => current + files.length)
+
+    const queue = [...files]
+    const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const file = queue.shift()
+        if (!file) return
+
+        try {
+          await uploadSingleFile(file)
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : `Failed to queue ${file.name}`)
+        } finally {
+          setUploadingCount((current) => Math.max(0, current - 1))
+        }
+      }
+    })
+
+    await Promise.all(workers)
+    await fetchData()
+  }
+
+  async function handleContinueRecoveryImport(parseSessionId: string) {
+    const parseRecovery = parseRecoveries[parseSessionId]
     if (!parseRecovery) return
 
     const resolutions = [] as Array<Record<string, unknown>>
 
     for (const descriptor of parseRecovery.unmatchedAccountDescriptors) {
-      const state = descriptorResolutions[descriptor.descriptorKey]
+      const state = descriptorResolutions[parseSessionId]?.[descriptor.descriptorKey]
       if (!state) {
         toast.error('Missing resolution state for one or more unmatched descriptors.')
         return
@@ -470,7 +540,7 @@ export default function StatementsPage() {
       })
     }
 
-    setResolvingRecovery(true)
+    setResolvingRecoveryId(parseSessionId)
     try {
       const res = await fetch('/api/ai/statement/resolve-account', {
         method: 'POST',
@@ -484,43 +554,43 @@ export default function StatementsPage() {
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        if (res.status === 422 && data?.code === 'transaction_account_match_required' && data?.parseSessionId) {
-          initializeRecoveryState({
-            parseSessionId: data.parseSessionId,
-            error: data.error || 'Some transactions still need account resolution.',
-            unmatchedAccountDescriptors: (data.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
-            suggestedExistingAccounts: (data.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
-          })
-          toast.error('Some transactions still need account resolution. Please review and continue.')
-          return
-        }
-
         toast.error(data.error || 'Failed to continue import')
         return
       }
 
-      setParseRecovery(null)
-      setDescriptorResolutions({})
-      toast.success(`Import continued. Parsed ${data.transactionsCount} transactions.`)
-      router.push(data.reviewUrl)
+      if (data?.job) {
+        trackJob(data.job)
+      }
+
+      setParseRecoveries((current) => {
+        const next = { ...current }
+        delete next[parseSessionId]
+        return next
+      })
+      setDescriptorResolutions((current) => {
+        const next = { ...current }
+        delete next[parseSessionId]
+        return next
+      })
+      toast.success('Import resumed in the background.')
     } catch {
       toast.error('Failed to continue import')
     } finally {
-      setResolvingRecovery(false)
+      setResolvingRecoveryId(null)
     }
   }
 
   function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (file) void handleUpload(file)
+    const files = Array.from(event.target.files ?? [])
+    if (files.length > 0) void handleUpload(files)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   function handleDrop(event: React.DragEvent) {
     event.preventDefault()
     setDragOver(false)
-    const file = event.dataTransfer.files[0]
-    if (file) void handleUpload(file)
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length > 0) void handleUpload(files)
   }
 
   async function handleReopenImport(importId: string) {
@@ -562,7 +632,8 @@ export default function StatementsPage() {
         badges={(
           <>
             <Badge variant="outline">{imports.length} recent imports</Badge>
-            {hasActiveJobs ? <Badge variant="outline">Commit jobs active</Badge> : null}
+            {hasActiveIngestionJobs ? <Badge variant="outline">Import jobs active</Badge> : null}
+            {hasActiveCommitJobs ? <Badge variant="outline">Commit jobs active</Badge> : null}
           </>
         )}
       />
@@ -574,7 +645,7 @@ export default function StatementsPage() {
             Import Statement
           </CardTitle>
           <CardDescription>
-            Account selection is optional. If you leave it blank, the parser will try to match the statement to one of your existing accounts automatically.
+            Account selection is optional. It is treated as a hint during background processing, but multi-account statements can still split into separate account-specific imports.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -595,7 +666,7 @@ export default function StatementsPage() {
               </Select>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span>
-                  Leave blank to auto-match after parsing. Choose an account only if you want to override the detected match.
+                  Leave blank to auto-match after parsing. If you choose an account, it will be used as a hint for single-account statements only.
                 </span>
                 {selectedAccountId && (
                   <Button variant="ghost" size="sm" className="h-auto px-0 py-0 text-xs" onClick={() => setSelectedAccountId('')}>
@@ -610,7 +681,7 @@ export default function StatementsPage() {
             className={cn(
               'flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-colors',
               dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-muted-foreground/50',
-              uploading && 'pointer-events-none opacity-60',
+              uploadingCount > 0 && 'pointer-events-none opacity-60',
             )}
             onDragOver={(event) => {
               event.preventDefault()
@@ -624,23 +695,24 @@ export default function StatementsPage() {
               ref={fileInputRef}
               type="file"
               accept=".pdf,.jpg,.jpeg,.png,.zip,.txt"
+              multiple
               className="hidden"
               onChange={handleFileSelect}
             />
-            {uploading ? (
+            {uploadingCount > 0 ? (
               <>
                 <Loader2 className="mb-3 size-10 animate-spin text-muted-foreground" />
-                <p className="text-sm font-medium">Parsing statement…</p>
-                <p className="text-xs text-muted-foreground">This may take 10–30 seconds</p>
+                <p className="text-sm font-medium">Queueing statement imports…</p>
+                <p className="text-xs text-muted-foreground">{uploadingCount} file(s) still being submitted</p>
               </>
             ) : (
               <>
                 <FileUp className="mb-3 size-10 text-muted-foreground" />
                 <p className="text-sm font-medium">
-                  Drop your statement here or click to browse
+                  Drop one or more statements here or click to browse
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Supports PDF, JPEG, PNG, ZIP, TXT
+                  Supports PDF, JPEG, PNG, ZIP, TXT. Files process independently in the background.
                 </p>
               </>
             )}
@@ -648,8 +720,8 @@ export default function StatementsPage() {
         </CardContent>
       </Card>
 
-      {parseRecovery && (
-        <Card className="border-amber-300/60 bg-amber-50/50 dark:border-amber-700/50 dark:bg-amber-950/20">
+      {Object.values(parseRecoveries).map((parseRecovery) => (
+        <Card key={parseRecovery.parseSessionId} className="border-amber-300/60 bg-amber-50/50 dark:border-amber-700/50 dark:bg-amber-950/20">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <AlertTriangle className="size-4 text-amber-600" />
@@ -661,12 +733,12 @@ export default function StatementsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-amber-900/80 dark:text-amber-100/80">
-              Continue import from this parsed session without re-uploading the statement.
+              Continue import for {parseRecovery.fileName || 'this statement'} without re-uploading it.
             </p>
 
             <div className="space-y-4">
               {parseRecovery.unmatchedAccountDescriptors.map((descriptor) => {
-                const resolution = descriptorResolutions[descriptor.descriptorKey]
+                const resolution = descriptorResolutions[parseRecovery.parseSessionId]?.[descriptor.descriptorKey]
                 if (!resolution) return null
 
                 return (
@@ -688,7 +760,7 @@ export default function StatementsPage() {
                       <Select
                         value={resolution.mode}
                         onValueChange={(value) => {
-                          updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                          updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                             ...current,
                             mode: value as ResolutionMode,
                           }))
@@ -710,7 +782,7 @@ export default function StatementsPage() {
                         <Select
                           value={resolution.existingAccountId}
                           onValueChange={(value) => {
-                            updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               existingAccountId: value,
                             }))
@@ -734,7 +806,7 @@ export default function StatementsPage() {
                           <Label>Institution Name</Label>
                           <Input
                             value={resolution.createAccount.institution_name}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -751,14 +823,14 @@ export default function StatementsPage() {
                             institutionName={resolution.createAccount.institution_name}
                             institutionCode={resolution.createAccount.institution_code}
                             selection={resolution.createAccount.institution_brand_decision}
-                            onSelectionChange={(selection) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onSelectionChange={(selection) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
                                 institution_brand_decision: selection,
                               },
                             }))}
-                            onPreviewChange={(preview) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onPreviewChange={(preview) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -772,7 +844,7 @@ export default function StatementsPage() {
                           <Label>Product Name</Label>
                           <Input
                             value={resolution.createAccount.product_name}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -785,7 +857,7 @@ export default function StatementsPage() {
                           <Label>Account Type</Label>
                           <Select
                             value={resolution.createAccount.account_type}
-                            onValueChange={(value) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onValueChange={(value) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -811,7 +883,7 @@ export default function StatementsPage() {
                           <Label>Currency</Label>
                           <Input
                             value={resolution.createAccount.currency}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -824,7 +896,7 @@ export default function StatementsPage() {
                           <Label>Identifier Hint</Label>
                           <Input
                             value={resolution.createAccount.identifier_hint}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -837,7 +909,7 @@ export default function StatementsPage() {
                           <Label>Nickname (Optional)</Label>
                           <Input
                             value={resolution.createAccount.nickname}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -853,7 +925,7 @@ export default function StatementsPage() {
                               <Label>Card Name</Label>
                               <Input
                                 value={resolution.createAccount.card_name}
-                                onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                                onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                                   ...current,
                                   createAccount: {
                                     ...current.createAccount,
@@ -866,7 +938,7 @@ export default function StatementsPage() {
                               <Label>Card Last 4</Label>
                               <Input
                                 value={resolution.createAccount.card_last4}
-                                onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                                onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                                   ...current,
                                   createAccount: {
                                     ...current.createAccount,
@@ -885,17 +957,27 @@ export default function StatementsPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void handleContinueRecoveryImport()} disabled={resolvingRecovery} className="gap-2">
-                {resolvingRecovery ? <Loader2 className="size-4 animate-spin" /> : null}
+              <Button onClick={() => void handleContinueRecoveryImport(parseRecovery.parseSessionId)} disabled={resolvingRecoveryId === parseRecovery.parseSessionId} className="gap-2">
+                {resolvingRecoveryId === parseRecovery.parseSessionId ? <Loader2 className="size-4 animate-spin" /> : null}
                 Continue Import
               </Button>
-              <Button variant="outline" onClick={() => setParseRecovery(null)} disabled={resolvingRecovery}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setParseRecoveries((current) => {
+                    const next = { ...current }
+                    delete next[parseRecovery.parseSessionId]
+                    return next
+                  })
+                }}
+                disabled={resolvingRecoveryId === parseRecovery.parseSessionId}
+              >
                 Dismiss
               </Button>
             </div>
           </CardContent>
         </Card>
-      )}
+      ))}
 
       <Separator />
 

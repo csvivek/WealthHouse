@@ -4,7 +4,7 @@ import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import type { Database } from '@/types/database'
 import { resolveEffectivePaymentGroups } from '@/lib/server/category-groups'
 import { listTags } from '@/lib/server/tag-service'
-import { buildStatementSourceFileHref } from '@/lib/server/statement-storage'
+import { buildStatementSourceFileHref, resolveStatementStorageForImport } from '@/lib/server/statement-storage'
 import { isStatementLinkingSchemaNotReadyError } from '@/lib/statement-linking/config'
 
 type FileImportRow = Database['public']['Tables']['file_imports']['Row']
@@ -344,8 +344,13 @@ export async function GET(
     const parsedIdentifierHint = readString(parsedAccount?.identifier_hint)
     const parsedCardName = readString(parsedAccount?.card_name)
     const parsedCardLast4 = readString(parsedAccount?.card_last4)
-    const storageBucket = readString(fileImport.storage_bucket)
-    const storagePath = readString(fileImport.storage_path)
+    const storageResolution = await resolveStatementStorageForImport({
+      supabase,
+      importId,
+      householdId: profile.household_id,
+    })
+    const storageBucket = storageResolution?.storageBucket ?? readString(fileImport.storage_bucket)
+    const storagePath = storageResolution?.storagePath ?? readString(fileImport.storage_path)
 
     const similarPreviewMap = new Map<string, { count: number; examples: string[] }>()
 

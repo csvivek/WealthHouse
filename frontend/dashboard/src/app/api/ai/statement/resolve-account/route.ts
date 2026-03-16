@@ -2,57 +2,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { ensureProfile } from '@/lib/supabase/ensure-profile'
-import type { ParsedStatementResult } from '@/lib/statements/helpers'
-import {
-  loadAccountCandidates,
-  resolveAccountCandidate,
-  resolvedAccountFromCandidate,
-  routeParsedTransactions,
-  stageRoutedTransactions,
-  type ResolvedAccount,
-} from '@/lib/server/statement-import'
 import {
   getStatementParseSession,
-  isStatementParseSessionSchemaError,
-  markStatementParseSessionResolved,
   STATEMENT_PARSE_SESSION_STATUS,
-  updateStatementParseSessionUnresolved,
 } from '@/lib/server/statement-parse-sessions'
-import { cleanupExpiredStatementSessionStorage } from '@/lib/server/statement-storage'
-import {
-  createAccountWithRelatedRecords,
-  findOrCreateInstitution,
-  type InstitutionBrandDecision,
-  normalizeAccountType,
-} from '@/lib/server/accounts'
+import { queueStatementParseSessionResumption } from '@/lib/server/statement-ingestion'
+import { startStatementIngestionJob } from '@/lib/server/statement-ingestion-jobs'
 
 interface ResolveAccountPayload {
   parseSessionId: string
-  resolutions: Array<{
-    descriptorKey: string
-    existingAccountId?: string
-    createAccount?: {
-      institution_name?: string
-      institution_code?: string
-      product_name?: string
-      nickname?: string | null
-      identifier_hint?: string | null
-      currency?: string | null
-      account_type?: string | null
-      card_name?: string | null
-      card_last4?: string | null
-      institution_brand_code?: string | null
-      institution_brand_decision?: InstitutionBrandDecision | null
-    }
-  }>
-}
-
-function parseJsonArray(value: unknown) {
-  return Array.isArray(value) ? value : []
-}
-
-function pickString(value: unknown) {
-  return typeof value === 'string' ? value : null
+  resolutions: Array<Record<string, unknown>>
 }
 
 export async function POST(request: NextRequest) {
@@ -85,12 +44,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'parseSessionId and resolutions are required.' }, { status: 400 })
     }
 
-    await cleanupExpiredStatementSessionStorage({
-      supabase: db,
-      householdId: profile.household_id,
-      userId: user.id,
-    })
-
     const parseSession = await getStatementParseSession({
       supabase: db,
       parseSessionId: body.parseSessionId,
@@ -110,192 +63,43 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Parse session was already resolved.' }, { status: 409 })
     }
 
-    const parsed = (parseSession.parsed_payload || {}) as ParsedStatementResult
-    const unresolvedFromSession = parseJsonArray(parseSession.unresolved_descriptors) as Array<Record<string, unknown>>
+    const statementUploadId = typeof parseSession.statement_upload_id === 'string'
+      ? parseSession.statement_upload_id
+      : null
 
-    let candidateAccounts = await loadAccountCandidates(db, profile.household_id)
-    const resolutionByDescriptor = new Map(body.resolutions.map((row) => [row.descriptorKey, row]))
-    const accountOverrides = new Map<string, ResolvedAccount>()
-
-    for (const descriptor of unresolvedFromSession) {
-      const descriptorKey = pickString(descriptor.descriptorKey)
-      if (!descriptorKey) continue
-
-      const resolution = resolutionByDescriptor.get(descriptorKey)
-      if (!resolution) {
-        return NextResponse.json(
-          {
-            error: 'Resolution missing for one or more unmatched account descriptors.',
-            code: 'resolution_required',
-            descriptorKey,
-          },
-          { status: 422 },
-        )
-      }
-
-      if (resolution.existingAccountId) {
-        const matched = candidateAccounts.find((account) => account.id === resolution.existingAccountId)
-        if (!matched) {
-          return NextResponse.json(
-            {
-              error: 'Selected existing account was not found for this household.',
-              code: 'account_not_found',
-              descriptorKey,
-            },
-            { status: 404 },
-          )
-        }
-
-        accountOverrides.set(descriptorKey, resolvedAccountFromCandidate(matched, 'manual'))
-        continue
-      }
-
-      if (!resolution.createAccount) {
-        return NextResponse.json(
-          {
-            error: 'Each unresolved descriptor needs an existing account or createAccount payload.',
-            code: 'resolution_required',
-            descriptorKey,
-          },
-          { status: 422 },
-        )
-      }
-
-      const create = resolution.createAccount
-      const institutionName = (create.institution_name || pickString(descriptor.institution_name) || '').trim()
-      const productName = (create.product_name || pickString(descriptor.product_name) || pickString(descriptor.card_name) || '').trim()
-
-      if (!institutionName || !productName) {
-        return NextResponse.json(
-          {
-            error: 'Institution and product name are required to create an account.',
-            code: 'create_account_fields_required',
-            descriptorKey,
-          },
-          { status: 422 },
-        )
-      }
-
-      const institution = await findOrCreateInstitution(supabase as any, {
-        institutionName,
-        institutionCode: create.institution_code || pickString(descriptor.institution_code) || null,
-        institutionBrandCode: create.institution_brand_code || null,
-        institutionBrandDecision: create.institution_brand_decision || null,
-      })
-
-      const createdAccount = await createAccountWithRelatedRecords(supabase as any, {
-        householdId: profile.household_id,
-        institutionId: institution.id,
-        accountType: normalizeAccountType(create.account_type || pickString(descriptor.account_type), [
-          productName,
-          create.card_name || pickString(descriptor.card_name),
-        ]),
-        productName,
-        nickname: create.nickname || null,
-        identifierHint: create.identifier_hint || pickString(descriptor.identifier_hint) || null,
-        currency: create.currency || pickString(descriptor.currency) || parsed.currency || 'SGD',
-        cardName: create.card_name || pickString(descriptor.card_name) || null,
-        cardLast4: create.card_last4 || pickString(descriptor.card_last4) || null,
-      })
-
-      const createdResolved: ResolvedAccount = {
-        id: createdAccount.id,
-        institutionId: institution.id,
-        label: `${institution.name} — ${createdAccount.nickname ?? createdAccount.product_name}`,
-        matchedBy: 'manual',
-        cardId: null,
-        cardName: create.card_name || pickString(descriptor.card_name) || null,
-        cardLast4: create.card_last4 || pickString(descriptor.card_last4) || null,
-      }
-
-      accountOverrides.set(descriptorKey, createdResolved)
-    }
-
-    candidateAccounts = await loadAccountCandidates(db, profile.household_id)
-
-    const routed = await routeParsedTransactions({
-      supabase: db,
-      householdId: profile.household_id,
-      parsed,
-      candidateAccounts,
-      accountOverridesByDescriptorKey: accountOverrides,
-      manualAccount: null,
-    })
-
-    if (routed.unmatchedAccountDescriptors.length > 0) {
-      await updateStatementParseSessionUnresolved({
-        supabase: db,
-        parseSessionId: body.parseSessionId,
-        unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors as unknown as Array<Record<string, unknown>>,
-        suggestedExistingAccounts: routed.suggestedExistingAccounts as unknown as Array<Record<string, unknown>>,
-      })
-
+    if (!statementUploadId) {
       return NextResponse.json(
-        {
-          error: 'Some transactions still need account resolution.',
-          code: 'transaction_account_match_required',
-          parseSessionId: body.parseSessionId,
-          unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors,
-          suggestedExistingAccounts: routed.suggestedExistingAccounts,
-        },
-        { status: 422 },
+        { error: 'This parse session is missing its statement upload linkage. Please re-upload the statement.' },
+        { status: 409 },
       )
     }
 
-    const firstOverride = Array.from(accountOverrides.values())[0] || null
-    const primaryAccount =
-      routed.routedTransactions[0]?.account
-      || firstOverride
-      || resolveAccountCandidate({
-        candidates: candidateAccounts,
-        institutionName: parsed.institution_name || parsed.institution_code || '',
-        descriptor: parsed.account ?? null,
-      }).account
+    await queueStatementParseSessionResumption({
+      statementUploadId,
+      parseSessionId: body.parseSessionId,
+      resolutionPayload: body.resolutions,
+    })
 
-    if (!primaryAccount) {
-      return NextResponse.json({ error: 'Could not determine primary account for import.' }, { status: 422 })
-    }
-
-    const result = await stageRoutedTransactions({
-      supabase: db,
-      householdId: profile.household_id,
+    const job = startStatementIngestionJob({
+      statementUploadId,
+      fileName: typeof parseSession.file_name === 'string' ? parseSession.file_name : 'statement.pdf',
       userId: user.id,
-      parsed,
-      routedTransactions: routed.routedTransactions,
-      fileName: String(parseSession.file_name || 'statement.pdf'),
-      fileSha256: String(parseSession.file_sha256 || ''),
-      mimeType: String(parseSession.mime_type || 'application/octet-stream'),
-      fileSizeBytes: Number(parseSession.file_size_bytes || 0),
-      primaryAccount,
-      storageBucket: pickString(parseSession.storage_bucket),
-      storagePath: pickString(parseSession.storage_path),
+      householdId: profile.household_id,
     })
-
-    await markStatementParseSessionResolved({
-      supabase: db,
-      parseSessionId: body.parseSessionId,
-    })
-
-    return NextResponse.json({
-      ...result,
-      parseSessionId: body.parseSessionId,
-    })
-  } catch (error) {
-    console.error('Statement resolve-account error:', error)
-
-    if (isStatementParseSessionSchemaError(error)) {
-      return NextResponse.json(
-        {
-          error: 'Statement recovery session storage is unavailable. Apply supabase migration 006_statement_parse_sessions.sql, then upload the statement again.',
-          code: 'statement_parse_session_schema_missing',
-          action: 'Apply supabase migration 006_statement_parse_sessions.sql in this environment.',
-        },
-        { status: 503 },
-      )
-    }
 
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to resolve statement account mapping' },
+      {
+        statementUploadId,
+        parseSessionId: body.parseSessionId,
+        status: 'queued',
+        job,
+      },
+      { status: 202 },
+    )
+  } catch (error) {
+    console.error('Statement resolve-account error:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to queue statement account resolution' },
       { status: 500 },
     )
   }

@@ -13,12 +13,24 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({
     push: vi.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }))
 
 vi.mock('@/lib/statement-commit-jobs', () => ({
   useStatementCommitJobs: () => ({
     hasActiveJobs: false,
   }),
+}))
+
+const mockedTrackIngestionJob = vi.fn()
+const statementIngestionState = {
+  jobs: [] as Array<Record<string, unknown>>,
+  hasActiveJobs: false,
+  trackJob: mockedTrackIngestionJob,
+}
+
+vi.mock('@/lib/statement-ingestion-jobs', () => ({
+  useStatementIngestionJobs: () => statementIngestionState,
 }))
 
 vi.mock('sonner', () => ({
@@ -44,6 +56,7 @@ function createSupabaseClientMock() {
       id: 'import-1',
       file_name: 'owner-statement.pdf',
       uploaded_by: 'user-1',
+      statement_upload_id: 'upload-1',
       storage_bucket: 'statements',
       storage_path: 'households/hh-1/statements/import-1/owner-statement.pdf',
       institution_code: 'dbs',
@@ -66,6 +79,7 @@ function createSupabaseClientMock() {
       id: 'import-2',
       file_name: 'alex-statement.pdf',
       uploaded_by: 'user-2',
+      statement_upload_id: null,
       storage_bucket: null,
       storage_path: null,
       institution_code: 'ocbc',
@@ -153,6 +167,9 @@ describe('StatementsPage', () => {
   beforeEach(() => {
     mockedCreateClient.mockReset()
     mockedCreateClient.mockReturnValue(createSupabaseClientMock() as never)
+    mockedTrackIngestionJob.mockReset()
+    statementIngestionState.jobs = []
+    statementIngestionState.hasActiveJobs = false
   })
 
   afterEach(() => {
@@ -198,11 +215,12 @@ describe('StatementsPage', () => {
         return createJsonResponse({ profiles: [] })
       }
 
-      if (url === '/api/ai/statement' && init?.method === 'POST') {
+      if (url === '/api/ai/statement/parse-session/session-1') {
         return createJsonResponse({
-          error: 'Account matching needs your review before import can continue.',
-          code: 'transaction_account_match_required',
           parseSessionId: 'session-1',
+          statementUploadId: 'upload-1',
+          fileName: 'statement.pdf',
+          status: 'needs_account_resolution',
           unmatchedAccountDescriptors: [
             {
               descriptorKey: 'dbs-1',
@@ -223,7 +241,7 @@ describe('StatementsPage', () => {
             },
           ],
           suggestedExistingAccounts: [],
-        }, false, 422)
+        })
       }
 
       if (url.startsWith('/api/institutions/brand-preview?')) {
@@ -238,24 +256,48 @@ describe('StatementsPage', () => {
 
       if (url === '/api/ai/statement/resolve-account' && init?.method === 'POST') {
         return createJsonResponse({
-          reviewUrl: '/statements/review/import-1',
-          transactionsCount: 1,
+          statementUploadId: 'upload-1',
+          parseSessionId: 'session-1',
+          status: 'queued',
+          job: {
+            id: 'job-1',
+            statementUploadId: 'upload-1',
+            fileName: 'statement.pdf',
+            status: 'queued',
+            createdAt: '2026-03-16T00:00:00.000Z',
+            startedAt: null,
+            finishedAt: null,
+            result: null,
+            error: null,
+          },
         })
       }
 
       throw new Error(`Unexpected fetch call ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
+    statementIngestionState.jobs = [{
+      id: 'job-paused-1',
+      statementUploadId: 'upload-1',
+      fileName: 'statement.pdf',
+      status: 'needs_action',
+      createdAt: '2026-03-16T00:00:00.000Z',
+      startedAt: '2026-03-16T00:00:01.000Z',
+      finishedAt: '2026-03-16T00:00:02.000Z',
+      error: null,
+      result: {
+        status: 'needs_account_resolution',
+        statementUploadId: 'upload-1',
+        parseSessionId: 'session-1',
+        imports: [],
+        importCount: 0,
+        transactionsCount: 0,
+        duplicateCount: 0,
+        reviewUrl: null,
+      },
+    }]
 
     render(<StatementsPage />)
-
-    await screen.findByText('Drop your statement here or click to browse')
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
-    expect(input).not.toBeNull()
-
-    const file = new File(['statement'], 'statement.pdf', { type: 'application/pdf' })
-    if (!input) throw new Error('File input not found')
-    await userEvent.upload(input, file)
 
     expect(await screen.findByText('Account Matching Needs Review')).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: 'Use verified brand' })).toBeInTheDocument()
@@ -284,5 +326,92 @@ describe('StatementsPage', () => {
         },
       ])
     })
+    expect(mockedTrackIngestionJob).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'job-1',
+      status: 'queued',
+      statementUploadId: 'upload-1',
+    }))
+  })
+
+  it('submits one background import request per selected file with concurrency capped at two', async () => {
+    const startedFiles: string[] = []
+    const pendingResolvers: Array<() => void> = []
+    let inFlight = 0
+    let maxInFlight = 0
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+
+      if (url === '/api/household/profiles') {
+        return Promise.resolve(createJsonResponse({ profiles: [] }))
+      }
+
+      if (url === '/api/ai/statement' && init?.method === 'POST' && init.body instanceof FormData) {
+        const statement = init.body.get('statement')
+        const fileName = statement instanceof File ? statement.name : 'unknown.pdf'
+        startedFiles.push(fileName)
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+
+        return new Promise<Response>((resolve) => {
+          pendingResolvers.push(() => {
+            inFlight -= 1
+            resolve(createJsonResponse({
+              duplicate: false,
+              statementUploadId: `upload-${fileName}`,
+              status: 'queued',
+              job: {
+                id: `job-${fileName}`,
+                statementUploadId: `upload-${fileName}`,
+                fileName,
+                status: 'queued',
+                createdAt: '2026-03-16T00:00:00.000Z',
+                startedAt: null,
+                finishedAt: null,
+                result: null,
+                error: null,
+              },
+            }, true, 202))
+          })
+        })
+      }
+
+      throw new Error(`Unexpected fetch call ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<StatementsPage />)
+
+    await screen.findByText('Drop one or more statements here or click to browse')
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    if (!input) throw new Error('File input not found')
+
+    await userEvent.upload(input, [
+      new File(['one'], 'one.pdf', { type: 'application/pdf' }),
+      new File(['two'], 'two.pdf', { type: 'application/pdf' }),
+      new File(['three'], 'three.pdf', { type: 'application/pdf' }),
+    ])
+
+    await waitFor(() => {
+      expect(startedFiles).toEqual(['one.pdf', 'two.pdf'])
+    })
+    expect(maxInFlight).toBe(2)
+
+    pendingResolvers.shift()?.()
+
+    await waitFor(() => {
+      expect(startedFiles).toEqual(['one.pdf', 'two.pdf', 'three.pdf'])
+    })
+    expect(maxInFlight).toBe(2)
+
+    while (pendingResolvers.length > 0) {
+      pendingResolvers.shift()?.()
+    }
+
+    await waitFor(() => {
+      expect(mockedTrackIngestionJob).toHaveBeenCalledTimes(3)
+    })
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]) === '/api/ai/statement')).toHaveLength(3)
   })
 })

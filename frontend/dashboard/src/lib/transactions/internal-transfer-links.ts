@@ -128,14 +128,6 @@ export function compareInternalTransferCandidates(
   left: InternalTransferTransactionLike,
   right: InternalTransferTransactionLike,
 ) {
-  const leftDirectionRank = getDirectionRank(sourceTransaction, left)
-  const rightDirectionRank = getDirectionRank(sourceTransaction, right)
-  if (leftDirectionRank !== rightDirectionRank) return leftDirectionRank - rightDirectionRank
-
-  const leftAmountDiff = getAmountDiff(sourceTransaction, left)
-  const rightAmountDiff = getAmountDiff(sourceTransaction, right)
-  if (leftAmountDiff !== rightAmountDiff) return leftAmountDiff - rightAmountDiff
-
   const leftDateDiff = getDateDiffDays(sourceTransaction.txnDate, left.txnDate)
   const rightDateDiff = getDateDiffDays(sourceTransaction.txnDate, right.txnDate)
   if (leftDateDiff !== rightDateDiff) return leftDateDiff - rightDateDiff
@@ -149,20 +141,37 @@ export function getTransactionDisplayName(transaction: InternalTransferTransacti
   return transaction.merchantNormalized ?? transaction.merchantRaw ?? transaction.description ?? null
 }
 
-function getDirectionRank(
-  sourceTransaction: InternalTransferTransactionLike,
-  candidate: InternalTransferTransactionLike,
+export function isTransferCandidateWithinPastDays(
+  sourceTxnDate: string,
+  candidateTxnDate: string,
+  maxPastDays: number,
 ) {
-  return normalizeTxnDirection(sourceTransaction.txnType) !== normalizeTxnDirection(candidate.txnType) ? 0 : 1
+  const sourceDay = parseCalendarDateToDayNumber(sourceTxnDate)
+  const candidateDay = parseCalendarDateToDayNumber(candidateTxnDate)
+  if (sourceDay === null || candidateDay === null) return false
+
+  const diff = sourceDay - candidateDay
+  return diff >= 0 && diff <= maxPastDays
 }
 
-function getAmountDiff(
-  sourceTransaction: InternalTransferTransactionLike,
-  candidate: InternalTransferTransactionLike,
+export function hasExactTransferCandidateAmount(
+  sourceAmount: number,
+  candidateAmount: number,
 ) {
-  return Math.abs(Math.abs(sourceTransaction.amount) - Math.abs(candidate.amount))
+  return Math.abs(sourceAmount) === Math.abs(candidateAmount)
 }
 
 function getDateDiffDays(left: string, right: string) {
-  return Math.abs(Math.round((new Date(left).getTime() - new Date(right).getTime()) / DAY_MS))
+  const leftDay = parseCalendarDateToDayNumber(left)
+  const rightDay = parseCalendarDateToDayNumber(right)
+  if (leftDay === null || rightDay === null) return Number.MAX_SAFE_INTEGER
+  return Math.abs(leftDay - rightDay)
+}
+
+function parseCalendarDateToDayNumber(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return null
+
+  const [, year, month, day] = match
+  return Math.floor(Date.UTC(Number(year), Number(month) - 1, Number(day)) / DAY_MS)
 }

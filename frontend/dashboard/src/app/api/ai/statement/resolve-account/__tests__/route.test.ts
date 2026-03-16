@@ -4,16 +4,9 @@ import { NextRequest } from 'next/server'
 import { POST } from '@/app/api/ai/statement/resolve-account/route'
 import { ensureProfile } from '@/lib/supabase/ensure-profile'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import {
-  loadAccountCandidates,
-  routeParsedTransactions,
-  stageRoutedTransactions,
-} from '@/lib/server/statement-import'
-import {
-  getStatementParseSession,
-  markStatementParseSessionResolved,
-} from '@/lib/server/statement-parse-sessions'
-import { cleanupExpiredStatementSessionStorage } from '@/lib/server/statement-storage'
+import { getStatementParseSession } from '@/lib/server/statement-parse-sessions'
+import { queueStatementParseSessionResumption } from '@/lib/server/statement-ingestion'
+import { startStatementIngestionJob } from '@/lib/server/statement-ingestion-jobs'
 
 vi.mock('@/lib/supabase/ensure-profile', () => ({
   ensureProfile: vi.fn(),
@@ -23,37 +16,27 @@ vi.mock('@/lib/supabase/server', () => ({
   createServerSupabaseClient: vi.fn(),
 }))
 
-vi.mock('@/lib/server/statement-import', async () => {
-  return {
-    loadAccountCandidates: vi.fn(),
-    resolveAccountCandidate: vi.fn(() => ({ account: null })),
-    resolvedAccountFromCandidate: vi.fn(),
-    routeParsedTransactions: vi.fn(),
-    stageRoutedTransactions: vi.fn(),
-  }
-})
-
 vi.mock('@/lib/server/statement-parse-sessions', async () => {
   const actual = await vi.importActual<typeof import('@/lib/server/statement-parse-sessions')>('@/lib/server/statement-parse-sessions')
   return {
     ...actual,
     getStatementParseSession: vi.fn(),
-    markStatementParseSessionResolved: vi.fn(),
   }
 })
 
-vi.mock('@/lib/server/statement-storage', () => ({
-  cleanupExpiredStatementSessionStorage: vi.fn(),
+vi.mock('@/lib/server/statement-ingestion', () => ({
+  queueStatementParseSessionResumption: vi.fn(),
+}))
+
+vi.mock('@/lib/server/statement-ingestion-jobs', () => ({
+  startStatementIngestionJob: vi.fn(),
 }))
 
 const mockedEnsureProfile = vi.mocked(ensureProfile)
 const mockedCreateServerSupabaseClient = vi.mocked(createServerSupabaseClient)
-const mockedLoadAccountCandidates = vi.mocked(loadAccountCandidates)
-const mockedRouteParsedTransactions = vi.mocked(routeParsedTransactions)
-const mockedStageRoutedTransactions = vi.mocked(stageRoutedTransactions)
-const mockedCleanupExpiredStatementSessionStorage = vi.mocked(cleanupExpiredStatementSessionStorage)
 const mockedGetStatementParseSession = vi.mocked(getStatementParseSession)
-const mockedMarkStatementParseSessionResolved = vi.mocked(markStatementParseSessionResolved)
+const mockedQueueStatementParseSessionResumption = vi.mocked(queueStatementParseSessionResumption)
+const mockedStartStatementIngestionJob = vi.mocked(startStatementIngestionJob)
 
 describe('POST /api/ai/statement/resolve-account', () => {
   beforeEach(() => {
@@ -79,53 +62,32 @@ describe('POST /api/ai/statement/resolve-account', () => {
     } as never)
 
     mockedEnsureProfile.mockResolvedValue(undefined)
-    mockedCleanupExpiredStatementSessionStorage.mockResolvedValue([] as never)
     mockedGetStatementParseSession.mockResolvedValue({
       id: 'session-1',
+      statement_upload_id: 'upload-1',
       status: 'needs_account_resolution',
       file_name: 'statement.pdf',
-      file_sha256: 'sha',
-      mime_type: 'application/pdf',
-      file_size_bytes: 10,
-      storage_bucket: 'statements',
-      storage_path: 'households/hh-1/statements/file-1/statement.pdf',
-      parsed_payload: {
-        institution_code: 'citibank',
-        institution_name: 'Citibank Singapore Ltd',
-        account: { account_type: 'loan', product_name: 'Ready Credit' },
-      },
-      unresolved_descriptors: [],
     } as never)
-    mockedLoadAccountCandidates.mockResolvedValue([] as never)
-    mockedRouteParsedTransactions.mockResolvedValue({
-      routedTransactions: [{
-        account: {
-          id: 'acct-1',
-          institutionId: 'inst-1',
-          label: 'Citibank Singapore Ltd — Ready Credit',
-          matchedBy: 'auto',
-          cardId: null,
-          cardName: null,
-          cardLast4: null,
-        },
-      }],
-      unmatchedAccountDescriptors: [],
-      suggestedExistingAccounts: [],
+    mockedQueueStatementParseSessionResumption.mockResolvedValue(undefined)
+    mockedStartStatementIngestionJob.mockReturnValue({
+      id: 'job-1',
+      statementUploadId: 'upload-1',
+      fileName: 'statement.pdf',
+      status: 'queued',
+      createdAt: '2026-03-16T00:00:00.000Z',
+      startedAt: null,
+      finishedAt: null,
+      result: null,
+      error: null,
     } as never)
-    mockedStageRoutedTransactions.mockResolvedValue({
-      importId: 'import-1',
-      reviewUrl: '/statements/review/import-1',
-      transactionsCount: 1,
-    } as never)
-    mockedMarkStatementParseSessionResolved.mockResolvedValue(undefined)
   })
 
-  it('continues the import with the stored source-file metadata attached', async () => {
+  it('queues background resume for the paused statement upload', async () => {
     const request = new NextRequest('http://localhost/api/ai/statement/resolve-account', {
       method: 'POST',
       body: JSON.stringify({
         parseSessionId: 'session-1',
-        resolutions: [],
+        resolutions: [{ descriptorKey: 'dbs-1', existingAccountId: 'acct-1' }],
       }),
       headers: {
         'Content-Type': 'application/json',
@@ -133,14 +95,28 @@ describe('POST /api/ai/statement/resolve-account', () => {
     })
 
     const response = await POST(request)
-    const stageParams = mockedStageRoutedTransactions.mock.calls[0]?.[0]
+    const payload = await response.json()
 
-    expect(response.status).toBe(200)
-    expect(stageParams?.storageBucket).toBe('statements')
-    expect(stageParams?.storagePath).toBe('households/hh-1/statements/file-1/statement.pdf')
-    expect(mockedMarkStatementParseSessionResolved).toHaveBeenCalledWith({
-      supabase: expect.anything(),
+    expect(response.status).toBe(202)
+    expect(mockedQueueStatementParseSessionResumption).toHaveBeenCalledWith({
+      statementUploadId: 'upload-1',
       parseSessionId: 'session-1',
+      resolutionPayload: [{ descriptorKey: 'dbs-1', existingAccountId: 'acct-1' }],
+    })
+    expect(mockedStartStatementIngestionJob).toHaveBeenCalledWith({
+      statementUploadId: 'upload-1',
+      fileName: 'statement.pdf',
+      userId: 'user-1',
+      householdId: 'hh-1',
+    })
+    expect(payload).toEqual({
+      statementUploadId: 'upload-1',
+      parseSessionId: 'session-1',
+      status: 'queued',
+      job: expect.objectContaining({
+        id: 'job-1',
+        status: 'queued',
+      }),
     })
   })
 })

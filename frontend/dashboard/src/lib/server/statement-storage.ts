@@ -11,6 +11,10 @@ export interface StatementStorageReference {
   storagePath: string
 }
 
+function readString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
 export function buildStatementStoragePath(params: {
   householdId: string
   fileImportId: string
@@ -118,4 +122,50 @@ export async function createStatementSignedUrl(params: {
   }
 
   return data.signedUrl
+}
+
+export async function resolveStatementStorageForImport(params: {
+  supabase: any
+  importId: string
+  householdId: string
+}) {
+  const baseQuery = params.supabase
+    .from('file_imports')
+    .select('id, statement_upload_id, storage_bucket, storage_path')
+    .eq('id', params.importId)
+    .eq('household_id', params.householdId)
+  const { data: fileImport, error } = await (
+    typeof baseQuery.maybeSingle === 'function'
+      ? baseQuery.maybeSingle()
+      : baseQuery.single()
+  )
+
+  if (error || !fileImport) {
+    return null
+  }
+
+  let storageBucket = readString(fileImport.storage_bucket)
+  let storagePath = readString(fileImport.storage_path)
+
+  if ((!storageBucket || !storagePath) && readString(fileImport.statement_upload_id)) {
+    const uploadQuery = params.supabase
+      .from('statement_uploads')
+      .select('id, storage_bucket, storage_path')
+      .eq('id', fileImport.statement_upload_id)
+      .eq('household_id', params.householdId)
+    const { data: statementUpload } = await (
+      typeof uploadQuery.maybeSingle === 'function'
+        ? uploadQuery.maybeSingle()
+        : uploadQuery.single()
+    )
+
+    storageBucket = readString(statementUpload?.storage_bucket) ?? storageBucket
+    storagePath = readString(statementUpload?.storage_path) ?? storagePath
+  }
+
+  return {
+    fileImport,
+    storageBucket,
+    storagePath,
+  }
 }

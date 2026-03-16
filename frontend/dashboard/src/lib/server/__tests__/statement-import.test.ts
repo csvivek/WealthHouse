@@ -80,4 +80,45 @@ describe('resolveAccountCandidate', () => {
       }),
     }))
   })
+
+  it('does not auto-match between multiple DBS savings accounts without a strong identifier', () => {
+    const dbsPrimary = createCandidate({
+      id: 'acct-dbs-1',
+      product_name: 'My Account',
+      nickname: 'DBS Savings 1',
+      identifier_hint: '2211',
+      account_type: 'savings',
+      institutions: { name: 'DBS Bank Ltd' },
+    })
+    const dbsJoint = createCandidate({
+      id: 'acct-dbs-2',
+      product_name: 'My Account',
+      nickname: 'DBS Savings 2',
+      identifier_hint: '7788',
+      account_type: 'savings',
+      institutions: { name: 'DBS Bank Ltd' },
+    })
+    const dbsReserve = createCandidate({
+      id: 'acct-dbs-3',
+      product_name: 'Multiplier Account',
+      nickname: 'DBS Savings 3',
+      identifier_hint: '9922',
+      account_type: 'savings',
+      institutions: { name: 'DBS Bank Ltd' },
+    })
+
+    const result = resolveAccountCandidate({
+      candidates: [dbsPrimary, dbsJoint, dbsReserve],
+      institutionName: 'DBS Bank Ltd',
+      descriptor: {
+        account_type: 'savings',
+        product_name: 'Savings Account',
+        identifier_hint: null,
+      },
+    })
+
+    expect(result).toEqual(expect.objectContaining({
+      error: expect.stringMatching(/more than one account|No confident account match found\./),
+    }))
+  })
 })

@@ -600,6 +600,7 @@ export type Database = {
           id: string
           household_id: string
           account_id: string
+          statement_upload_id: string | null
           uploaded_by: string
           file_name: string
           file_sha256: string
@@ -634,6 +635,7 @@ export type Database = {
           id?: string
           household_id: string
           account_id: string
+          statement_upload_id?: string | null
           uploaded_by: string
           file_name: string
           file_sha256: string
@@ -668,6 +670,7 @@ export type Database = {
           id?: string
           household_id?: string
           account_id?: string
+          statement_upload_id?: string | null
           uploaded_by?: string
           file_name?: string
           file_sha256?: string
@@ -707,6 +710,13 @@ export type Database = {
             referencedColumns: ['id']
           },
           {
+            foreignKeyName: 'file_imports_statement_upload_id_fkey'
+            columns: ['statement_upload_id']
+            isOneToOne: false
+            referencedRelation: 'statement_uploads'
+            referencedColumns: ['id']
+          },
+          {
             foreignKeyName: 'file_imports_duplicate_of_file_import_id_fkey'
             columns: ['duplicate_of_file_import_id']
             isOneToOne: false
@@ -725,6 +735,104 @@ export type Database = {
             columns: ['uploaded_by']
             isOneToOne: false
             referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      statement_uploads: {
+        Row: {
+          id: string
+          household_id: string
+          uploaded_by: string
+          selected_account_id: string | null
+          file_name: string
+          file_sha256: string
+          mime_type: string
+          file_size_bytes: number
+          storage_bucket: string | null
+          storage_path: string | null
+          status: string
+          duplicate_of_statement_upload_id: string | null
+          parse_session_id: string | null
+          result_payload: Record<string, unknown> | null
+          error_code: string | null
+          error_message: string | null
+          parse_error: string | null
+          completed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          household_id: string
+          uploaded_by: string
+          selected_account_id?: string | null
+          file_name: string
+          file_sha256: string
+          mime_type: string
+          file_size_bytes: number
+          storage_bucket?: string | null
+          storage_path?: string | null
+          status?: string
+          duplicate_of_statement_upload_id?: string | null
+          parse_session_id?: string | null
+          result_payload?: Record<string, unknown> | null
+          error_code?: string | null
+          error_message?: string | null
+          parse_error?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          household_id?: string
+          uploaded_by?: string
+          selected_account_id?: string | null
+          file_name?: string
+          file_sha256?: string
+          mime_type?: string
+          file_size_bytes?: number
+          storage_bucket?: string | null
+          storage_path?: string | null
+          status?: string
+          duplicate_of_statement_upload_id?: string | null
+          parse_session_id?: string | null
+          result_payload?: Record<string, unknown> | null
+          error_code?: string | null
+          error_message?: string | null
+          parse_error?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'statement_uploads_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'statement_uploads_uploaded_by_fkey'
+            columns: ['uploaded_by']
+            isOneToOne: false
+            referencedRelation: 'user_profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'statement_uploads_selected_account_id_fkey'
+            columns: ['selected_account_id']
+            isOneToOne: false
+            referencedRelation: 'accounts'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'statement_uploads_duplicate_of_statement_upload_id_fkey'
+            columns: ['duplicate_of_statement_upload_id']
+            isOneToOne: false
+            referencedRelation: 'statement_uploads'
             referencedColumns: ['id']
           },
         ]
