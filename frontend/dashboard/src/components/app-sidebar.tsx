@@ -8,7 +8,6 @@ import {
   Coins,
   FolderTree,
   HandCoins,
-  Home,
   LayoutDashboard,
   LogOut,
   Receipt,
@@ -44,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { BrandLogo } from "@/components/brand-logo"
 
 interface AppSidebarProps {
   user: { id: string; email?: string }
@@ -131,11 +131,9 @@ export function AppSidebar({ user, profile }: AppSidebarProps) {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <Link href="/dashboard">
-                <div className="flex aspect-square size-9 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                  <Home className="size-4.5" />
-                </div>
+                <BrandLogo variant="mark" alt="" priority className="size-9 rounded-xl" />
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate text-base font-bold tracking-tight">WealthHouse</span>
+                  <span className="truncate text-base font-bold tracking-tight">Wealth House</span>
                   <span className="truncate text-xs text-muted-foreground">{householdName}</span>
                 </div>
               </Link>

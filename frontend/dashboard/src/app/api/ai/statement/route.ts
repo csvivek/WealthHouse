@@ -1,8 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { parseStatement } from '@/lib/ai/statement-parser'
 import type { ParsedStatementResult } from '@/lib/statements/helpers'
+import {
+  assertStatementStorageConfig,
+  ensureStatementsBucket,
+  getStatementsBucket,
+  mapStatementStorageErrorMessage,
+} from '@/lib/statements/config'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { ensureProfile } from '@/lib/supabase/ensure-profile'
 import {
   buildParsedAccountLabel,
@@ -14,10 +22,14 @@ import {
   stageRoutedTransactions,
 } from '@/lib/server/statement-import'
 import {
-  cleanupExpiredStatementParseSessions,
   createStatementParseSession,
   isStatementParseSessionSchemaError,
 } from '@/lib/server/statement-parse-sessions'
+import {
+  cleanupExpiredStatementSessionStorage,
+  deleteOriginalStatement,
+  uploadOriginalStatement,
+} from '@/lib/server/statement-storage'
 
 const PARSE_SESSION_MIGRATION_HINT = 'Apply supabase migration 006_statement_parse_sessions.sql to enable continue-without-reupload recovery.'
 
@@ -32,6 +44,23 @@ function buildRoutingFailureMessage(unmatchedLabels: string[]) {
 
 function buildSchemaMissingRecoveryMessage(baseMessage: string) {
   return `${baseMessage} Continue-without-reupload is temporarily unavailable because statement parse session storage is not deployed. ${PARSE_SESSION_MIGRATION_HINT}`
+}
+
+function buildStatementStorageUnavailableResponse(error: unknown) {
+  const message = error instanceof Error ? error.message : 'Failed to store original statement'
+  if (message === 'Statement storage configuration is missing.') {
+    return NextResponse.json({ error: message }, { status: 503 })
+  }
+
+  const mapped = mapStatementStorageErrorMessage(message)
+
+  return NextResponse.json(
+    {
+      error: mapped.userMessage,
+      details: message,
+    },
+    { status: mapped.status },
+  )
 }
 
 export async function POST(request: NextRequest) {
@@ -123,7 +152,7 @@ export async function POST(request: NextRequest) {
 
     let parseSessionStorageAvailable = true
     try {
-      await cleanupExpiredStatementParseSessions({
+      await cleanupExpiredStatementSessionStorage({
         supabase: db,
         householdId: profile.household_id,
         userId: user.id,
@@ -143,6 +172,38 @@ export async function POST(request: NextRequest) {
       candidateAccounts,
       manualAccount,
     })
+
+    let serviceSupabase: any = null
+    let statementBucket = ''
+    let storageReady = false
+    const ensureStatementStorageReady = async () => {
+      if (storageReady) {
+        return { serviceSupabase, statementBucket }
+      }
+
+      assertStatementStorageConfig()
+
+      serviceSupabase = createServiceSupabaseClient() as any
+      statementBucket = getStatementsBucket()
+      const bucketReady = await ensureStatementsBucket(serviceSupabase, statementBucket)
+      if (!bucketReady.ok) {
+        const mapped = mapStatementStorageErrorMessage(bucketReady.error?.message ?? 'Bucket not accessible')
+        throw Object.assign(new Error(bucketReady.error?.message ?? 'Bucket not accessible'), {
+          response: NextResponse.json(
+            {
+              error: 'Statement storage bucket is missing or inaccessible.',
+              code: mapped.code,
+              action: 'Create the `statements` bucket in Supabase storage and apply storage policies.',
+              details: bucketReady.error?.message ?? null,
+            },
+            { status: mapped.status === 500 ? 503 : mapped.status },
+          ),
+        })
+      }
+
+      storageReady = true
+      return { serviceSupabase, statementBucket }
+    }
 
     if (routed.unmatchedAccountDescriptors.length > 0) {
       const baseMessage = buildRoutingFailureMessage(routed.unmatchedAccountDescriptors.map((row) => row.label))
@@ -164,6 +225,31 @@ export async function POST(request: NextRequest) {
       }
 
       try {
+        await ensureStatementStorageReady()
+      } catch (error) {
+        if (error && typeof error === 'object' && 'response' in error) {
+          return (error as { response: NextResponse }).response
+        }
+
+        return buildStatementStorageUnavailableResponse(error)
+      }
+
+      const parseSessionStorageId = randomUUID()
+      let storedOriginal = null as { storageBucket: string; storagePath: string } | null
+      try {
+        storedOriginal = await uploadOriginalStatement({
+          supabase: serviceSupabase,
+          householdId: profile.household_id,
+          fileImportId: parseSessionStorageId,
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          bytes,
+        })
+      } catch (storageError) {
+        return buildStatementStorageUnavailableResponse(storageError)
+      }
+
+      try {
         const parseSessionId = await createStatementParseSession({
           supabase: db,
           householdId: profile.household_id,
@@ -176,6 +262,8 @@ export async function POST(request: NextRequest) {
           parsedPayload: parsed as unknown as Record<string, unknown>,
           unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors as unknown as Array<Record<string, unknown>>,
           suggestedExistingAccounts: routed.suggestedExistingAccounts as unknown as Array<Record<string, unknown>>,
+          storageBucket: storedOriginal.storageBucket,
+          storagePath: storedOriginal.storagePath,
         })
 
         return NextResponse.json(
@@ -191,6 +279,12 @@ export async function POST(request: NextRequest) {
           { status: 422 },
         )
       } catch (error) {
+        await deleteOriginalStatement({
+          supabase: serviceSupabase,
+          storageBucket: storedOriginal.storageBucket,
+          storagePath: storedOriginal.storagePath,
+        })
+
         if (!isStatementParseSessionSchemaError(error)) {
           throw error
         }
@@ -224,18 +318,56 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Could not determine which account this statement belongs to.' }, { status: 422 })
     }
 
-    const result = await stageRoutedTransactions({
-      supabase: db,
-      householdId: profile.household_id,
-      userId: user.id,
-      parsed,
-      routedTransactions: routed.routedTransactions,
-      fileName: file.name,
-      fileSha256,
-      mimeType: file.type || 'application/octet-stream',
-      fileSizeBytes: bytes.byteLength,
-      primaryAccount,
-    })
+    try {
+      await ensureStatementStorageReady()
+    } catch (error) {
+      if (error && typeof error === 'object' && 'response' in error) {
+        return (error as { response: NextResponse }).response
+      }
+
+      return buildStatementStorageUnavailableResponse(error)
+    }
+
+    const fileImportId = randomUUID()
+    let storedOriginal = null as { storageBucket: string; storagePath: string } | null
+    try {
+      storedOriginal = await uploadOriginalStatement({
+        supabase: serviceSupabase,
+        householdId: profile.household_id,
+        fileImportId,
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        bytes,
+      })
+    } catch (storageError) {
+      return buildStatementStorageUnavailableResponse(storageError)
+    }
+
+    let result
+    try {
+      result = await stageRoutedTransactions({
+        supabase: db,
+        householdId: profile.household_id,
+        userId: user.id,
+        parsed,
+        routedTransactions: routed.routedTransactions,
+        fileImportId,
+        fileName: file.name,
+        fileSha256,
+        mimeType: file.type || 'application/octet-stream',
+        fileSizeBytes: bytes.byteLength,
+        primaryAccount,
+        storageBucket: storedOriginal.storageBucket,
+        storagePath: storedOriginal.storagePath,
+      })
+    } catch (stageError) {
+      await deleteOriginalStatement({
+        supabase: serviceSupabase,
+        storageBucket: storedOriginal.storageBucket,
+        storagePath: storedOriginal.storagePath,
+      })
+      throw stageError
+    }
 
     return NextResponse.json(result)
   } catch (error) {

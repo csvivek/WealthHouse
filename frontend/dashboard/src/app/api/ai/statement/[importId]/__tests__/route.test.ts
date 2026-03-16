@@ -41,12 +41,15 @@ function createOrderChain(result: unknown, remainingOrders: number): unknown {
 function createSupabaseMock(options?: {
   statementImportsErrorMessage?: string
   linksErrorMessage?: string
+  includeStoredFile?: boolean
 }) {
   const fileImport = {
     id: 'import-1',
     uploaded_by: 'user-1',
     status: 'in_review',
     file_name: 'statement.pdf',
+    storage_bucket: options?.includeStoredFile === false ? null : 'statements',
+    storage_path: options?.includeStoredFile === false ? null : 'households/hh-1/statements/import-1/statement.pdf',
     institution_code: 'amex',
     raw_parse_result: {
       institution_name: 'Citibank Singapore Ltd',
@@ -311,6 +314,7 @@ describe('GET /api/ai/statement/[importId]', () => {
       parsedAccountType: 'loan',
       parsedProductName: 'CITIBANK READY CREDIT',
       matchedAccountLabel: 'Citibank Singapore Ltd — Citi Ready Credit',
+      sourceFileHref: '/api/ai/statement/import-1/file',
     }))
     expect(payload.accounts).toEqual([
       expect.objectContaining({
@@ -325,6 +329,7 @@ describe('GET /api/ai/statement/[importId]', () => {
     mockedCreateServerSupabaseClient.mockResolvedValueOnce(createSupabaseMock({
       statementImportsErrorMessage: 'column statement_imports.file_import_id does not exist',
       linksErrorMessage: 'relation "public.staging_transaction_links" does not exist',
+      includeStoredFile: false,
     }) as never)
     mockedCreateServiceSupabaseClient.mockReturnValue(createServiceSupabaseMock({
       uploaderEmailErrorMessage: 'permission denied for auth.admin',
@@ -349,6 +354,7 @@ describe('GET /api/ai/statement/[importId]', () => {
       displayName: 'Alex Example',
       email: null,
     })
+    expect(payload.import.sourceFileHref).toBeNull()
 
     const warnMessages = vi.mocked(console.warn).mock.calls.flat().map((value) => String(value))
     expect(warnMessages.some((message) => message.includes('Statement review links unavailable'))).toBe(false)

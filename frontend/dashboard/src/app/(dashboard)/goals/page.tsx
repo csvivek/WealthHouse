@@ -1,19 +1,24 @@
 import { Target } from 'lucide-react'
+import { ExecutiveEmptyState, ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent } from '@/components/ui/card'
 
 export default function GoalsPage() {
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold tracking-tight">Financial Goals</h1>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Net Worth Workspace"
+        title="Financial Goals"
+        description="Goals remain discoverable in the new shell even before the dedicated planning screens are built."
+      />
       <Card>
-        <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-          <Target className="mb-4 size-12 text-muted-foreground" />
-          <h2 className="text-lg font-semibold">Coming Soon</h2>
-          <p className="text-sm text-muted-foreground">
-            Goal tracking is planned for a future release.
-          </p>
+        <CardContent>
+          <ExecutiveEmptyState
+            icon={Target}
+            title="Goal tracking is coming soon"
+            description="The placeholder stays in the executive navigation so the route remains part of the end-state information architecture."
+          />
         </CardContent>
       </Card>
-    </div>
+    </ExecutivePage>
   )
 }

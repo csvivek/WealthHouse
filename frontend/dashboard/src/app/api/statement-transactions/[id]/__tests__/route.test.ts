@@ -291,6 +291,7 @@ function createServiceDbMock(params?: {
                     ? {
                         id: transaction.id,
                         txn_type: transaction.txn_type,
+                        amount: transaction.amount,
                         category_id: transaction.category_id ?? null,
                         account_id: transaction.account_id,
                       }
@@ -392,6 +393,14 @@ function createServiceDbMock(params?: {
             })
             return { error: null }
           },
+          update: (values: Record<string, unknown>) => ({
+            in: async (_column: string, linkIds: string[]) => {
+              for (const link of links) {
+                if (linkIds.includes(String(link.id))) Object.assign(link, values)
+              }
+              return { error: null }
+            },
+          }),
         }
       }
 
@@ -479,7 +488,7 @@ describe('PATCH /api/statement-transactions/[id]', () => {
     const payload = await response.json()
 
     expect(response.status).toBe(400)
-    expect(payload.error).toMatch(/internal transfer category/i)
+    expect(payload.error).toMatch(/transfer categories/i)
   })
 
   it('returns 400 for self-link, same-account, and same-direction validations', async () => {

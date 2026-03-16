@@ -1,16 +1,34 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, FolderPlus, Search } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronRight,
+  Eye,
+  Folder,
+  FolderPlus,
+  MoreHorizontal,
+  Plus,
+  Search,
+} from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
+import { CategoryColorDot } from '@/components/category-color-dot'
+import { CategoryIcon } from '@/components/category-icon'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Badge } from '@/components/ui/badge'
-import { CategoryColorDot } from '@/components/category-color-dot'
-import { CategoryIcon } from '@/components/category-icon'
-import { DATE_PERIOD_LABELS, type DatePeriod } from '@/lib/date-periods'
+import { cn } from '@/lib/utils'
 import { formatDate } from '@/lib/format'
 import { toast } from 'sonner'
 
@@ -56,6 +74,14 @@ type CategoryDetails = CategoryRow & {
   description?: string | null
 }
 
+type SummaryCard = {
+  testId: string
+  label: string
+  value: number
+  subtext: string
+  accentClassName: string
+}
+
 const PAYMENT_TYPE_ORDER: PaymentSubtype[] = ['expense', 'income', 'transfer']
 const PAYMENT_TYPE_LABELS: Record<PaymentSubtype, string> = {
   income: 'Income',
@@ -67,6 +93,19 @@ const RECEIPT_TYPE_FALLBACK = ['essentials', 'lifestyle', 'durables', 'health', 
 
 function asNullableText(value: unknown) {
   return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+function getPaymentSubtype(row: CategoryRow) {
+  const candidate = row.payment_subtype ?? row.type
+  return candidate === 'expense' || candidate === 'income' || candidate === 'transfer' ? candidate : null
+}
+
+function resolveAccentColor({ color_hex, color_token }: Pick<CategoryRow, 'color_hex' | 'color_token'>) {
+  if (color_hex) return color_hex
+  if (!color_token) return 'hsl(var(--primary) / 0.7)'
+  const token = color_token.trim()
+  if (token.startsWith('--')) return `var(${token})`
+  return `var(--color-${token}, var(--${token}, hsl(var(--primary) / 0.7)))`
 }
 
 function normalizeRow(value: unknown): CategoryRow | null {
@@ -142,14 +181,12 @@ function formatTypeLabel(value: string) {
 export default function CategoriesPage() {
   const [domain, setDomain] = useState<Domain>('payment')
   const [paymentSubtype, setPaymentSubtype] = useState<PaymentSubtype>('expense')
-  const [period, setPeriod] = useState<DatePeriod>('all_history')
-  const [status, setStatus] = useState<'all' | 'active' | 'inactive'>('all')
   const [searchInput, setSearchInput] = useState('')
-  const [search, setSearch] = useState('')
   const [rows, setRows] = useState<CategoryRow[]>([])
   const [groups, setGroups] = useState<CategoryGroup[]>([])
   const [ungrouped, setUngrouped] = useState<CategoryRow[]>([])
   const [loading, setLoading] = useState(false)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
   const [viewDetails, setViewDetails] = useState<CategoryDetails | null>(null)
   const [viewOpen, setViewOpen] = useState(false)
@@ -183,20 +220,11 @@ export default function CategoriesPage() {
   const [mergeTargetId, setMergeTargetId] = useState<string>('')
   const [mergeSaving, setMergeSaving] = useState(false)
 
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchInput.trim()), 300)
-    return () => clearTimeout(timer)
-  }, [searchInput])
-
   async function loadCategories() {
     setLoading(true)
     try {
       const params = new URLSearchParams({
         domain,
-        paymentSubtype,
-        period,
-        status,
-        search,
         view: 'grouped',
       })
       const response = await fetch(`/api/categories?${params.toString()}`, { cache: 'no-store' })
@@ -216,6 +244,14 @@ export default function CategoriesPage() {
       setRows(nextRows)
       setGroups(nextGroups)
       setUngrouped(nextUngrouped)
+      setCollapsedGroups((current) => {
+        const next = new Set<string>()
+        const validIds = new Set(nextGroups.map((group) => String(group.id)))
+        for (const id of current) {
+          if (validIds.has(id)) next.add(id)
+        }
+        return next
+      })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load categories')
     } finally {
@@ -225,36 +261,59 @@ export default function CategoriesPage() {
 
   useEffect(() => {
     void loadCategories()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [domain, paymentSubtype, period, status, search])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domain])
 
-  const visibleGroups = useMemo(() => {
+  const normalizedSearch = searchInput.trim().toLowerCase()
+
+  const activeGroups = useMemo(() => {
     return groups.filter((group) => {
       if (domain !== 'payment') return true
       return group.payment_subtype === paymentSubtype
     })
   }, [domain, groups, paymentSubtype])
 
+  const visibleGroups = useMemo(() => {
+    return activeGroups
+      .map((group) => ({
+        ...group,
+        visibleCategories: normalizedSearch
+          ? group.categories.filter((row) => row.name.toLowerCase().includes(normalizedSearch))
+          : group.categories,
+      }))
+      .filter((group) => group.visibleCategories.length > 0 || !normalizedSearch)
+  }, [activeGroups, normalizedSearch])
+
+  const visibleUngrouped = useMemo(() => {
+    const base = domain === 'payment'
+      ? ungrouped.filter((row) => getPaymentSubtype(row) === paymentSubtype)
+      : ungrouped
+
+    return normalizedSearch
+      ? base.filter((row) => row.name.toLowerCase().includes(normalizedSearch))
+      : base
+  }, [domain, normalizedSearch, paymentSubtype, ungrouped])
+
   const availableMoveTargets = useMemo(() => {
     if (!movingCategory) return []
-    return visibleGroups.filter((group) => group.id !== movingCategory.effective_group_id)
-  }, [movingCategory, visibleGroups])
+    return activeGroups.filter((group) => group.id !== movingCategory.effective_group_id)
+  }, [activeGroups, movingCategory])
 
   const deleteGroupTargets = useMemo(() => {
     if (!deletingGroup) return []
-    return visibleGroups.filter((group) => {
+    return activeGroups.filter((group) => {
       if (group.id === deletingGroup.id) return false
       if (domain !== 'payment') return true
       return group.payment_subtype === deletingGroup.payment_subtype
     })
-  }, [deletingGroup, domain, visibleGroups])
+  }, [activeGroups, deletingGroup, domain])
 
   const mergeTargets = useMemo(() => {
     if (!mergeRow) return []
-    const normalizedSearch = mergeSearch.trim().toLowerCase()
+    const normalizedMergeSearch = mergeSearch.trim().toLowerCase()
     return rows
       .filter((row) => String(row.id) !== String(mergeRow.id))
-      .filter((row) => !normalizedSearch || row.name.toLowerCase().includes(normalizedSearch))
+      .filter((row) => !normalizedMergeSearch || row.name.toLowerCase().includes(normalizedMergeSearch))
       .map((row) => ({
         row,
         compatible: domain === 'receipt' || row.type === mergeRow.type,
@@ -271,6 +330,61 @@ export default function CategoriesPage() {
       label: formatTypeLabel(value),
     }))
   }, [rows])
+
+  const categoryGroupOptions = useMemo(() => {
+    return activeGroups.filter((group) => {
+      if (domain !== 'payment') return true
+      return !categoryType || group.payment_subtype === categoryType
+    })
+  }, [activeGroups, categoryType, domain])
+
+  const summaryCards = useMemo<SummaryCard[]>(() => {
+    const mappedCategoryCount = rows.filter((row) => row.mappedCount > 0).length
+    const mappedRecordCount = rows.reduce((sum, row) => sum + row.mappedCount, 0)
+
+    return [
+      {
+        testId: 'stat-total-groups',
+        label: 'Total Groups',
+        value: groups.length,
+        subtext: domain === 'payment' ? 'Across payment subtypes' : 'Across receipt category sets',
+        accentClassName: 'text-amber-300',
+      },
+      {
+        testId: 'stat-total-categories',
+        label: 'Total Categories',
+        value: rows.length,
+        subtext: domain === 'payment' ? 'Expense, income, and transfer' : 'Household and inherited receipt categories',
+        accentClassName: 'text-sky-300',
+      },
+      {
+        testId: 'stat-mapped',
+        label: 'Mapped',
+        value: mappedCategoryCount,
+        subtext: `${mappedRecordCount} linked records`,
+        accentClassName: 'text-emerald-300',
+      },
+      {
+        testId: 'stat-unmapped',
+        label: 'Unmapped',
+        value: rows.length - mappedCategoryCount,
+        subtext: 'No linked records yet',
+        accentClassName: 'text-violet-300',
+      },
+    ]
+  }, [domain, groups.length, rows])
+
+  const hasVisibleResults = visibleGroups.length > 0 || visibleUngrouped.length > 0
+
+  function toggleGroupCard(groupId: number) {
+    setCollapsedGroups((current) => {
+      const next = new Set(current)
+      const key = String(groupId)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   function openCreateGroup(subtype?: PaymentSubtype) {
     setEditingGroup(null)
@@ -384,7 +498,7 @@ export default function CategoriesPage() {
   }
 
   async function moveGroup(group: CategoryGroup, direction: 'up' | 'down') {
-    const peerGroups = visibleGroups
+    const peerGroups = activeGroups
       .filter((item) => (domain === 'payment' ? item.payment_subtype === group.payment_subtype : true))
       .sort((left, right) => left.sort_order - right.sort_order)
     const index = peerGroups.findIndex((item) => item.id === group.id)
@@ -429,7 +543,7 @@ export default function CategoriesPage() {
             type: categoryType || null,
             effective_group_id: categoryGroupId ? Number(categoryGroupId) : null,
             groupId: categoryGroupId ? Number(categoryGroupId) : null,
-            groupName: visibleGroups.find((group) => String(group.id) === categoryGroupId)?.name ?? null,
+            groupName: activeGroups.find((group) => String(group.id) === categoryGroupId)?.name ?? null,
           }),
         },
       )
@@ -527,70 +641,181 @@ export default function CategoriesPage() {
     }
   }
 
-  const categoryGroupOptions = useMemo(() => {
-    return visibleGroups.filter((group) => {
-      if (domain !== 'payment') return true
-      return !categoryType || group.payment_subtype === categoryType
-    })
-  }, [categoryType, domain, visibleGroups])
-
   function renderCategoryRow(row: CategoryRow) {
+    const typeLabel = domain === 'payment'
+      ? PAYMENT_TYPE_LABELS[getPaymentSubtype(row) ?? 'expense']
+      : formatTypeLabel(row.type || 'custom')
+
     return (
-      <div key={String(row.id)} className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <CategoryColorDot color_token={row.color_token} color_hex={row.color_hex} className="size-2.5" />
+      <div
+        key={String(row.id)}
+        data-testid={`category-row-${String(row.id)}`}
+        className="group/row flex items-center gap-3 bg-background/55 px-4 py-3 transition hover:bg-background/80"
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <CategoryColorDot color_token={row.color_token} color_hex={row.color_hex} className="size-2.5" />
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-card/70">
             <CategoryIcon icon_key={row.icon_key} className="size-4" />
-            <span className="font-medium">{row.name}</span>
-            <Badge variant={row.status === 'active' ? 'default' : 'outline'}>{row.status}</Badge>
-            {domain === 'receipt' && (
-              <Badge variant={row.isGlobal ? 'secondary' : 'outline'}>
-                {row.isGlobal ? 'Global' : 'Household'}
-              </Badge>
-            )}
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>{row.type || '-'}</span>
-            <span>Mapped {row.mappedCount}</span>
-            {row.updated_at && <span>Updated {formatDate(row.updated_at)}</span>}
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-foreground">{row.name}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+              <span>{typeLabel}</span>
+              {row.updated_at ? <span>Updated {formatDate(row.updated_at)}</span> : null}
+            </div>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={() => void openView(row)}>View</Button>
-          <Button size="sm" variant="outline" onClick={() => openEditCategory(row)}>Edit</Button>
-          <Button size="sm" variant="outline" onClick={() => { setMovingCategory(row); setMoveTargetGroupId(''); setMoveDialogOpen(true) }}>Move</Button>
-          <Button size="sm" variant="outline" onClick={() => { setMergeRow(row); setMergeSearch(''); setMergeTargetId(''); setMergeOpen(true) }}>Merge</Button>
-          <Button size="sm" variant="destructive" onClick={() => void runDeleteCategory(row)}>Delete</Button>
+
+        <div className="ml-auto flex items-center gap-2">
+          <span
+            className={cn(
+              'text-[11px] font-medium',
+              row.mappedCount > 0 ? 'text-emerald-300' : 'text-muted-foreground',
+            )}
+          >
+            {row.mappedCount > 0 ? `${row.mappedCount} mapped` : 'Unmapped'}
+          </span>
+          <div className="flex items-center gap-1 opacity-100 transition md:opacity-0 md:group-hover/row:opacity-100 md:group-focus-within/row:opacity-100">
+            <button
+              type="button"
+              className="rounded-md border border-transparent px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:border-border/60 hover:bg-card hover:text-foreground"
+              onClick={() => openEditCategory(row)}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-transparent px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:border-border/60 hover:bg-card hover:text-foreground"
+              onClick={() => {
+                setMergeRow(row)
+                setMergeSearch('')
+                setMergeTargetId('')
+                setMergeOpen(true)
+              }}
+            >
+              Merge
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-transparent px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => void runDeleteCategory(row)}
+            >
+              Remove
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 rounded-md text-muted-foreground hover:bg-card hover:text-foreground"
+                  aria-label={`More actions for ${row.name}`}
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onClick={() => void openView(row)}>
+                  <Eye className="size-4" />
+                  View details
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setMovingCategory(row)
+                    setMoveTargetGroupId('')
+                    setMoveDialogOpen(true)
+                  }}
+                >
+                  Move category
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </div>
     )
   }
 
-  function renderGroupCard(group: CategoryGroup) {
+  function renderGroupCard(group: CategoryGroup & { visibleCategories: CategoryRow[] }) {
+    const isCollapsed = collapsedGroups.has(String(group.id))
+    const primaryCategory = group.categories[0] ?? null
+    const accentColor = primaryCategory ? resolveAccentColor(primaryCategory) : 'hsl(var(--primary) / 0.72)'
+    const mappedCategories = group.categories.filter((row) => row.mappedCount > 0).length
+    const coverage = group.categories.length > 0 ? Math.round((mappedCategories / group.categories.length) * 100) : 0
+    const categoryCountLabel = normalizedSearch
+      ? `${group.visibleCategories.length} of ${group.categories.length} categories`
+      : `${group.categories.length} categories`
+
     return (
-      <div key={group.id} className="rounded-lg border bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold">{group.name}</h3>
-              <Badge variant="secondary">{group.category_count}</Badge>
-              {group.is_archived && <Badge variant="outline">Archived</Badge>}
+      <section
+        key={group.id}
+        data-testid={`group-card-${group.id}`}
+        className="group/card overflow-hidden rounded-[1.4rem] border border-border/70 bg-[linear-gradient(180deg,rgba(16,23,35,0.96),rgba(10,15,25,0.98))] shadow-[0_20px_70px_rgba(3,7,18,0.26)]"
+      >
+        <div className="flex items-start gap-3 border-b border-border/60 px-4 py-4 sm:px-5" style={{ borderLeft: `3px solid ${accentColor}` }}>
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-start gap-3 text-left"
+            onClick={() => toggleGroupCard(group.id)}
+            aria-expanded={!isCollapsed}
+          >
+            <ChevronRight
+              className={cn(
+                'mt-2 size-4 shrink-0 text-muted-foreground transition-transform',
+                !isCollapsed && 'rotate-90',
+              )}
+            />
+            <div
+              className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-background/70"
+              style={{ boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${accentColor} 40%, transparent)` }}
+            >
+              {primaryCategory ? (
+                <CategoryIcon icon_key={primaryCategory.icon_key} className="size-4" />
+              ) : (
+                <Folder className="size-4 text-muted-foreground" />
+              )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {domain === 'payment' ? `${formatTypeLabel(group.payment_subtype || 'expense')} group` : 'Receipt group'}
-            </p>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="truncate text-base font-semibold tracking-[-0.02em] text-foreground">{group.name}</h2>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {domain === 'payment'
+                  ? `${formatTypeLabel(group.payment_subtype || 'expense')} group`
+                  : 'Receipt group'}
+              </p>
+            </div>
+          </button>
+
+          <div className="hidden min-w-[140px] flex-col items-end gap-2 sm:flex">
+            <span className="rounded-full border border-border/70 bg-background/60 px-2.5 py-1 text-[11px] text-muted-foreground">
+              {categoryCountLabel}
+            </span>
+            <div className="flex w-full items-center justify-end gap-2">
+              <div className="h-1.5 w-20 overflow-hidden rounded-full bg-background/80">
+                <div className="h-full rounded-full" style={{ width: `${coverage}%`, backgroundColor: accentColor }} />
+              </div>
+              <span className="min-w-8 text-right text-[11px] text-muted-foreground">{coverage}%</span>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => openCreateCategory(group)}>Create Category</Button>
-            <Button size="icon" variant="outline" onClick={() => void moveGroup(group, 'up')}><ArrowUp className="size-4" /></Button>
-            <Button size="icon" variant="outline" onClick={() => void moveGroup(group, 'down')}><ArrowDown className="size-4" /></Button>
-            <Button size="sm" variant="outline" onClick={() => openEditGroup(group)}>Rename</Button>
-            <Button size="sm" variant="outline" onClick={() => void toggleArchiveGroup(group)}>
-              {group.is_archived ? 'Restore' : 'Archive'}
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
+
+          <div className="flex items-center gap-1 opacity-100 transition md:opacity-0 md:group-hover/card:opacity-100 md:group-focus-within/card:opacity-100">
+            <button
+              type="button"
+              className="rounded-md border border-transparent px-2 py-1 text-[11px] font-medium text-amber-300 transition hover:border-amber-400/30 hover:bg-amber-400/10"
+              onClick={() => openCreateCategory(group)}
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-transparent px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:border-border/60 hover:bg-card hover:text-foreground"
+              onClick={() => openEditGroup(group)}
+            >
+              Rename
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-transparent px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
               onClick={() => {
                 setDeletingGroup(group)
                 setDeleteTargetGroupId('')
@@ -598,145 +823,161 @@ export default function CategoriesPage() {
               }}
             >
               Delete
-            </Button>
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 rounded-md text-muted-foreground hover:bg-card hover:text-foreground"
+                  aria-label={`More actions for group ${group.name}`}
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onClick={() => void moveGroup(group, 'up')}>
+                  <ArrowUp className="size-4" />
+                  Move up
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void moveGroup(group, 'down')}>
+                  <ArrowDown className="size-4" />
+                  Move down
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => void toggleArchiveGroup(group)}>
+                  {group.is_archived ? 'Restore group' : 'Archive group'}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
-        <div className="space-y-3 p-4">
-          {group.categories.length === 0 ? (
-            <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              No categories in this group yet.
-            </div>
-          ) : (
-            group.categories.map(renderCategoryRow)
-          )}
-        </div>
-      </div>
+
+        {!isCollapsed ? (
+          <div className="p-4 sm:p-5">
+            {group.visibleCategories.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border/70 bg-background/30 px-4 py-5 text-sm text-muted-foreground">
+                No categories in this group yet.
+              </div>
+            ) : (
+              <div className="grid overflow-hidden rounded-xl border border-border/70 bg-border/60 md:grid-cols-2">
+                {group.visibleCategories.map(renderCategoryRow)}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </section>
     )
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">Category Management</h1>
-        <p className="text-sm text-muted-foreground">
-          Manage categories under editable household groups for payment and receipt domains.
-        </p>
-      </div>
+    <ExecutivePage className="space-y-6">
+      <ExecutivePageHeader
+        eyebrow="Manage Workspace"
+        title="Category Management"
+        description="Organize payment and receipt categories with grouped maintenance controls, domain-level summaries, and denser inline editing."
+      />
 
-      <div className="flex flex-wrap gap-3">
-        <Select value={domain} onValueChange={(value: Domain) => setDomain(value)}>
-          <SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="payment">Payment categories</SelectItem>
-            <SelectItem value="receipt">Receipt categories</SelectItem>
-          </SelectContent>
-        </Select>
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {summaryCards.map((card) => (
+          <div
+            key={card.testId}
+            data-testid={card.testId}
+            className="rounded-[1.35rem] border border-border/70 bg-[linear-gradient(180deg,rgba(18,26,40,0.94),rgba(11,17,27,0.98))] px-4 py-4 shadow-[0_18px_60px_rgba(3,7,18,0.22)]"
+          >
+            <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">{card.label}</p>
+            <p data-testid={`${card.testId}-value`} className={cn('mt-3 text-3xl font-semibold tracking-[-0.04em]', card.accentClassName)}>
+              {card.value}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{card.subtext}</p>
+          </div>
+        ))}
+      </section>
 
-        {domain === 'payment' && (
-          <Select value={paymentSubtype} onValueChange={(value: PaymentSubtype) => setPaymentSubtype(value)}>
-            <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
+      <section className="rounded-[1.5rem] border border-border/70 bg-[linear-gradient(180deg,rgba(16,23,35,0.96),rgba(10,15,25,0.98))] p-4 shadow-[0_20px_70px_rgba(3,7,18,0.24)] sm:p-5">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+          <Select value={domain} onValueChange={(value: Domain) => setDomain(value)}>
+            <SelectTrigger className="w-full xl:w-[220px]">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
-              {PAYMENT_TYPE_ORDER.map((type) => (
-                <SelectItem key={type} value={type}>
-                  {PAYMENT_TYPE_LABELS[type]}
-                </SelectItem>
-              ))}
+              <SelectItem value="payment">Payment categories</SelectItem>
+              <SelectItem value="receipt">Receipt categories</SelectItem>
             </SelectContent>
           </Select>
-        )}
 
-        <Select value={period} onValueChange={(value: DatePeriod) => setPeriod(value)}>
-          <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {Object.entries(DATE_PERIOD_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <div className="relative w-full xl:max-w-sm xl:flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Search categories..."
+              className="pl-9"
+            />
+          </div>
 
-        <Select value={status} onValueChange={(value: 'all' | 'active' | 'inactive') => setStatus(value)}>
-          <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All status</SelectItem>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="inactive">Inactive</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-          <Input
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Search categories"
-            className="w-[220px] pl-8"
-          />
+          <Button
+            variant="outline"
+            className="w-full justify-center border-amber-400/30 bg-amber-400/10 text-amber-100 hover:bg-amber-400/15 hover:text-amber-50 xl:ml-auto xl:w-auto"
+            onClick={() => openCreateGroup(domain === 'payment' ? paymentSubtype : undefined)}
+          >
+            <FolderPlus className="mr-2 size-4" />
+            Create Group
+          </Button>
         </div>
 
-        <Button variant="outline" onClick={() => openCreateGroup(domain === 'payment' ? paymentSubtype : undefined)}>
-          <FolderPlus className="mr-2 size-4" />
-          Create Group
-        </Button>
-      </div>
+        {domain === 'payment' ? (
+          <div className="mt-4">
+            <Tabs value={paymentSubtype} onValueChange={(value) => setPaymentSubtype(value as PaymentSubtype)}>
+              <TabsList className="h-auto w-full justify-start rounded-xl border border-border/70 bg-background/55 p-1 sm:w-fit">
+                {PAYMENT_TYPE_ORDER.map((type) => (
+                  <TabsTrigger key={type} value={type} className="rounded-lg px-4 py-2">
+                    {PAYMENT_TYPE_LABELS[type]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+        ) : null}
+      </section>
 
-      {loading && (
-        <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading categories...</div>
-      )}
-
-      {!loading && domain === 'payment' && (
-        <div className="space-y-4">
-          <Tabs value={paymentSubtype} onValueChange={(value) => setPaymentSubtype(value as PaymentSubtype)}>
-            <TabsList>
-              {PAYMENT_TYPE_ORDER.map((type) => (
-                <TabsTrigger key={type} value={type}>
-                  {PAYMENT_TYPE_LABELS[type]}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">{PAYMENT_TYPE_LABELS[paymentSubtype]}</h2>
-                <p className="text-xs text-muted-foreground">
-                  Editable parent groups for {PAYMENT_TYPE_LABELS[paymentSubtype].toLowerCase()}.
-                </p>
-              </div>
-            </div>
-            <div className="space-y-4">
-              {visibleGroups.map(renderGroupCard)}
-              {visibleGroups.length === 0 && (
-                <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                  No groups found for the current filters.
-                </div>
-              )}
-            </div>
-          </section>
+      {loading ? (
+        <div className="rounded-[1.35rem] border border-border/70 bg-card/90 px-6 py-10 text-sm text-muted-foreground">
+          Loading categories...
         </div>
-      )}
-
-      {!loading && domain === 'receipt' && (
+      ) : hasVisibleResults ? (
         <div className="space-y-4">
           {visibleGroups.map(renderGroupCard)}
-          {visibleGroups.length === 0 && (
-            <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-              No groups found for the current filters.
-            </div>
-          )}
-        </div>
-      )}
 
-      {!loading && ungrouped.length > 0 && (
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-lg font-semibold">Ungrouped</h2>
-            <p className="text-xs text-muted-foreground">Fallback categories without a persisted group assignment yet.</p>
-          </div>
-          <div className="space-y-3 rounded-lg border bg-card p-4">
-            {ungrouped.map(renderCategoryRow)}
-          </div>
-        </section>
+          {visibleUngrouped.length > 0 ? (
+            <section className="overflow-hidden rounded-[1.4rem] border border-border/70 bg-[linear-gradient(180deg,rgba(16,23,35,0.96),rgba(10,15,25,0.98))] shadow-[0_20px_70px_rgba(3,7,18,0.24)]">
+              <div className="flex items-center justify-between border-b border-border/60 px-4 py-4 sm:px-5">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 items-center justify-center rounded-xl border border-border/70 bg-background/70">
+                    <Folder className="size-4 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold tracking-[-0.02em] text-foreground">Ungrouped</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">Fallback categories without a persisted group assignment.</p>
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => openCreateCategory()}>
+                  <Plus className="mr-1 size-3.5" />
+                  Add
+                </Button>
+              </div>
+              <div className="p-4 sm:p-5">
+                <div className="grid overflow-hidden rounded-xl border border-border/70 bg-border/60 md:grid-cols-2">
+                  {visibleUngrouped.map(renderCategoryRow)}
+                </div>
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-[1.35rem] border border-dashed border-border/70 bg-card/80 px-6 py-10 text-sm text-muted-foreground">
+          {normalizedSearch ? 'No categories match the current search.' : 'No groups found for the current domain.'}
+        </div>
       )}
 
       <Dialog open={viewOpen} onOpenChange={setViewOpen}>
@@ -777,7 +1018,7 @@ export default function CategoriesPage() {
               <label className="mb-1 block text-sm text-muted-foreground">Name</label>
               <Input value={groupName} onChange={(event) => setGroupName(event.target.value)} />
             </div>
-            {domain === 'payment' && (
+            {domain === 'payment' ? (
               <div>
                 <label className="mb-1 block text-sm text-muted-foreground">Subtype</label>
                 <Select value={groupSubtype} onValueChange={(value: PaymentSubtype) => setGroupSubtype(value)}>
@@ -789,7 +1030,7 @@ export default function CategoriesPage() {
                   </SelectContent>
                 </Select>
               </div>
-            )}
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setGroupDialogOpen(false)}>Cancel</Button>
@@ -885,7 +1126,7 @@ export default function CategoriesPage() {
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm font-medium">{deletingGroup?.name ?? '-'}</p>
-            {Boolean(deletingGroup?.category_count) && (
+            {Boolean(deletingGroup?.category_count) ? (
               <Select value={deleteTargetGroupId} onValueChange={setDeleteTargetGroupId}>
                 <SelectTrigger><SelectValue placeholder="Select target group" /></SelectTrigger>
                 <SelectContent>
@@ -896,7 +1137,7 @@ export default function CategoriesPage() {
                   ))}
                 </SelectContent>
               </Select>
-            )}
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteGroupOpen(false)}>Cancel</Button>
@@ -925,9 +1166,9 @@ export default function CategoriesPage() {
               placeholder="Search target category"
             />
             <div className="max-h-56 space-y-2 overflow-auto rounded-md border p-2">
-              {mergeTargets.length === 0 && (
+              {mergeTargets.length === 0 ? (
                 <p className="p-2 text-sm text-muted-foreground">No target categories found.</p>
-              )}
+              ) : null}
               {mergeTargets.map(({ row, compatible }) => {
                 const selected = mergeTargetId === String(row.id)
                 return (
@@ -943,7 +1184,9 @@ export default function CategoriesPage() {
                       <CategoryIcon icon_key={row.icon_key} className="size-3.5" />
                       {row.name}
                       <span className="text-xs text-muted-foreground">({row.type || '-'})</span>
-                      {row.effective_group_name && <span className="text-xs text-muted-foreground">· {row.effective_group_name}</span>}
+                      {row.effective_group_name ? (
+                        <span className="text-xs text-muted-foreground">· {row.effective_group_name}</span>
+                      ) : null}
                     </span>
                     {!compatible ? (
                       <span className="text-xs text-muted-foreground">Incompatible type</span>
@@ -963,6 +1206,6 @@ export default function CategoriesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ExecutivePage>
   )
 }

@@ -1,57 +1,61 @@
 'use client'
 
 import Link from 'next/link'
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
-import * as d3 from 'd3'
-import {
-  ArrowLeftRight,
-  ArrowRight,
-  CreditCard,
-  Landmark,
-  PiggyBank,
-  Receipt,
-  ShoppingCart,
-  Wallet,
-} from 'lucide-react'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { type CSSProperties, useEffect, useMemo, useState } from 'react'
+import { Wallet } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
-import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
+import { formatCurrency, formatCurrencyCompact, formatDateShort } from '@/lib/format'
 import {
-  formatCurrency,
-  formatCurrencyCompact,
-  formatDateShort,
-} from '@/lib/format'
-import {
-  OverviewFilterBar,
-  type OverviewFilters,
-} from '@/components/dashboard/OverviewFilterBar'
-import {
-  OverviewTabs,
-  type OverviewTabValue,
-} from '@/components/dashboard/OverviewTabs'
-import { DATE_PERIOD_LABELS, resolveDatePeriodRange } from '@/lib/date-periods'
-import { CategoryBadge } from '@/components/category-badge'
-import { AccountPortfolioSection } from '@/components/dashboard/AccountPortfolioSection'
-import { EmptyState } from '@/components/empty-state'
+  DashboardPeriodPills,
+  DashboardScopeDrawer,
+  ExecutiveMetricCard,
+  NetWorthTrendCard,
+  SpendBreakdownCard,
+  AccountSnapshotCard,
+  RecentTransactionLedger,
+  type RecentTransactionLedgerItem,
+} from '@/components/dashboard/executive'
 import { useDashboardAccounts } from '@/hooks/useDashboardAccounts'
 import {
-  computeCashFlowData,
+  buildExecutivePeriodSummary,
+  buildExecutiveSpendBreakdown,
+  buildNetWorthProxySeries,
+  buildPendingAdvancesSummary,
+} from '@/lib/dashboard-executive'
+import {
   DEFAULT_OVERVIEW_FILTERS,
   deriveOverviewFilterOptions,
   isDefaultOverviewFilterSelection,
   resolveScopedCategoryIds,
   type OverviewCategory,
 } from '@/lib/overview-filters'
+import { resolveDatePeriodRange, type DatePeriod } from '@/lib/date-periods'
 import { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
+
+const EXECUTIVE_THEME_STYLE: CSSProperties = {
+  '--dashboard-bg': '#0B0F1A',
+  '--dashboard-surface': '#111827',
+  '--dashboard-surface-2': '#172033',
+  '--dashboard-border': 'rgba(59, 74, 99, 0.46)',
+  '--dashboard-border-strong': 'rgba(78, 95, 122, 0.78)',
+  '--dashboard-accent': '#C9A84C',
+  '--dashboard-accent-dim': 'rgba(201, 168, 76, 0.16)',
+  '--dashboard-accent-glow': 'rgba(201, 168, 76, 0.44)',
+  '--dashboard-success': '#2DD4BF',
+  '--dashboard-danger': '#F87171',
+  '--dashboard-info': '#60A5FA',
+  '--dashboard-text': '#E2EAF4',
+  '--dashboard-text-dim': '#8896AA',
+  '--dashboard-chart-1': '#C9A84C',
+  '--dashboard-chart-2': '#2DD4BF',
+  '--dashboard-chart-3': '#60A5FA',
+  '--dashboard-chart-4': '#F59E0B',
+  '--dashboard-chart-5': '#A78BFA',
+} as CSSProperties
 
 interface Account {
   id: string
@@ -59,7 +63,6 @@ interface Account {
   product_name: string
   nickname: string | null
   currency: string
-  is_active: boolean
 }
 
 interface StatementTransaction {
@@ -69,11 +72,11 @@ interface StatementTransaction {
   txn_type: string
   merchant_normalized: string | null
   merchant_raw: string | null
-  merchant: { name: string | null } | null
+  merchant?: { name: string | null } | null
   category_id: number | null
   description: string | null
   currency: string
-  created_at: string
+  account_id: string
 }
 
 interface CategoryWithHierarchy extends OverviewCategory {
@@ -85,22 +88,6 @@ interface CategoryWithHierarchy extends OverviewCategory {
   payment_subtype: string | null
 }
 
-interface ReceiptRow {
-  id: string
-  receipt_datetime: string | null
-  merchant_raw: string
-  merchant: { name: string | null } | null
-  total_amount: number
-  suggested_account_id: string | null
-}
-
-interface CardRow {
-  id: string
-  account_id: string
-  card_name: string
-  total_outstanding: number | null
-}
-
 interface AssetBalance {
   id: string
   account_id: string
@@ -109,9 +96,24 @@ interface AssetBalance {
   assets: { symbol: string; name: string | null; asset_type: string } | null
 }
 
-interface AssetAllocationDataPoint {
-  label: string
-  value: number
+interface AdvanceSummaryRow {
+  status: string
+  expected_recovery_amount: number
+  counterparties: { name: string | null } | null
+}
+
+interface AssetBalanceRow {
+  id: string
+  account_id: string
+  asset_id: string
+  balance: number
+  assets: Array<{ symbol: string; name: string | null; asset_type: string }> | null
+}
+
+interface AdvanceSummaryQueryRow {
+  status: string
+  expected_recovery_amount: number
+  counterparties: Array<{ name: string | null }> | null
 }
 
 function describeDashboardLoadError(error: unknown): string {
@@ -135,23 +137,6 @@ function describeDashboardLoadError(error: unknown): string {
   }
 
   return 'Failed to load dashboard data.'
-}
-
-function getChartColor(index: number, fallback: string) {
-  if (typeof window === 'undefined') return fallback
-  const value = getComputedStyle(document.documentElement)
-    .getPropertyValue(`--chart-${index}`)
-    .trim()
-  return value ? `oklch(${value})` : fallback
-}
-
-function toMonthKey(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-}
-
-function formatSignedCurrency(value: number, currency: string) {
-  if (value === 0) return formatCurrency(0, currency)
-  return `${value > 0 ? '+' : '-'}${formatCurrency(Math.abs(value), currency)}`
 }
 
 function isTransferLikeTransaction(
@@ -188,359 +173,79 @@ function isPortfolioSummaryUsable(account: {
   )
 }
 
-function ChartSectionSkeleton() {
-  return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <Card className="lg:col-span-2">
-        <CardHeader>
-          <Skeleton className="h-5 w-32" />
-          <Skeleton className="h-4 w-56" />
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-[320px] w-full" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-5 w-36" />
-          <Skeleton className="h-4 w-40" />
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-[320px] w-full" />
-        </CardContent>
-      </Card>
-    </div>
-  )
+function humanizeAccountType(accountType: string) {
+  return accountType
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
-function RecentTransactionsSkeleton() {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4">
-        <div className="space-y-2">
-          <Skeleton className="h-5 w-40" />
-          <Skeleton className="h-4 w-48" />
-        </div>
-        <Skeleton className="h-9 w-24" />
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="flex items-center justify-between rounded-lg border px-3 py-3">
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-40" />
-              <Skeleton className="h-3 w-24" />
-            </div>
-            <Skeleton className="h-4 w-20" />
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-function MetricCard({
+function EmptyDashboardCard({
   title,
-  value,
   description,
-  icon: Icon,
-  valueClassName,
+  action,
 }: {
   title: string
-  value: string
-  description: ReactNode
-  icon: typeof Landmark
-  valueClassName?: string
+  description: string
+  action: { label: string; href: string }
 }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription className="flex items-center gap-2 text-sm">
-          <Icon className="size-4" />
-          {title}
-        </CardDescription>
-        <CardTitle className={cn('text-3xl font-bold tabular-nums', valueClassName)}>
-          {value}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="text-xs text-muted-foreground">{description}</div>
+    <Card className="border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,rgba(17,24,39,0.94),rgba(12,18,31,0.98))] shadow-none">
+      <CardContent className="flex flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+        <div className="rounded-full border border-[color:var(--dashboard-border)] bg-[color:var(--dashboard-surface-2)] p-4">
+          <Wallet className="size-8 text-[color:var(--dashboard-text-dim)]" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-lg font-semibold text-[color:var(--dashboard-text)]">{title}</h2>
+          <p className="max-w-lg text-sm text-[color:var(--dashboard-text-dim)]">{description}</p>
+        </div>
+        <Button asChild className="bg-[color:var(--dashboard-accent)] text-[color:var(--dashboard-bg)] hover:bg-[color:var(--dashboard-accent)]/90">
+          <Link href={action.href}>{action.label}</Link>
+        </Button>
       </CardContent>
     </Card>
   )
 }
 
-function CashFlowChart({ data }: { data: ReturnType<typeof computeCashFlowData> }) {
-  const svgRef = useRef<SVGSVGElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const legendColors = useMemo(
-    () => [getChartColor(1, '#22c55e'), getChartColor(2, '#4f46e5')],
-    [],
-  )
-
-  useEffect(() => {
-    if (!svgRef.current || !containerRef.current) return
-
-    const draw = () => {
-      const container = containerRef.current
-      if (!container) return
-
-      const width = container.clientWidth
-      const height = 280
-      const margin = { top: 20, right: 20, bottom: 40, left: 60 }
-      const innerWidth = width - margin.left - margin.right
-      const innerHeight = height - margin.top - margin.bottom
-
-      const svg = d3
-        .select(svgRef.current)
-        .attr('width', width)
-        .attr('height', height)
-
-      svg.selectAll('*').remove()
-
-      const maxValue = d3.max(data, (point) => Math.max(point.income, point.expenses)) ?? 0
-
-      if (maxValue === 0) {
-        svg
-          .append('text')
-          .attr('x', width / 2)
-          .attr('y', height / 2)
-          .attr('text-anchor', 'middle')
-          .attr('fill', 'currentColor')
-          .style('font-size', '14px')
-          .text('No cash flow data yet')
-        return
-      }
-
-      const chartGroup = svg
-        .append('g')
-        .attr('transform', `translate(${margin.left},${margin.top})`)
-
-      const x0 = d3
-        .scaleBand()
-        .domain(data.map((point) => point.month))
-        .rangeRound([0, innerWidth])
-        .paddingInner(0.3)
-        .paddingOuter(0.15)
-
-      const x1 = d3
-        .scaleBand()
-        .domain(['income', 'expenses'])
-        .rangeRound([0, x0.bandwidth()])
-        .padding(0.08)
-
-      const y = d3
-        .scaleLinear()
-        .domain([0, maxValue * 1.1])
-        .rangeRound([innerHeight, 0])
-
-      const axisColorValue = getComputedStyle(document.documentElement)
-        .getPropertyValue('--muted-foreground')
-        .trim()
-      const axisColor = axisColorValue ? `oklch(${axisColorValue})` : '#888'
-
-      chartGroup
-        .append('g')
-        .attr('transform', `translate(0,${innerHeight})`)
-        .call(d3.axisBottom(x0).tickSize(0).tickPadding(10))
-        .call((selection) => selection.select('.domain').remove())
-        .selectAll('text')
-        .attr('fill', axisColor)
-        .style('font-size', '12px')
-
-      chartGroup
-        .append('g')
-        .call(
-          d3
-            .axisLeft(y)
-            .ticks(5)
-            .tickFormat((value) => `$${(value as number) / 1000}k`)
-            .tickSize(-innerWidth),
-        )
-        .call((selection) => selection.select('.domain').remove())
-        .call((selection) =>
-          selection
-            .selectAll('.tick line')
-            .attr('stroke', axisColor)
-            .attr('stroke-opacity', 0.1),
-        )
-        .selectAll('text')
-        .attr('fill', axisColor)
-        .style('font-size', '12px')
-
-      const monthGroups = chartGroup
-        .selectAll('.month')
-        .data(data)
-        .join('g')
-        .attr('transform', (point) => `translate(${x0(point.month)},0)`)
-
-      monthGroups
-        .append('rect')
-        .attr('x', () => x1('income') ?? 0)
-        .attr('y', (point) => y(point.income))
-        .attr('width', x1.bandwidth())
-        .attr('height', (point) => innerHeight - y(point.income))
-        .attr('rx', 4)
-        .attr('fill', legendColors[0])
-
-      monthGroups
-        .append('rect')
-        .attr('x', () => x1('expenses') ?? 0)
-        .attr('y', (point) => y(point.expenses))
-        .attr('width', x1.bandwidth())
-        .attr('height', (point) => innerHeight - y(point.expenses))
-        .attr('rx', 4)
-        .attr('fill', legendColors[1])
-    }
-
-    draw()
-
-    const observer = new ResizeObserver(() => draw())
-    observer.observe(containerRef.current)
-    return () => observer.disconnect()
-  }, [data, legendColors])
-
+function MetricSkeleton() {
   return (
-    <div ref={containerRef} className="w-full">
-      <svg ref={svgRef} className="w-full" />
-      <div className="flex items-center justify-center gap-6 pt-2 text-sm text-muted-foreground">
-        <div className="flex items-center gap-2">
-          <span className="inline-block h-3 w-3 rounded-sm" style={{ background: legendColors[0] }} />
-          Income
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-block h-3 w-3 rounded-sm" style={{ background: legendColors[1] }} />
-          Expenses
-        </div>
-      </div>
-    </div>
+    <Card className="border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,rgba(17,24,39,0.94),rgba(12,18,31,0.98))] shadow-none">
+      <CardHeader className="space-y-3">
+        <Skeleton className="h-4 w-28 bg-white/8" />
+        <Skeleton className="h-8 w-40 bg-white/8" />
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="h-4 w-44 bg-white/8" />
+      </CardContent>
+    </Card>
   )
 }
 
-function AssetAllocationChart({ data }: { data: AssetAllocationDataPoint[] }) {
-  const svgRef = useRef<SVGSVGElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!svgRef.current || !containerRef.current) return
-
-    const draw = () => {
-      const container = containerRef.current
-      if (!container) return
-
-      const size = Math.min(container.clientWidth, 260)
-      const radius = size / 2
-
-      const svg = d3
-        .select(svgRef.current)
-        .attr('width', size)
-        .attr('height', size)
-
-      svg.selectAll('*').remove()
-
-      const total = data.reduce((sum, point) => sum + point.value, 0)
-
-      if (total === 0) {
-        svg
-          .append('text')
-          .attr('x', size / 2)
-          .attr('y', size / 2)
-          .attr('text-anchor', 'middle')
-          .attr('fill', 'currentColor')
-          .style('font-size', '14px')
-          .text('No asset data yet')
-        return
-      }
-
-      const chartGroup = svg
-        .append('g')
-        .attr('transform', `translate(${radius},${radius})`)
-
-      const colors = [1, 2, 3, 4].map((index) =>
-        getChartColor(index, ['#22c55e', '#4f46e5', '#60a5fa', '#f59e0b'][index - 1]),
-      )
-
-      const pie = d3
-        .pie<(typeof data)[0]>()
-        .value((point) => point.value)
-        .sort(null)
-        .padAngle(0.03)
-
-      const arc = d3
-        .arc<d3.PieArcDatum<(typeof data)[0]>>()
-        .innerRadius(radius * 0.55)
-        .outerRadius(radius - 8)
-        .cornerRadius(4)
-
-      chartGroup
-        .selectAll('path')
-        .data(pie(data))
-        .join('path')
-        .attr('d', arc)
-        .attr('fill', (_, index) => colors[index])
-
-      chartGroup
-        .append('text')
-        .attr('text-anchor', 'middle')
-        .attr('dy', '-0.2em')
-        .attr('fill', 'currentColor')
-        .style('font-size', '13px')
-        .style('font-weight', '500')
-        .text('Total Assets')
-
-      chartGroup
-        .append('text')
-        .attr('text-anchor', 'middle')
-        .attr('dy', '1.2em')
-        .attr('fill', 'currentColor')
-        .style('font-size', '16px')
-        .style('font-weight', '700')
-        .text(formatCurrencyCompact(total))
-    }
-
-    draw()
-
-    const observer = new ResizeObserver(() => draw())
-    observer.observe(containerRef.current)
-    return () => observer.disconnect()
-  }, [data])
-
-  const legendColors = [1, 2, 3, 4].map((index) =>
-    getChartColor(index, ['#22c55e', '#4f46e5', '#60a5fa', '#f59e0b'][index - 1]),
-  )
-
+function SurfaceSkeleton({ className }: { className?: string }) {
   return (
-    <div className="flex flex-col items-center gap-4">
-      <div ref={containerRef} className="flex w-full justify-center">
-        <svg ref={svgRef} />
-      </div>
-      <div className="grid w-full grid-cols-2 gap-x-4 gap-y-2 text-sm">
-        {data.map((point, index) => (
-          <div key={point.label} className="flex items-center gap-2">
-            <span
-              className="inline-block h-3 w-3 shrink-0 rounded-sm"
-              style={{ background: legendColors[index] }}
-            />
-            <span className="text-muted-foreground">{point.label}</span>
-            <span className="ml-auto font-medium">{formatCurrencyCompact(point.value)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <Card className={cn('border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,rgba(17,24,39,0.94),rgba(12,18,31,0.98))] shadow-none', className)}>
+      <CardHeader className="space-y-3">
+        <Skeleton className="h-4 w-28 bg-white/8" />
+        <Skeleton className="h-7 w-48 bg-white/8" />
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="h-40 w-full bg-white/8" />
+      </CardContent>
+    </Card>
   )
 }
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<OverviewTabValue>('payments')
-  const [filters, setFilters] = useState<OverviewFilters>({ ...DEFAULT_OVERVIEW_FILTERS })
+  const [filters, setFilters] = useState({ ...DEFAULT_OVERVIEW_FILTERS })
   const [autoExpandedToAllHistory, setAutoExpandedToAllHistory] = useState(false)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [allTxns, setAllTxns] = useState<StatementTransaction[]>([])
-  const [receipts, setReceipts] = useState<ReceiptRow[]>([])
   const [categories, setCategories] = useState<CategoryWithHierarchy[]>([])
-  const [cards, setCards] = useState<CardRow[]>([])
   const [assetBalances, setAssetBalances] = useState<AssetBalance[]>([])
+  const [advances, setAdvances] = useState<AdvanceSummaryRow[]>([])
   const { accounts: portfolioAccounts, loading: portfolioLoading } = useDashboardAccounts()
 
   useEffect(() => {
@@ -560,10 +265,9 @@ export default function DashboardPage() {
           if (!isActive) return
           setAccounts([])
           setAllTxns([])
-          setReceipts([])
           setCategories([])
-          setCards([])
           setAssetBalances([])
+          setAdvances([])
           return
         }
 
@@ -577,16 +281,15 @@ export default function DashboardPage() {
           if (!isActive) return
           setAccounts([])
           setAllTxns([])
-          setReceipts([])
           setCategories([])
-          setCards([])
           setAssetBalances([])
+          setAdvances([])
           return
         }
 
         const { data: accountData } = await supabase
           .from('accounts')
-          .select('id, account_type, product_name, nickname, currency, is_active')
+          .select('id, account_type, product_name, nickname, currency')
           .eq('household_id', profile.household_id)
 
         const accountList = (accountData as Account[] | null) ?? []
@@ -594,7 +297,6 @@ export default function DashboardPage() {
           filters.accountId === 'all'
             ? accountList
             : accountList.filter((account) => account.id === filters.accountId)
-
         const scopedAccountIds = scopedAccounts.map((account) => account.id)
 
         const { data: categoryData } = await supabase
@@ -611,13 +313,11 @@ export default function DashboardPage() {
           || filters.subgroupId !== 'all'
           || filters.categoryId !== 'all'
 
-        const buildPaymentsQuery = (includeMerchantJoin: boolean) => {
+        const buildPaymentsQuery = () => {
           let query = supabase
             .from('statement_transactions')
             .select(
-              includeMerchantJoin
-                ? 'id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, merchant:merchants(name), category_id, description, currency, created_at'
-                : 'id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, created_at',
+              'id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, category_id, description, currency, account_id',
             )
             .order('txn_date', { ascending: false })
 
@@ -637,69 +337,48 @@ export default function DashboardPage() {
           return query
         }
 
-        const buildReceiptsQuery = (includeMerchantJoin: boolean) => {
-          let query = supabase
-            .from('receipts')
-            .select(
-              includeMerchantJoin
-                ? 'id, receipt_datetime, merchant_raw, merchant:merchants(name), total_amount, suggested_account_id'
-                : 'id, receipt_datetime, merchant_raw, total_amount, suggested_account_id',
-            )
-            .eq('status', 'confirmed')
-            .order('receipt_datetime', { ascending: false, nullsFirst: false })
+        let balancesQuery = supabase
+          .from('asset_balances')
+          .select('id, account_id, asset_id, balance, assets(symbol, name, asset_type)')
 
-          if (filters.accountId !== 'all') {
-            query = query.eq('suggested_account_id', filters.accountId)
-          }
-
-          if (start) query = query.gte('receipt_datetime', `${start}T00:00:00.000Z`)
-          if (end) query = query.lte('receipt_datetime', `${end}T23:59:59.999Z`)
-
-          return query
+        if (scopedAccountIds.length > 0) {
+          balancesQuery = balancesQuery.in('account_id', scopedAccountIds)
+        } else if (filters.accountId !== 'all') {
+          balancesQuery = balancesQuery.eq('account_id', filters.accountId)
         }
 
-        const [initialPaymentsRes, initialReceiptsRes, cardsRes, balancesRes] = await Promise.all([
-          buildPaymentsQuery(true),
-          buildReceiptsQuery(true),
-          scopedAccountIds.length > 0
-            ? supabase
-                .from('cards')
-                .select('id, account_id, card_name, total_outstanding')
-                .in('account_id', scopedAccountIds)
-            : Promise.resolve({ data: [] as CardRow[] }),
-          scopedAccountIds.length > 0
-            ? supabase
-                .from('asset_balances')
-                .select('id, account_id, asset_id, balance, assets(symbol, name, asset_type)')
-                .in('account_id', scopedAccountIds)
-            : Promise.resolve({ data: [] as AssetBalance[] }),
+        const [paymentsRes, balancesRes, advancesRes] = await Promise.all([
+          buildPaymentsQuery(),
+          balancesQuery,
+          supabase
+            .from('advances')
+            .select('status, expected_recovery_amount, counterparties(name)')
+            .order('created_at', { ascending: false }),
         ])
 
-        let paymentsRes = initialPaymentsRes
-        let receiptsRes = initialReceiptsRes
-
-        if (isMerchantSchemaNotReadyError(paymentsRes.error, 'merchants')) {
-          paymentsRes = await buildPaymentsQuery(false)
-        }
-
-        if (isMerchantSchemaNotReadyError(receiptsRes.error, 'merchants')) {
-          receiptsRes = await buildReceiptsQuery(false)
-        }
-
         if (paymentsRes.error) throw paymentsRes.error
-        if (receiptsRes.error) throw receiptsRes.error
+        if (balancesRes.error) throw balancesRes.error
+        if (advancesRes.error) throw advancesRes.error
 
         if (!isActive) return
 
-        const paymentRows = (paymentsRes.data as unknown as StatementTransaction[] | null) ?? []
-        const receiptRows = (receiptsRes.data as unknown as ReceiptRow[] | null) ?? []
-        const cardRows = (cardsRes.data as CardRow[] | null) ?? []
-        const balanceRows = (balancesRes.data as AssetBalance[] | null) ?? []
+        const paymentRows = ((paymentsRes.data as unknown as StatementTransaction[] | null) ?? [])
+        const balanceRows = (((balancesRes.data as AssetBalanceRow[] | null) ?? [])).map((row) => ({
+          id: row.id,
+          account_id: row.account_id,
+          asset_id: row.asset_id,
+          balance: row.balance,
+          assets: Array.isArray(row.assets) ? row.assets[0] ?? null : null,
+        }))
+        const advanceRows = (((advancesRes.data as AdvanceSummaryQueryRow[] | null) ?? [])).map((row) => ({
+          status: row.status,
+          expected_recovery_amount: row.expected_recovery_amount,
+          counterparties: Array.isArray(row.counterparties) ? row.counterparties[0] ?? null : null,
+        }))
 
         if (
           isDefaultOverviewFilterSelection(filters)
           && paymentRows.length === 0
-          && receiptRows.length === 0
         ) {
           let historicalPaymentsQuery = supabase
             .from('statement_transactions')
@@ -712,29 +391,10 @@ export default function DashboardPage() {
             historicalPaymentsQuery = historicalPaymentsQuery.eq('account_id', filters.accountId)
           }
 
-          let historicalReceiptsQuery = supabase
-            .from('receipts')
-            .select('id')
-            .eq('status', 'confirmed')
-            .limit(1)
-
-          if (filters.accountId !== 'all') {
-            historicalReceiptsQuery = historicalReceiptsQuery.eq('suggested_account_id', filters.accountId)
-          }
-
-          const [historicalPaymentsRes, historicalReceiptsRes] = await Promise.all([
-            historicalPaymentsQuery,
-            historicalReceiptsQuery,
-          ])
-
+          const historicalPaymentsRes = await historicalPaymentsQuery
           if (historicalPaymentsRes.error) throw historicalPaymentsRes.error
-          if (historicalReceiptsRes.error) throw historicalReceiptsRes.error
 
-          const hasHistoricalActivity =
-            (((historicalPaymentsRes.data as Array<{ id: string }> | null) ?? []).length > 0)
-            || (((historicalReceiptsRes.data as Array<{ id: string }> | null) ?? []).length > 0)
-
-          if (hasHistoricalActivity) {
+          if (((historicalPaymentsRes.data as Array<{ id: string }> | null) ?? []).length > 0) {
             setAutoExpandedToAllHistory(true)
             setFilters((current) =>
               isDefaultOverviewFilterSelection(current)
@@ -746,21 +406,19 @@ export default function DashboardPage() {
         }
 
         setAccounts(accountList)
-        setCategories(categoryRows)
         setAllTxns(paymentRows)
-        setReceipts(receiptRows)
-        setCards(cardRows)
+        setCategories(categoryRows)
         setAssetBalances(balanceRows)
+        setAdvances(advanceRows)
       } catch (error) {
         console.error('Failed to load dashboard data:', error)
         if (!isActive) return
         setLoadError(describeDashboardLoadError(error))
         setAccounts([])
         setAllTxns([])
-        setReceipts([])
         setCategories([])
-        setCards([])
         setAssetBalances([])
+        setAdvances([])
       } finally {
         if (isActive) {
           setLoading(false)
@@ -803,14 +461,28 @@ export default function DashboardPage() {
     [categories],
   )
 
+  const accountMap = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account])),
+    [accounts],
+  )
+
   const usablePortfolioAccounts = useMemo(
     () => portfolioAccounts.filter(isPortfolioSummaryUsable),
     [portfolioAccounts],
   )
 
+  const filteredPortfolioAccounts = useMemo(
+    () => (
+      filters.accountId === 'all'
+        ? usablePortfolioAccounts
+        : usablePortfolioAccounts.filter((account) => account.id === filters.accountId)
+    ),
+    [filters.accountId, usablePortfolioAccounts],
+  )
+
   const displayCurrency =
     accounts.find((account) => account.currency)?.currency
-    || usablePortfolioAccounts.find((account) => account.currency)?.currency
+    || filteredPortfolioAccounts.find((account) => account.currency)?.currency
     || 'SGD'
 
   const scopedTransactions = useMemo(
@@ -823,15 +495,7 @@ export default function DashboardPage() {
     [allTxns, categoryMap],
   )
 
-  const monthlyIncome = useMemo(
-    () =>
-      scopedTransactions
-        .filter((transaction) => normalizeTxnDirection(transaction.txn_type) === 'credit')
-        .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0),
-    [scopedTransactions],
-  )
-
-  const monthlySpend = useMemo(
+  const periodSpend = useMemo(
     () =>
       scopedTransactions
         .filter((transaction) => normalizeTxnDirection(transaction.txn_type) === 'debit')
@@ -839,36 +503,43 @@ export default function DashboardPage() {
     [scopedTransactions],
   )
 
-  const savingsRate = monthlyIncome > 0 ? ((monthlyIncome - monthlySpend) / monthlyIncome) * 100 : null
-
-  const savingsRateColor =
-    savingsRate == null
-      ? 'text-muted-foreground'
-      : savingsRate >= 20
-        ? 'text-emerald-500'
-        : savingsRate >= 10
-          ? 'text-amber-500'
-          : 'text-red-500'
-
-  const totalCardOutstanding = useMemo(
-    () => cards.reduce((sum, card) => sum + (card.total_outstanding ?? 0), 0),
-    [cards],
+  const periodIncome = useMemo(
+    () =>
+      scopedTransactions
+        .filter((transaction) => normalizeTxnDirection(transaction.txn_type) === 'credit')
+        .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0),
+    [scopedTransactions],
   )
 
-  const largestCard = useMemo(
+  const spendBreakdown = useMemo(
     () =>
-      [...cards].sort(
-        (left, right) => (right.total_outstanding ?? 0) - (left.total_outstanding ?? 0),
-      )[0] ?? null,
-    [cards],
+      buildExecutiveSpendBreakdown({
+        transactions: scopedTransactions,
+        categoriesById: new Map(
+          categories.map((category) => [
+            category.id,
+            {
+              name: category.name,
+              color_hex: category.color_hex,
+              color_token: category.color_token,
+            },
+          ]),
+        ),
+      }),
+    [categories, scopedTransactions],
+  )
+
+  const advancesSummary = useMemo(
+    () => buildPendingAdvancesSummary(advances),
+    [advances],
   )
 
   const netWorth = useMemo(() => {
-    if (usablePortfolioAccounts.length > 0) {
+    if (filteredPortfolioAccounts.length > 0) {
       let assets = 0
       let liabilities = 0
 
-      for (const account of usablePortfolioAccounts) {
+      for (const account of filteredPortfolioAccounts) {
         if (account.accountType === 'credit_card') {
           liabilities += Math.abs(account.statementBalance ?? 0)
           continue
@@ -882,70 +553,103 @@ export default function DashboardPage() {
         assets += Math.max(account.currentBalance ?? 0, 0)
       }
 
-      if (!usablePortfolioAccounts.some((account) => ['investment', 'crypto_exchange'].includes(account.accountType))) {
+      if (!filteredPortfolioAccounts.some((account) => ['investment', 'crypto_exchange'].includes(account.accountType))) {
         assets += assetBalances.reduce((sum, balance) => sum + Math.max(balance.balance, 0), 0)
       }
 
       return assets - liabilities
     }
 
-    return assetBalances.reduce((sum, balance) => sum + Math.max(balance.balance, 0), 0) - totalCardOutstanding
-  }, [assetBalances, totalCardOutstanding, usablePortfolioAccounts])
+    return assetBalances.reduce((sum, balance) => sum + Math.max(balance.balance, 0), 0)
+  }, [assetBalances, filteredPortfolioAccounts])
 
-  const netWorthProxy = useMemo(() => {
-    const now = new Date()
-    const currentMonthKey = toMonthKey(now)
-    const previousMonthKey = toMonthKey(new Date(now.getFullYear(), now.getMonth() - 1, 1))
-
-    const calculateMonthNetCashFlow = (monthKey: string) =>
-      scopedTransactions.reduce((sum, transaction) => {
-        if (transaction.txn_date.slice(0, 7) !== monthKey) return sum
-
-        const direction = normalizeTxnDirection(transaction.txn_type)
-        if (direction === 'credit') return sum + Math.abs(transaction.amount)
-        if (direction === 'debit') return sum - Math.abs(transaction.amount)
-        return sum
-      }, 0)
-
-    const hasCurrentMonth = scopedTransactions.some(
-      (transaction) => transaction.txn_date.slice(0, 7) === currentMonthKey,
-    )
-    const hasPreviousMonth = scopedTransactions.some(
-      (transaction) => transaction.txn_date.slice(0, 7) === previousMonthKey,
-    )
-
-    return {
-      currentMonthNetCashFlow: calculateMonthNetCashFlow(currentMonthKey),
-      previousMonthNetCashFlow: calculateMonthNetCashFlow(previousMonthKey),
-      hasComparison: hasCurrentMonth && hasPreviousMonth,
-    }
-  }, [scopedTransactions])
-
-  const cashFlowData = useMemo(() => computeCashFlowData(scopedTransactions), [scopedTransactions])
-
-  const assetAllocationData = useMemo<AssetAllocationDataPoint[]>(
-    () => {
-      const groups: Record<string, number> = {}
-      for (const balance of assetBalances) {
-        const assetType = balance.assets?.asset_type ?? 'other'
-        const label = assetType.charAt(0).toUpperCase() + assetType.slice(1)
-        groups[label] = (groups[label] ?? 0) + balance.balance
-      }
-
-      return Object.entries(groups).map(([label, value]) => ({ label, value }))
-    },
-    [assetBalances],
+  const trendSeries = useMemo(
+    () =>
+      buildNetWorthProxySeries({
+        transactions: scopedTransactions,
+        netWorth,
+        period: filters.period,
+      }),
+    [filters.period, netWorth, scopedTransactions],
   )
 
-  const recentTxns = useMemo(() => allTxns.slice(0, 10), [allTxns])
+  const executivePeriod = useMemo(
+    () => buildExecutivePeriodSummary(filters.period),
+    [filters.period],
+  )
 
-  const kpiLoading = loading || portfolioLoading
+  const accountSnapshotItems = useMemo(
+    () =>
+      filteredPortfolioAccounts
+        .map((account) => {
+          const rawValue =
+            account.accountType === 'credit_card'
+              ? -Math.abs(account.statementBalance ?? 0)
+              : ['loan', 'balance_transfer', 'easy_credit'].includes(account.accountType)
+                ? -Math.abs(account.pendingPrincipal ?? account.statementBalance ?? 0)
+                : account.currentBalance ?? account.statementBalance ?? 0
+
+          return {
+            id: account.id,
+            title: account.title ?? account.accountName,
+            subtitle: account.institution ?? account.subtitle ?? humanizeAccountType(account.accountType),
+            value: rawValue,
+            currency: account.currency,
+            note:
+              account.dueDate
+                ? `Due ${formatDateShort(account.dueDate)}`
+                : account.minimumDue != null
+                  ? `Min due ${formatCurrency(account.minimumDue, account.currency)}`
+                  : humanizeAccountType(account.accountType),
+            tone: rawValue < 0 ? 'liability' : 'asset' as 'liability' | 'asset',
+          }
+        })
+        .sort((left, right) => Math.abs(right.value) - Math.abs(left.value))
+        .slice(0, 5),
+    [filteredPortfolioAccounts],
+  )
+
+  const recentLedgerItems = useMemo<RecentTransactionLedgerItem[]>(
+    () =>
+      allTxns.slice(0, 8).map((transaction) => {
+        const category =
+          transaction.category_id != null ? categoryMap.get(transaction.category_id) : null
+        const account = accountMap.get(transaction.account_id)
+        const merchant =
+          transaction.merchant?.name
+          ?? transaction.merchant_normalized
+          ?? transaction.merchant_raw
+          ?? transaction.description
+          ?? 'Unknown'
+
+        return {
+          id: transaction.id,
+          date: transaction.txn_date,
+          merchant,
+          category: category?.name ?? 'Uncategorized',
+          categoryColorHex: category?.color_hex ?? null,
+          categoryColorToken: category?.color_token ?? null,
+          accountLabel: account?.nickname ?? account?.product_name ?? 'Unknown account',
+          amount: transaction.amount,
+          currency: transaction.currency,
+          isCredit: normalizeTxnDirection(transaction.txn_type) === 'credit',
+        }
+      }),
+    [accountMap, allTxns, categoryMap],
+  )
+
   const hasAccounts = accounts.length > 0
   const hasTransactions = allTxns.length > 0
+  const kpiLoading = loading || portfolioLoading
   const showDashboardSetupEmptyState = !loading && !loadError && !hasAccounts
   const showTransactionsEmptyState = !loading && !loadError && hasAccounts && !hasTransactions
 
-  const handleFiltersChange = (nextFilters: OverviewFilters) => {
+  const handlePrimaryPeriodChange = (period: DatePeriod) => {
+    setAutoExpandedToAllHistory(false)
+    setFilters((current) => ({ ...current, period }))
+  }
+
+  const handleFiltersChange = (nextFilters: typeof filters) => {
     setAutoExpandedToAllHistory(false)
     setFilters(nextFilters)
   }
@@ -955,286 +659,180 @@ export default function DashboardPage() {
     setFilters({ ...DEFAULT_OVERVIEW_FILTERS })
   }
 
-  const netWorthDescription = netWorthProxy.hasComparison ? (
-    <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
-      <span>Proxy:</span>
-      <span
-        className={cn(
-          'font-medium',
-          netWorthProxy.currentMonthNetCashFlow > 0
-            ? 'text-emerald-600'
-            : netWorthProxy.currentMonthNetCashFlow < 0
-              ? 'text-red-500'
-              : 'text-muted-foreground',
-        )}
-      >
-        {formatSignedCurrency(netWorthProxy.currentMonthNetCashFlow, displayCurrency)} this month
-      </span>
-      <span>vs</span>
-      <span
-        className={cn(
-          'font-medium',
-          netWorthProxy.previousMonthNetCashFlow > 0
-            ? 'text-emerald-600'
-            : netWorthProxy.previousMonthNetCashFlow < 0
-              ? 'text-red-500'
-              : 'text-muted-foreground',
-        )}
-      >
-        {formatSignedCurrency(netWorthProxy.previousMonthNetCashFlow, displayCurrency)} last month
-      </span>
-    </div>
-  ) : (
-    'Current snapshot only'
-  )
-
-  const monthlySpendDescription = DATE_PERIOD_LABELS[filters.period]
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">Your financial overview at a glance.</p>
-      </div>
-
-      {loadError ? (
-        <Card className="border-destructive/40">
-          <CardHeader>
-            <CardTitle className="text-base">Unable to load dashboard data</CardTitle>
-            <CardDescription className="text-destructive">{loadError}</CardDescription>
-          </CardHeader>
-        </Card>
-      ) : null}
-
-      <OverviewTabs value={activeTab} onValueChange={setActiveTab} />
-      <OverviewFilterBar
-        filters={filters}
-        accountOptions={accountOptions}
-        categoryOptions={categoryOptions}
-        groupOptions={groupOptions}
-        subgroupOptions={subgroupOptions}
-        onChange={handleFiltersChange}
-        onReset={handleFiltersReset}
-      />
-
-      {autoExpandedToAllHistory ? (
-        <p className="text-sm text-muted-foreground">
-          Showing all history because no activity was found for this month.
-        </p>
-      ) : null}
-
-      {!loadError && activeTab === 'receipts' ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Receipts</CardTitle>
-            <CardDescription>Confirmed receipts linked to your selected filters.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="space-y-3">
-                {Array.from({ length: 5 }).map((_, index) => (
-                  <div key={index} className="flex items-center justify-between rounded-lg border px-3 py-3">
-                    <div className="space-y-2">
-                      <Skeleton className="h-4 w-36" />
-                      <Skeleton className="h-3 w-24" />
-                    </div>
-                    <Skeleton className="h-4 w-20" />
-                  </div>
-                ))}
-              </div>
-            ) : receipts.length === 0 ? (
-              <EmptyState
-                icon={Receipt}
-                title="No receipts yet"
-                description="Upload a receipt to start tracking household purchases alongside your statements."
-                action={{ label: 'Upload Receipt', href: '/receipts' }}
-              />
-            ) : (
-              <div className="space-y-2">
-                {receipts.slice(0, 10).map((receipt) => (
-                  <div
-                    key={receipt.id}
-                    className="flex items-center justify-between rounded-lg border px-3 py-3 last:border-b"
-                  >
-                    <div>
-                      <p className="font-medium">{receipt.merchant?.name ?? receipt.merchant_raw}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {receipt.receipt_datetime ? formatDateShort(receipt.receipt_datetime) : 'No date'}
-                      </p>
-                    </div>
-                    <p className="font-medium">{formatCurrency(receipt.total_amount, displayCurrency)}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ) : !loadError && showDashboardSetupEmptyState ? (
-        <EmptyState
-          icon={Wallet}
-          title="Welcome to Wealth House"
-          description="Start by adding your accounts and uploading a statement to unlock your dashboard."
-          action={{ label: 'Add Account', href: '/accounts' }}
-        />
-      ) : !loadError && showTransactionsEmptyState ? (
-        <EmptyState
-          icon={ArrowLeftRight}
-          title="No transactions yet"
-          description="Import your first bank statement to see spending, income, and card activity here."
-          action={{ label: 'Import Statement', href: '/statements' }}
-        />
-      ) : !loadError ? (
-        <>
-          {kpiLoading ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <Card key={index}>
-                  <CardHeader className="space-y-3">
-                    <Skeleton className="h-4 w-28" />
-                    <Skeleton className="h-8 w-36" />
-                  </CardHeader>
-                  <CardContent>
-                    <Skeleton className="h-4 w-44" />
-                  </CardContent>
-                </Card>
-              ))}
+    <div
+      className="space-y-6"
+      style={EXECUTIVE_THEME_STYLE}
+    >
+      <div
+        className="space-y-6 text-[color:var(--dashboard-text)]"
+        style={{ fontFamily: 'var(--font-dm-sans)' }}
+      >
+        <div className="space-y-6">
+          <section className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div className="space-y-2">
+              <p
+                className="text-[11px] uppercase tracking-[0.24em] text-[color:var(--dashboard-text-dim)]"
+                style={{ fontFamily: 'var(--font-dm-mono)' }}
+              >
+                Overview
+              </p>
+              <h1 className="text-3xl font-semibold tracking-[-0.05em] sm:text-4xl">
+                Executive household overview
+              </h1>
+              <p className="max-w-3xl text-sm text-[color:var(--dashboard-text-dim)] sm:text-base">
+                {executivePeriod.rangeLabel}
+                {' · '}
+                Live balances, filtered cash flow, spend concentration, and review workload in one surface.
+              </p>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricCard
-                title="Net Worth"
-                value={formatCurrency(netWorth, displayCurrency)}
-                description={netWorthDescription}
-                icon={Landmark}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <DashboardPeriodPills
+                value={filters.period}
+                onChange={handlePrimaryPeriodChange}
               />
-              <MetricCard
-                title="Monthly Spend"
-                value={formatCurrency(monthlySpend, displayCurrency)}
-                description={monthlySpendDescription}
-                icon={ShoppingCart}
-              />
-              <MetricCard
-                title="Card Outstanding"
-                value={formatCurrency(totalCardOutstanding, displayCurrency)}
-                description={
-                  largestCard
-                    ? `Largest: ${largestCard.card_name} ${formatCurrency(largestCard.total_outstanding ?? 0, displayCurrency)}`
-                    : 'No active card balances'
-                }
-                icon={CreditCard}
-              />
-              <MetricCard
-                title="Savings Rate"
-                value={savingsRate == null ? 'N/A' : `${Math.round(savingsRate)}%`}
-                description="Income minus expenses / income"
-                icon={PiggyBank}
-                valueClassName={savingsRateColor}
+              <DashboardScopeDrawer
+                filters={filters}
+                accountOptions={accountOptions}
+                categoryOptions={categoryOptions}
+                groupOptions={groupOptions}
+                subgroupOptions={subgroupOptions}
+                onChange={handleFiltersChange}
+                onReset={handleFiltersReset}
               />
             </div>
-          )}
+          </section>
 
-          {loading ? (
+          {autoExpandedToAllHistory ? (
+            <Card className="border-[color:var(--dashboard-border)] bg-[color:var(--dashboard-surface)] shadow-none">
+              <CardContent className="px-4 py-3 text-sm text-[color:var(--dashboard-text-dim)]">
+                Showing all history because no activity was found for the default month scope.
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {loadError ? (
+            <Card className="border-[color:var(--dashboard-danger)]/60 bg-[color:var(--dashboard-surface)] shadow-none">
+              <CardHeader>
+                <CardTitle className="text-base text-[color:var(--dashboard-text)]">Unable to load dashboard data</CardTitle>
+                <CardDescription className="text-[color:var(--dashboard-danger)]">{loadError}</CardDescription>
+              </CardHeader>
+            </Card>
+          ) : null}
+
+          {!loadError && showDashboardSetupEmptyState ? (
+            <EmptyDashboardCard
+              title="Welcome to Wealth House"
+              description="Add your first account and import a statement to unlock the executive dashboard."
+              action={{ label: 'Add Account', href: '/accounts' }}
+            />
+          ) : null}
+
+          {!loadError && showTransactionsEmptyState ? (
+            <EmptyDashboardCard
+              title="No transactions in scope"
+              description="Import a statement to populate cash flow, spend concentration, and the activity ledger."
+              action={{ label: 'Import Statement', href: '/statements' }}
+            />
+          ) : null}
+
+          {!loadError && !showDashboardSetupEmptyState && !showTransactionsEmptyState ? (
             <>
-              <ChartSectionSkeleton />
-              <RecentTransactionsSkeleton />
-            </>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <Card className="lg:col-span-2">
-                  <CardHeader>
-                    <CardTitle>Cash Flow</CardTitle>
-                    <CardDescription>Monthly income vs expenses over the last 6 months</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <CashFlowChart data={cashFlowData} />
-                  </CardContent>
-                </Card>
+              {kpiLoading ? (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <MetricSkeleton key={index} />
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <ExecutiveMetricCard
+                    label="Net Worth"
+                    value={formatCurrencyCompact(netWorth, displayCurrency)}
+                    description="Live household assets less liabilities."
+                    tone="accent"
+                    monoFontFamily="var(--font-dm-mono)"
+                  />
+                  <ExecutiveMetricCard
+                    label={executivePeriod.spendLabel}
+                    value={formatCurrencyCompact(periodSpend, displayCurrency)}
+                    description={`${executivePeriod.rangeLabel} filtered spend.`}
+                    tone="red"
+                    monoFontFamily="var(--font-dm-mono)"
+                  />
+                  <ExecutiveMetricCard
+                    label={executivePeriod.incomeLabel}
+                    value={formatCurrencyCompact(periodIncome, displayCurrency)}
+                    description={
+                      periodIncome > 0
+                        ? `${executivePeriod.rangeLabel} filtered income.`
+                        : `No income recorded in ${executivePeriod.label.toLowerCase()}.`
+                    }
+                    tone="green"
+                    monoFontFamily="var(--font-dm-mono)"
+                  />
+                  <ExecutiveMetricCard
+                    label="Pending Advances"
+                    value={formatCurrencyCompact(advancesSummary.totalOutstanding, displayCurrency)}
+                    description={
+                      advancesSummary.advanceCount > 0
+                        ? `${advancesSummary.counterpartyCount || advancesSummary.advanceCount} counterparties still open.`
+                        : 'All tracked advances are settled.'
+                    }
+                    tone="blue"
+                    monoFontFamily="var(--font-dm-mono)"
+                  />
+                </div>
+              )}
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Asset Allocation</CardTitle>
-                    <CardDescription>Breakdown by asset class</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <AssetAllocationChart data={assetAllocationData} />
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Card>
-                <CardHeader className="flex flex-row items-start justify-between gap-4">
-                  <div>
-                    <CardTitle>Recent Transactions</CardTitle>
-                    <CardDescription>Your latest statement activity</CardDescription>
+              {loading ? (
+                <>
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+                    <SurfaceSkeleton className="xl:col-span-2" />
+                    <SurfaceSkeleton />
+                    <SurfaceSkeleton />
                   </div>
-                  <Button asChild variant="ghost" size="sm" className="ml-auto">
-                    <Link href="/transactions">
-                      View all
-                      <ArrowRight className="size-4" />
-                    </Link>
-                  </Button>
-                </CardHeader>
-                <CardContent>
-                  {recentTxns.length === 0 ? (
-                    <EmptyState
-                      icon={ArrowLeftRight}
-                      title="No transactions yet"
-                      description="Import a statement to begin building your dashboard activity feed."
-                      action={{ label: 'Import Statement', href: '/statements' }}
+                  <SurfaceSkeleton />
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+                    <div id="net-worth" className="xl:col-span-2">
+                      <NetWorthTrendCard
+                        title="Net Worth Proxy Trend"
+                        value={netWorth}
+                        currency={displayCurrency}
+                        series={trendSeries}
+                        rangeLabel={executivePeriod.rangeLabel}
+                        annotation="Approximation from filtered cash flow"
+                        monoFontFamily="var(--font-dm-mono)"
+                      />
+                    </div>
+
+                    <SpendBreakdownCard
+                      rows={spendBreakdown.rows}
+                      total={spendBreakdown.total}
+                      currency={displayCurrency}
+                      monoFontFamily="var(--font-dm-mono)"
                     />
-                  ) : (
-                    <div className="space-y-1">
-                      {recentTxns.map((transaction) => {
-                        const category =
-                          transaction.category_id != null ? categoryMap.get(transaction.category_id) : undefined
-                        const isCredit = normalizeTxnDirection(transaction.txn_type) === 'credit'
-                        const merchantName =
-                          transaction.merchant?.name
-                          ?? transaction.merchant_normalized
-                          ?? transaction.merchant_raw
-                          ?? transaction.description
-                          ?? 'Unknown'
 
-                        return (
-                          <div
-                            key={transaction.id}
-                            className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/50"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate font-medium">{merchantName}</p>
-                              <p className="text-xs text-muted-foreground">
-                                <CategoryBadge
-                                  {...(category ?? {})}
-                                  name={category?.name ?? null}
-                                  fallbackLabel="Uncategorized"
-                                  className="h-5 px-1.5 text-[11px]"
-                                />{' '}
-                                · {formatDateShort(transaction.txn_date)}
-                              </p>
-                            </div>
-                            <span
-                              className={cn(
-                                'shrink-0 font-medium tabular-nums',
-                                isCredit ? 'text-emerald-500' : 'text-foreground',
-                              )}
-                            >
-                              {isCredit ? '+' : '-'}
-                              {formatCurrency(Math.abs(transaction.amount), transaction.currency)}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                    <AccountSnapshotCard
+                      items={accountSnapshotItems}
+                      monoFontFamily="var(--font-dm-mono)"
+                    />
+                  </div>
+
+                  <RecentTransactionLedger
+                    items={recentLedgerItems}
+                    monoFontFamily="var(--font-dm-mono)"
+                  />
+                </>
+              )}
             </>
-          )}
-        </>
-      ) : null}
-
-      <AccountPortfolioSection />
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }

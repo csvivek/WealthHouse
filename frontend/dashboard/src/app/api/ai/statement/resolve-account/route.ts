@@ -12,16 +12,17 @@ import {
   type ResolvedAccount,
 } from '@/lib/server/statement-import'
 import {
-  cleanupExpiredStatementParseSessions,
   getStatementParseSession,
   isStatementParseSessionSchemaError,
   markStatementParseSessionResolved,
   STATEMENT_PARSE_SESSION_STATUS,
   updateStatementParseSessionUnresolved,
 } from '@/lib/server/statement-parse-sessions'
+import { cleanupExpiredStatementSessionStorage } from '@/lib/server/statement-storage'
 import {
   createAccountWithRelatedRecords,
   findOrCreateInstitution,
+  type InstitutionBrandDecision,
   normalizeAccountType,
 } from '@/lib/server/accounts'
 
@@ -40,6 +41,8 @@ interface ResolveAccountPayload {
       account_type?: string | null
       card_name?: string | null
       card_last4?: string | null
+      institution_brand_code?: string | null
+      institution_brand_decision?: InstitutionBrandDecision | null
     }
   }>
 }
@@ -82,7 +85,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'parseSessionId and resolutions are required.' }, { status: 400 })
     }
 
-    await cleanupExpiredStatementParseSessions({
+    await cleanupExpiredStatementSessionStorage({
       supabase: db,
       householdId: profile.household_id,
       userId: user.id,
@@ -176,6 +179,8 @@ export async function POST(request: NextRequest) {
       const institution = await findOrCreateInstitution(supabase as any, {
         institutionName,
         institutionCode: create.institution_code || pickString(descriptor.institution_code) || null,
+        institutionBrandCode: create.institution_brand_code || null,
+        institutionBrandDecision: create.institution_brand_decision || null,
       })
 
       const createdAccount = await createAccountWithRelatedRecords(supabase as any, {
@@ -262,6 +267,8 @@ export async function POST(request: NextRequest) {
       mimeType: String(parseSession.mime_type || 'application/octet-stream'),
       fileSizeBytes: Number(parseSession.file_size_bytes || 0),
       primaryAccount,
+      storageBucket: pickString(parseSession.storage_bucket),
+      storagePath: pickString(parseSession.storage_path),
     })
 
     await markStatementParseSessionResolved({

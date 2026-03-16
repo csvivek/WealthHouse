@@ -4,16 +4,20 @@ import {
   getKnownInstitutionMetadata,
   normalizeAccountType as normalizeSharedAccountType,
 } from '@/lib/accounts/normalization'
+import { resolveInstitutionBrandPreview } from '@/lib/server/institution-branding'
 import type { Database } from '@/types/database'
 
 export type AppSupabaseClient = SupabaseClient
 export type AccountType = Database['public']['Enums']['account_type']
+export type InstitutionBrandDecision = 'verified' | 'generic'
 
 interface InstitutionOptions {
   institutionId?: string | null
   institutionCode?: string | null
   institutionName?: string | null
   countryCode?: string | null
+  institutionBrandCode?: string | null
+  institutionBrandDecision?: InstitutionBrandDecision | null
 }
 
 interface CreateAccountOptions {
@@ -40,6 +44,8 @@ interface UpdateAccountOptions {
   cardName?: string | null
   cardLast4?: string | null
   accountType?: string | null
+  institutionBrandCode?: string | null
+  institutionBrandDecision?: InstitutionBrandDecision | null
 }
 
 export class AccountMutationError extends Error {
@@ -61,47 +67,93 @@ export function normalizeAccountType(raw?: string | null, extraValues: Array<str
   return normalizeSharedAccountType(raw, extraValues) as AccountType
 }
 
-export function normalizeInstitutionMetadata(options: InstitutionOptions) {
-  const known = getKnownInstitutionMetadata(options.institutionCode, [options.institutionName])
-  const canonicalName = canonicalizeInstitutionName({
+async function resolveSelectedInstitutionBrand(options: InstitutionOptions) {
+  if (options.institutionBrandDecision !== 'verified') {
+    return null
+  }
+
+  return resolveInstitutionBrandPreview({
+    brandCode: options.institutionBrandCode,
     institutionCode: options.institutionCode,
     institutionName: options.institutionName,
   })
+}
+
+export async function normalizeInstitutionMetadata(options: InstitutionOptions) {
+  const known = getKnownInstitutionMetadata(
+    options.institutionBrandCode || options.institutionCode,
+    [options.institutionName],
+  )
+  const selectedBrand = await resolveSelectedInstitutionBrand(options)
+  const typedName = options.institutionName?.trim()
+  const canonicalName = selectedBrand?.canonicalName
+    || (options.institutionBrandDecision === 'verified'
+      ? canonicalizeInstitutionName({
+        institutionCode: options.institutionCode,
+        institutionName: options.institutionName,
+      })
+      : typedName)
 
   return {
     name: canonicalName || 'Manual Institution',
     countryCode: options.countryCode?.trim() || known?.countryCode || 'SG',
-    type: (known?.type || 'bank') as Database['public']['Enums']['institution_type'],
+    type: ((known?.type || 'bank') as Database['public']['Enums']['institution_type']),
+    websiteUrl: selectedBrand?.websiteUrl ?? null,
+    iconUrl: selectedBrand?.iconUrl ?? null,
   }
+}
+
+async function maybeUpdateInstitutionBranding(
+  supabase: AppSupabaseClient,
+  institutionId: string,
+  normalized: Awaited<ReturnType<typeof normalizeInstitutionMetadata>>,
+) {
+  if (!normalized.websiteUrl && !normalized.iconUrl) return null
+
+  const { data: updated, error } = await supabase
+    .from('institutions')
+    .update({
+      website_url: normalized.websiteUrl,
+      icon_url: normalized.iconUrl,
+    })
+    .eq('id', institutionId)
+    .select('id, name, country_code, website_url, icon_url')
+    .single()
+
+  if (error) {
+    throw new Error(error.message || 'Failed to update institution branding')
+  }
+
+  return updated
 }
 
 export async function findOrCreateInstitution(
   supabase: AppSupabaseClient,
   options: InstitutionOptions,
 ) {
+  const normalized = await normalizeInstitutionMetadata(options)
+
   if (options.institutionId) {
     const { data: existing } = await supabase
       .from('institutions')
-      .select('id, name, country_code')
+      .select('id, name, country_code, website_url, icon_url')
       .eq('id', options.institutionId)
       .single()
 
     if (existing) {
-      return existing
+      return await maybeUpdateInstitutionBranding(supabase, existing.id, normalized) ?? existing
     }
   }
 
-  const normalized = normalizeInstitutionMetadata(options)
-
   const { data: byName } = await supabase
     .from('institutions')
-    .select('id, name, country_code')
+    .select('id, name, country_code, website_url, icon_url')
     .ilike('name', normalized.name)
     .limit(1)
     .maybeSingle()
 
   if (byName) {
-    return byName
+    return await maybeUpdateInstitutionBranding(supabase, byName.id, normalized) ?? byName
   }
 
   const { data: created, error } = await supabase
@@ -110,8 +162,10 @@ export async function findOrCreateInstitution(
       name: normalized.name,
       type: normalized.type,
       country_code: normalized.countryCode,
+      website_url: normalized.websiteUrl,
+      icon_url: normalized.iconUrl,
     })
-    .select('id, name, country_code')
+    .select('id, name, country_code, website_url, icon_url')
     .single()
 
   if (error || !created) {
@@ -193,6 +247,8 @@ export async function updateAccountWithRelatedRecords(
 
   const institution = await findOrCreateInstitution(supabase, {
     institutionName: options.institutionName,
+    institutionBrandCode: options.institutionBrandCode,
+    institutionBrandDecision: options.institutionBrandDecision,
   })
 
   const { data: account, error: updateError } = await supabase

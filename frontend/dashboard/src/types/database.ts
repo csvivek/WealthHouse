@@ -182,6 +182,8 @@ export type Database = {
           created_at: string
           country_code: string | null
           household_id: string | null
+          website_url: string | null
+          icon_url: string | null
         }
         Insert: {
           id?: string
@@ -190,6 +192,8 @@ export type Database = {
           created_at?: string
           country_code?: string | null
           household_id?: string | null
+          website_url?: string | null
+          icon_url?: string | null
         }
         Update: {
           id?: string
@@ -198,6 +202,8 @@ export type Database = {
           created_at?: string
           country_code?: string | null
           household_id?: string | null
+          website_url?: string | null
+          icon_url?: string | null
         }
         Relationships: [
           {
@@ -599,6 +605,8 @@ export type Database = {
           file_sha256: string
           mime_type: string
           file_size_bytes: number
+          storage_bucket: string | null
+          storage_path: string | null
           status: Database['public']['Enums']['file_import_status']
           duplicate_of_file_import_id: string | null
           institution_code: string | null
@@ -631,6 +639,8 @@ export type Database = {
           file_sha256: string
           mime_type: string
           file_size_bytes: number
+          storage_bucket?: string | null
+          storage_path?: string | null
           status?: Database['public']['Enums']['file_import_status']
           duplicate_of_file_import_id?: string | null
           institution_code?: string | null
@@ -663,6 +673,8 @@ export type Database = {
           file_sha256?: string
           mime_type?: string
           file_size_bytes?: number
+          storage_bucket?: string | null
+          storage_path?: string | null
           status?: Database['public']['Enums']['file_import_status']
           duplicate_of_file_import_id?: string | null
           institution_code?: string | null
@@ -1250,6 +1262,8 @@ export type Database = {
           card_id: string | null
           statement_date: string
           credit_limit: number | null
+          opening_balance: number | null
+          closing_balance: number | null
           payment_due_date: string | null
           minimum_payment: number | null
           grand_total: number | null
@@ -1262,6 +1276,8 @@ export type Database = {
           card_id?: string | null
           statement_date: string
           credit_limit?: number | null
+          opening_balance?: number | null
+          closing_balance?: number | null
           payment_due_date?: string | null
           minimum_payment?: number | null
           grand_total?: number | null
@@ -1274,6 +1290,8 @@ export type Database = {
           card_id?: string | null
           statement_date?: string
           credit_limit?: number | null
+          opening_balance?: number | null
+          closing_balance?: number | null
           payment_due_date?: string | null
           minimum_payment?: number | null
           grand_total?: number | null
@@ -1547,6 +1565,7 @@ export type Database = {
           name: string
           created_at: string
           type: Database['public']['Enums']['category_type'] | null
+          ledger_view: Database['public']['Enums']['ledger_view']
           group_name: string | null
           domain_type: Database['public']['Enums']['category_domain_type']
           payment_subtype: Database['public']['Enums']['category_payment_subtype'] | null
@@ -1570,6 +1589,7 @@ export type Database = {
           name: string
           created_at?: string
           type?: Database['public']['Enums']['category_type'] | null
+          ledger_view?: Database['public']['Enums']['ledger_view']
           group_name?: string | null
           domain_type?: Database['public']['Enums']['category_domain_type']
           payment_subtype?: Database['public']['Enums']['category_payment_subtype'] | null
@@ -1593,6 +1613,7 @@ export type Database = {
           name?: string
           created_at?: string
           type?: Database['public']['Enums']['category_type'] | null
+          ledger_view?: Database['public']['Enums']['ledger_view']
           group_name?: string | null
           domain_type?: Database['public']['Enums']['category_domain_type']
           payment_subtype?: Database['public']['Enums']['category_payment_subtype'] | null
@@ -2602,6 +2623,8 @@ export type Database = {
           link_type: Database['public']['Enums']['link_type']
           link_score: number
           link_reason: Record<string, unknown>
+          transfer_chain_id: string | null
+          allocated_amount: number | null
           status: Database['public']['Enums']['mapping_status']
           matched_by: string
           matched_by_user_id: string | null
@@ -2620,6 +2643,8 @@ export type Database = {
           link_type: Database['public']['Enums']['link_type']
           link_score?: number
           link_reason?: Record<string, unknown>
+          transfer_chain_id?: string | null
+          allocated_amount?: number | null
           status?: Database['public']['Enums']['mapping_status']
           matched_by?: string
           matched_by_user_id?: string | null
@@ -2638,6 +2663,8 @@ export type Database = {
           link_type?: Database['public']['Enums']['link_type']
           link_score?: number
           link_reason?: Record<string, unknown>
+          transfer_chain_id?: string | null
+          allocated_amount?: number | null
           status?: Database['public']['Enums']['mapping_status']
           matched_by?: string
           matched_by_user_id?: string | null
@@ -2707,6 +2734,8 @@ export type Database = {
           link_type: Database['public']['Enums']['link_type']
           link_score: number
           link_reason: Record<string, unknown>
+          transfer_chain_id: string | null
+          allocated_amount: number | null
           status: Database['public']['Enums']['mapping_status']
           matched_by: string
           matched_by_user_id: string | null
@@ -2722,6 +2751,8 @@ export type Database = {
           link_type: Database['public']['Enums']['link_type']
           link_score?: number
           link_reason?: Record<string, unknown>
+          transfer_chain_id?: string | null
+          allocated_amount?: number | null
           status?: Database['public']['Enums']['mapping_status']
           matched_by?: string
           matched_by_user_id?: string | null
@@ -2737,6 +2768,8 @@ export type Database = {
           link_type?: Database['public']['Enums']['link_type']
           link_score?: number
           link_reason?: Record<string, unknown>
+          transfer_chain_id?: string | null
+          allocated_amount?: number | null
           status?: Database['public']['Enums']['mapping_status']
           matched_by?: string
           matched_by_user_id?: string | null
@@ -3082,6 +3115,7 @@ export type Database = {
       txn_type: 'debit' | 'credit' | 'unknown'
       ledger_source_priority: 'receipt' | 'statement' | 'manual'
       ledger_status: 'active' | 'voided' | 'pending'
+      ledger_view: 'spending' | 'cash_flow' | 'excluded'
       receipt_status: 'pending_confirm' | 'confirmed' | 'rejected' | 'duplicate'
       category_type: 'income' | 'expense' | 'transfer'
       category_domain_type: 'receipt' | 'payment'

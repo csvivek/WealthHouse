@@ -20,6 +20,12 @@ export class StatementParseSessionSchemaError extends Error {
   }
 }
 
+export interface ExpiredStatementParseSession {
+  id: string
+  storageBucket: string | null
+  storagePath: string | null
+}
+
 export function isStatementParseSessionSchemaError(error: unknown): boolean {
   if (error instanceof StatementParseSessionSchemaError) return true
   if (!(error instanceof Error)) return false
@@ -47,7 +53,7 @@ export async function cleanupExpiredStatementParseSessions(params: {
   householdId: string
   userId: string
 }) {
-  const { error } = await params.supabase
+  const { data, error } = await params.supabase
     .from(STATEMENT_PARSE_SESSIONS_TABLE)
     .update({
       status: STATEMENT_PARSE_SESSION_STATUS.EXPIRED,
@@ -57,8 +63,20 @@ export async function cleanupExpiredStatementParseSessions(params: {
     .eq('user_id', params.userId)
     .eq('status', STATEMENT_PARSE_SESSION_STATUS.NEEDS_ACCOUNT_RESOLUTION)
     .lt('expires_at', new Date().toISOString())
+    .select('id, storage_bucket, storage_path')
 
   throwIfParseSessionSchemaMissing(error)
+  if (error) {
+    throw new Error(error.message || 'Failed to clean up expired statement parse sessions')
+  }
+
+  return Array.isArray(data)
+    ? data.map((row) => ({
+      id: String(row.id),
+      storageBucket: typeof row.storage_bucket === 'string' ? row.storage_bucket : null,
+      storagePath: typeof row.storage_path === 'string' ? row.storage_path : null,
+    }))
+    : []
 }
 
 export async function createStatementParseSession(params: {
@@ -73,6 +91,8 @@ export async function createStatementParseSession(params: {
   parsedPayload: Record<string, unknown>
   unmatchedAccountDescriptors: Array<Record<string, unknown>>
   suggestedExistingAccounts: Array<Record<string, unknown>>
+  storageBucket?: string | null
+  storagePath?: string | null
 }) {
   const { data, error } = await params.supabase
     .from(STATEMENT_PARSE_SESSIONS_TABLE)
@@ -87,6 +107,8 @@ export async function createStatementParseSession(params: {
       parsed_payload: params.parsedPayload,
       unresolved_descriptors: params.unmatchedAccountDescriptors,
       suggested_existing_accounts: params.suggestedExistingAccounts,
+      storage_bucket: params.storageBucket ?? null,
+      storage_path: params.storagePath ?? null,
       status: STATEMENT_PARSE_SESSION_STATUS.NEEDS_ACCOUNT_RESOLUTION,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       updated_at: new Date().toISOString(),

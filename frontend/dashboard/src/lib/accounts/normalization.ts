@@ -1,3 +1,5 @@
+import institutionRegistry from '@/lib/accounts/institution-registry.json'
+
 export type NormalizedAccountType =
   | 'savings'
   | 'current'
@@ -14,67 +16,13 @@ export interface KnownInstitutionMetadata {
   name: string
   countryCode: string
   type: NormalizedInstitutionType
+  websiteUrl: string
   aliases: string[]
 }
 
-const KNOWN_INSTITUTIONS: Record<string, KnownInstitutionMetadata> = {
-  dbs_bank: {
-    code: 'dbs_bank',
-    name: 'DBS Bank Ltd',
-    countryCode: 'SG',
-    type: 'bank',
-    aliases: ['dbs', 'dbs bank', 'dbs bank ltd'],
-  },
-  dbs_cc: {
-    code: 'dbs_cc',
-    name: 'DBS Bank Ltd',
-    countryCode: 'SG',
-    type: 'bank',
-    aliases: ['dbs card', 'dbs credit card', 'dbs cards'],
-  },
-  ocbc: {
-    code: 'ocbc',
-    name: 'OCBC Bank',
-    countryCode: 'SG',
-    type: 'bank',
-    aliases: ['ocbc', 'ocbc bank'],
-  },
-  uob: {
-    code: 'uob',
-    name: 'UOB',
-    countryCode: 'SG',
-    type: 'bank',
-    aliases: ['uob', 'united overseas bank'],
-  },
-  posb: {
-    code: 'posb',
-    name: 'POSB',
-    countryCode: 'SG',
-    type: 'bank',
-    aliases: ['posb'],
-  },
-  trust_bank: {
-    code: 'trust_bank',
-    name: 'Trust Bank',
-    countryCode: 'SG',
-    type: 'bank',
-    aliases: ['trust', 'trust bank'],
-  },
-  wise: {
-    code: 'wise',
-    name: 'Wise',
-    countryCode: 'SG',
-    type: 'other',
-    aliases: ['wise'],
-  },
-  citibank: {
-    code: 'citibank',
-    name: 'Citibank Singapore Ltd',
-    countryCode: 'SG',
-    type: 'bank',
-    aliases: ['citibank', 'citibank singapore ltd', 'citi', 'citi bank'],
-  },
-}
+const KNOWN_INSTITUTIONS: Record<string, KnownInstitutionMetadata> = Object.fromEntries(
+  (institutionRegistry as KnownInstitutionMetadata[]).map((entry) => [entry.code, entry]),
+)
 
 function cleanText(value?: string | null) {
   return (value ?? '')
@@ -112,6 +60,11 @@ export function getKnownInstitutionMetadata(
   values: Array<string | null | undefined> = [],
 ) {
   const normalizedCode = normalizeInstitutionCode(institutionCode, values)
+  return normalizedCode ? KNOWN_INSTITUTIONS[normalizedCode] ?? null : null
+}
+
+export function getKnownInstitutionMetadataByCode(code?: string | null) {
+  const normalizedCode = cleanText(code).replace(/\s+/g, '_')
   return normalizedCode ? KNOWN_INSTITUTIONS[normalizedCode] ?? null : null
 }
 

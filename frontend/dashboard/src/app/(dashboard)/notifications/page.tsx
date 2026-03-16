@@ -1,19 +1,24 @@
 import { Bell } from 'lucide-react'
+import { ExecutiveEmptyState, ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent } from '@/components/ui/card'
 
 export default function NotificationsPage() {
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold tracking-tight">Notifications</h1>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Digest Workspace"
+        title="Notifications"
+        description="The digest area now has a dedicated placeholder surface for future alerts and approvals without removing the route."
+      />
       <Card>
-        <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-          <Bell className="mb-4 size-12 text-muted-foreground" />
-          <h2 className="text-lg font-semibold">Coming Soon</h2>
-          <p className="text-sm text-muted-foreground">
-            Notifications are planned for a future release.
-          </p>
+        <CardContent>
+          <ExecutiveEmptyState
+            icon={Bell}
+            title="Notifications are planned for a future release"
+            description="This system route remains visible in the new design so future alerting can plug into the same shell."
+          />
         </CardContent>
       </Card>
-    </div>
+    </ExecutivePage>
   )
 }

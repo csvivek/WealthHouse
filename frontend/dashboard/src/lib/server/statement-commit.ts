@@ -126,6 +126,8 @@ function buildStatementSummaryInsert(params: {
     account_id: params.accountId,
     statement_date: statementDate,
     credit_limit: readNumber(params.summary.credit_limit),
+    opening_balance: readNumber(params.summary.opening_balance),
+    closing_balance: readNumber(params.summary.closing_balance),
     minimum_payment: readNumber(params.summary.minimum_payment),
     payment_due_date: paymentDueDate,
     grand_total: readNumber(params.summary.grand_total),

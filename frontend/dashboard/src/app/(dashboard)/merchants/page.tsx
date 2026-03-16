@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Check, Loader2, Search, Store, WandSparkles } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -489,25 +490,24 @@ export default function MerchantsPage() {
   const allSelected = rows.length > 0 && selectedIds.length === rows.length
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Merchants</h1>
-          <p className="text-muted-foreground">
-            Clean up noisy merchant names into canonical merchants with reusable aliases, styling, and safe merge tools.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void runBackfill()} disabled={backfilling || Boolean(schemaMessage)}>
-            {backfilling ? <Loader2 className="mr-2 size-4 animate-spin" /> : <WandSparkles className="mr-2 size-4" />}
-            {backfilling ? 'Backfilling...' : 'Backfill Links'}
-          </Button>
-          <Button onClick={openCreateDialog} disabled={Boolean(schemaMessage)}>
-            <Store className="mr-2 size-4" />
-            New Merchant
-          </Button>
-        </div>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Manage Workspace"
+        title="Merchants"
+        description="Clean up noisy merchant names into canonical merchants with reusable aliases, styling, and safe merge tools."
+        actions={(
+          <>
+            <Button variant="outline" onClick={() => void runBackfill()} disabled={backfilling || Boolean(schemaMessage)}>
+              {backfilling ? <Loader2 className="mr-2 size-4 animate-spin" /> : <WandSparkles className="mr-2 size-4" />}
+              {backfilling ? 'Backfilling...' : 'Backfill Links'}
+            </Button>
+            <Button onClick={openCreateDialog} disabled={Boolean(schemaMessage)}>
+              <Store className="mr-2 size-4" />
+              New Merchant
+            </Button>
+          </>
+        )}
+      />
 
       {schemaMessage && (
         <div className="rounded-xl border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-950">
@@ -975,6 +975,6 @@ export default function MerchantsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ExecutivePage>
   )
 }

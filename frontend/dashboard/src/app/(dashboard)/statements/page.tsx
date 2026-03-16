@@ -11,6 +11,7 @@ import {
   Pencil,
   AlertTriangle,
 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,9 +27,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createClient } from '@/lib/supabase/client'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
+import { getKnownInstitutionMetadataByCode } from '@/lib/accounts/normalization'
 import { formatDate } from '@/lib/format'
+import { isStatementStorageSchemaNotReadyError } from '@/lib/statements/config'
 import { cn } from '@/lib/utils'
 import { EmptyState } from '@/components/empty-state'
+import { InstitutionBrandPicker, type InstitutionBrandDecision, type InstitutionBrandPreviewState } from '@/components/institution-brand-picker'
 import { toast } from 'sonner'
 
 interface AccountOption {
@@ -43,6 +47,8 @@ interface FileImportRow {
   id: string
   file_name: string
   uploaded_by: string
+  storage_bucket: string | null
+  storage_path: string | null
   uploadedByDisplayName: string | null
   uploadedByEmail: string | null
   institution_code: string | null
@@ -64,7 +70,11 @@ interface FileImportRow {
   statement_period_start: string | null
   statement_period_end: string | null
   created_at: string
+  hasStoredFile: boolean
 }
+
+const FILE_IMPORTS_SELECT_WITH_STORAGE = 'id, file_name, uploaded_by, storage_bucket, storage_path, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
+const FILE_IMPORTS_SELECT_FALLBACK = 'id, file_name, uploaded_by, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
 
 interface HouseholdUploaderProfile {
   id: string
@@ -110,6 +120,9 @@ interface DescriptorResolutionState {
   createAccount: {
     institution_name: string
     institution_code: string
+    institution_brand_code: string
+    institution_brand_decision: InstitutionBrandDecision
+    institution_brand_preview: InstitutionBrandPreviewState | null
     product_name: string
     account_type: string
     identifier_hint: string
@@ -193,12 +206,38 @@ export default function StatementsPage() {
         .eq('household_id', profile.household_id)
         .eq('is_active', true)
         .order('created_at', { ascending: false }),
-      supabase
-        .from('file_imports')
-        .select('id, file_name, uploaded_by, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at')
-        .eq('household_id', profile.household_id)
-        .order('created_at', { ascending: false })
-        .limit(50),
+      (async () => {
+        const withStorage = await supabase
+          .from('file_imports')
+          .select(FILE_IMPORTS_SELECT_WITH_STORAGE)
+          .eq('household_id', profile.household_id)
+          .order('created_at', { ascending: false })
+          .limit(50)
+
+        if (!isStatementStorageSchemaNotReadyError(withStorage.error, 'file_imports')) {
+          return withStorage
+        }
+
+        const fallback = await supabase
+          .from('file_imports')
+          .select(FILE_IMPORTS_SELECT_FALLBACK)
+          .eq('household_id', profile.household_id)
+          .order('created_at', { ascending: false })
+          .limit(50)
+
+        if (fallback.error || !Array.isArray(fallback.data)) {
+          return fallback
+        }
+
+        return {
+          ...fallback,
+          data: fallback.data.map((importRow) => ({
+            ...importRow,
+            storage_bucket: null,
+            storage_path: null,
+          })),
+        }
+      })(),
       fetch('/api/household/profiles'),
     ])
 
@@ -209,11 +248,12 @@ export default function StatementsPage() {
     const uploadersById = new Map(
       householdProfiles.map((householdProfile) => [householdProfile.id, householdProfile]),
     )
-    const importRows = ((importRes.data as Array<Omit<FileImportRow, 'uploadedByDisplayName' | 'uploadedByEmail'>> | null) ?? [])
+    const importRows = ((importRes.data as Array<Omit<FileImportRow, 'uploadedByDisplayName' | 'uploadedByEmail' | 'hasStoredFile'>> | null) ?? [])
       .map((importRow) => {
         const uploader = uploadersById.get(importRow.uploaded_by)
         return {
           ...importRow,
+          hasStoredFile: Boolean(importRow.storage_bucket && importRow.storage_path),
           uploadedByDisplayName: uploader?.display_name ?? null,
           uploadedByEmail: uploader?.email ?? null,
         }
@@ -286,6 +326,9 @@ export default function StatementsPage() {
         createAccount: {
           institution_name: descriptor.institution_name || '',
           institution_code: descriptor.institution_code || '',
+          institution_brand_code: getKnownInstitutionMetadataByCode(descriptor.institution_code)?.code || '',
+          institution_brand_decision: null,
+          institution_brand_preview: null,
           product_name: descriptor.card_name || descriptor.product_name || '',
           account_type: descriptor.account_type || 'savings',
           identifier_hint: descriptor.identifier_hint || descriptor.card_last4 || '',
@@ -400,11 +443,22 @@ export default function StatementsPage() {
         return
       }
 
+      if ((create.institution_brand_preview?.matched || create.institution_brand_code) && !create.institution_brand_decision) {
+        toast.error(`Choose whether to use the verified institution brand for: ${descriptor.label}`)
+        return
+      }
+
+      const verifiedBrand = create.institution_brand_decision === 'verified'
+        ? create.institution_brand_preview
+        : null
+
       resolutions.push({
         descriptorKey: descriptor.descriptorKey,
         createAccount: {
-          institution_name: create.institution_name.trim(),
+          institution_name: verifiedBrand?.canonicalName?.trim() || create.institution_name.trim(),
           institution_code: create.institution_code.trim() || null,
+          institution_brand_code: verifiedBrand?.brandCode || null,
+          institution_brand_decision: verifiedBrand ? 'verified' : 'generic',
           product_name: create.product_name.trim(),
           account_type: create.account_type,
           identifier_hint: create.identifier_hint.trim() || null,
@@ -495,13 +549,23 @@ export default function StatementsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Statements</h1>
-        <p className="text-muted-foreground">
-          Upload bank and credit card statements to import transactions.
-        </p>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Import Workspace"
+        title="Statements"
+        description="Upload bank and credit card statements, recover parser mismatches, and preserve the full import review flow."
+        actions={(
+          <Button variant="outline" onClick={() => router.push('/statements/overview')}>
+            Overview
+          </Button>
+        )}
+        badges={(
+          <>
+            <Badge variant="outline">{imports.length} recent imports</Badge>
+            {hasActiveJobs ? <Badge variant="outline">Commit jobs active</Badge> : null}
+          </>
+        )}
+      />
 
       <Card id="statement-upload">
         <CardHeader>
@@ -675,6 +739,31 @@ export default function StatementsPage() {
                               createAccount: {
                                 ...current.createAccount,
                                 institution_name: event.target.value,
+                                institution_brand_code: '',
+                                institution_brand_decision: null,
+                                institution_brand_preview: null,
+                              },
+                            }))}
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <InstitutionBrandPicker
+                            institutionName={resolution.createAccount.institution_name}
+                            institutionCode={resolution.createAccount.institution_code}
+                            selection={resolution.createAccount.institution_brand_decision}
+                            onSelectionChange={(selection) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                              ...current,
+                              createAccount: {
+                                ...current.createAccount,
+                                institution_brand_decision: selection,
+                              },
+                            }))}
+                            onPreviewChange={(preview) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                              ...current,
+                              createAccount: {
+                                ...current.createAccount,
+                                institution_brand_preview: preview,
+                                institution_brand_code: preview?.brandCode || '',
                               },
                             }))}
                           />
@@ -920,6 +1009,14 @@ export default function StatementsPage() {
                         </td>
                         <td className="py-3">
                           <div className="flex items-center gap-2">
+                            {importRow.hasStoredFile && (
+                              <Button asChild variant="ghost" size="sm" className="gap-1 text-xs">
+                                <a href={`/api/ai/statement/${importRow.id}/file`} target="_blank" rel="noreferrer">
+                                  <FileText className="size-3" />
+                                  Open Statement
+                                </a>
+                              </Button>
+                            )}
                             {(importRow.status === 'in_review' || importRow.status === 'committed' || importRow.status === 'committing') && (
                               <Button
                                 variant="ghost"
@@ -953,6 +1050,6 @@ export default function StatementsPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </ExecutivePage>
   )
 }

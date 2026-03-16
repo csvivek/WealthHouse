@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Bot, CheckCircle2, Loader2, RefreshCw, Save, Search, Sparkles, Unlink2 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -613,20 +614,15 @@ export default function ReceiptReviewPage() {
     && (!lowConfidence || Boolean(staging?.user_confirmed_low_confidence))
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <Button variant="ghost" className="-ml-3 gap-2" onClick={() => router.push('/receipts')}>
-            <ArrowLeft className="size-4" />
-            Back to Receipts
-          </Button>
-          <h1 className="text-2xl font-bold tracking-tight">Receipt Review</h1>
-          <p className="text-sm text-muted-foreground">
-            {upload.original_filename} • Uploaded {formatDate(upload.created_at)}
-          </p>
-        </div>
-        <Badge>{upload.status}</Badge>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Digest Workspace"
+        title="Receipt Review"
+        description={`${upload.original_filename} • Uploaded ${formatDate(upload.created_at)}`}
+        backHref="/receipts"
+        backLabel="Back to Receipts"
+        badges={<Badge>{upload.status}</Badge>}
+      />
 
       {upload.status === 'parsing' && (
         <Card>
@@ -1146,6 +1142,6 @@ export default function ReceiptReviewPage() {
           </Card>
         </>
       )}
-    </div>
+    </ExecutivePage>
   )
 }

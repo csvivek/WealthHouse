@@ -138,6 +138,8 @@ function createMutableDb(params?: {
     statement_period_end: '2026-02-18',
     summary_json: {
       credit_limit: 3000,
+      opening_balance: 144.22,
+      closing_balance: 69.04,
       minimum_payment: 50,
       payment_due_date: '2026-02-20',
       grand_total: 69.04,
@@ -373,6 +375,8 @@ describe('processStatementCommit summary handling', () => {
     expect(result.warnings).toEqual([])
     expect(context.tables.statement_summaries[0]).toMatchObject({
       credit_limit: 3000,
+      opening_balance: 144.22,
+      closing_balance: 69.04,
       minimum_payment: 50,
       grand_total: 69.04,
       statement_date: '2026-02-18',

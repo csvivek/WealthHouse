@@ -33,6 +33,8 @@ interface InstitutionRecord {
   name: string
   country_code: string
   type: string
+  website_url?: string | null
+  icon_url?: string | null
 }
 
 interface CardRecord {
@@ -163,6 +165,25 @@ function createServiceDbMock(params: {
                 params.institutions.push(created)
                 return { data: created, error: null }
               },
+            }),
+          }),
+          update: (values: Partial<InstitutionRecord>) => ({
+            eq: (column: string, value: unknown) => ({
+              select: () => ({
+                single: async () => {
+                  const index = params.institutions.findIndex((row) => row[column as keyof InstitutionRecord] === value)
+                  if (index === -1) {
+                    return { data: null, error: { message: 'Institution not found' } }
+                  }
+
+                  params.institutions[index] = {
+                    ...params.institutions[index],
+                    ...values,
+                  }
+
+                  return { data: params.institutions[index], error: null }
+                },
+              }),
             }),
           }),
         }
@@ -413,5 +434,69 @@ describe('PATCH /api/accounts/[id]', () => {
 
     expect(response.status).toBe(400)
     expect(payload.error).toBe('Account type cannot be changed.')
+  })
+
+  it('persists verified institution branding metadata when the user confirms a matched brand', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      text: async () => '<link rel="icon" href="/favicon.ico" />',
+    })))
+
+    const accounts = [
+      {
+        id: 'acct-1',
+        household_id: 'hh-1',
+        institution_id: 'inst-1',
+        account_type: 'savings',
+        product_name: 'Everyday Account',
+        nickname: null,
+        identifier_hint: null,
+        currency: 'SGD',
+        is_active: true,
+      },
+    ]
+    const institutions = [{
+      id: 'inst-1',
+      name: 'DBS Bank Ltd',
+      country_code: 'SG',
+      type: 'bank',
+      website_url: null,
+      icon_url: null,
+    }]
+
+    mockedCreateServerSupabaseClient.mockResolvedValue(createAuthSupabaseMock('user-1') as never)
+    mockedCreateServiceSupabaseClient.mockReturnValue(createServiceDbMock({
+      accounts,
+      institutions,
+    }) as never)
+
+    const request = new NextRequest('http://localhost/api/accounts/acct-1', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        institution_name: 'DBS',
+        institution_brand_code: 'dbs_bank',
+        institution_brand_decision: 'verified',
+        product_name: 'Everyday Account',
+        nickname: null,
+        identifier_hint: null,
+        currency: 'SGD',
+        is_active: true,
+      }),
+      headers: { 'content-type': 'application/json' },
+    })
+
+    const response = await PATCH(request, { params: Promise.resolve({ id: 'acct-1' }) })
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload.institution).toEqual(expect.objectContaining({
+      id: 'inst-1',
+      website_url: 'https://www.dbs.com/',
+      icon_url: 'https://www.dbs.com/favicon.ico',
+    }))
+    expect(institutions[0]).toEqual(expect.objectContaining({
+      website_url: 'https://www.dbs.com/',
+      icon_url: 'https://www.dbs.com/favicon.ico',
+    }))
   })
 })

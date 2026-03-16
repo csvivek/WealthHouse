@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2, UploadCloud, FileText, TriangleAlert, CheckCircle2, CircleX, Eye, Settings2 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -294,31 +295,38 @@ export default function ReceiptsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Receipts</h1>
-          <p className="text-muted-foreground">Upload receipts, review staged extraction, then approve into final receipt records.</p>
-        </div>
-
-        <label className="inline-flex items-center gap-2">
-          <input
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={async (event) => {
-              const file = event.target.files?.[0]
-              if (!file) return
-              await handleUpload(file)
-              event.target.value = ''
-            }}
-          />
-          <span className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
-            {uploading ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
-            {uploading ? 'Uploading…' : 'Upload Receipt'}
-          </span>
-        </label>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Digest Workspace"
+        title="Receipts"
+        description="Upload receipts, review staged extraction, then approve them into final receipt records without losing the existing import and tagging workflows."
+        badges={(
+          <>
+            <Badge variant="outline">{stats.needsReview} need review</Badge>
+            <Badge variant="outline">{stats.ready} ready</Badge>
+            <Badge variant="outline">{stats.finalReceipts} final receipts</Badge>
+          </>
+        )}
+        actions={(
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              onChange={async (event) => {
+                const file = event.target.files?.[0]
+                if (!file) return
+                await handleUpload(file)
+                event.target.value = ''
+              }}
+            />
+            <span className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-[0_14px_30px_rgba(201,168,76,0.18)] hover:opacity-90">
+              {uploading ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
+              {uploading ? 'Uploading…' : 'Upload Receipt'}
+            </span>
+          </label>
+        )}
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <Card><CardContent className="pt-0"><p className="text-xs text-muted-foreground">Total Uploads</p><p className="text-2xl font-bold">{stats.totalUploads}</p></CardContent></Card>
@@ -500,6 +508,6 @@ export default function ReceiptsPage() {
           )}
         </SheetContent>
       </Sheet>
-    </div>
+    </ExecutivePage>
   )
 }

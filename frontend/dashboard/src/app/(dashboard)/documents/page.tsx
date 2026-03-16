@@ -1,19 +1,24 @@
 import { FileText } from 'lucide-react'
+import { ExecutiveEmptyState, ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent } from '@/components/ui/card'
 
 export default function DocumentsPage() {
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold tracking-tight">Documents</h1>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="System Workspace"
+        title="Documents"
+        description="Document storage keeps its route presence in the executive shell while the underlying feature remains in a coming-soon state."
+      />
       <Card>
-        <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-          <FileText className="mb-4 size-12 text-muted-foreground" />
-          <h2 className="text-lg font-semibold">Coming Soon</h2>
-          <p className="text-sm text-muted-foreground">
-            Document storage is planned for a future release.
-          </p>
+        <CardContent>
+          <ExecutiveEmptyState
+            icon={FileText}
+            title="Document storage is coming soon"
+            description="The route remains styled and reachable so the redesign does not hide unfinished but intentional system surfaces."
+          />
         </CardContent>
       </Card>
-    </div>
+    </ExecutivePage>
   )
 }

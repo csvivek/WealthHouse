@@ -12,6 +12,7 @@ import {
   FileSearch,
   Loader2,
 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import {
   Card,
   CardContent,
@@ -224,27 +225,25 @@ export default function DataHealthPage() {
   const anomalyCheck = findCheck(checks, 'anomal')
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Data Health</h1>
-          <p className="text-muted-foreground">
-            Monitor data integrity, review AI-generated entries, and run reconciliation checks.
-          </p>
-        </div>
-        <Button
-          onClick={handleRunReconciliation}
-          disabled={runningReconciliation}
-        >
-          {runningReconciliation ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-          Run Reconciliation
-        </Button>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="System Workspace"
+        title="Data Health"
+        description="Monitor data integrity, review AI-generated entries, and run reconciliation checks without losing any quarantine or audit workflows."
+        actions={(
+          <Button
+            onClick={handleRunReconciliation}
+            disabled={runningReconciliation}
+          >
+            {runningReconciliation ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Run Reconciliation
+          </Button>
+        )}
+      />
 
       {/* Section 1: Health Score Cards */}
       {loadingReconciliation ? (
@@ -545,6 +544,6 @@ export default function DataHealthPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </ExecutivePage>
   )
 }

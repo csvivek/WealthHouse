@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import StatementsPage from '@/app/(dashboard)/statements/page'
 import { createClient } from '@/lib/supabase/client'
+import { toast } from 'sonner'
 
 vi.mock('@/lib/supabase/client', () => ({
   createClient: vi.fn(),
@@ -43,6 +44,8 @@ function createSupabaseClientMock() {
       id: 'import-1',
       file_name: 'owner-statement.pdf',
       uploaded_by: 'user-1',
+      storage_bucket: 'statements',
+      storage_path: 'households/hh-1/statements/import-1/owner-statement.pdf',
       institution_code: 'dbs',
       raw_parse_result: {
         institution_name: 'DBS Bank Ltd',
@@ -63,6 +66,8 @@ function createSupabaseClientMock() {
       id: 'import-2',
       file_name: 'alex-statement.pdf',
       uploaded_by: 'user-2',
+      storage_bucket: null,
+      storage_path: null,
       institution_code: 'ocbc',
       raw_parse_result: {
         institution_name: 'OCBC Bank',
@@ -167,6 +172,11 @@ describe('StatementsPage', () => {
 
     expect(await screen.findByText('owner-statement.pdf')).toBeInTheDocument()
     expect(screen.getByText('alex-statement.pdf')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open Statement' })).toHaveAttribute(
+      'href',
+      '/api/ai/statement/import-1/file',
+    )
+    expect(screen.getAllByRole('link', { name: 'Open Statement' })).toHaveLength(1)
     expect(screen.getByText('You')).toBeInTheDocument()
     expect(screen.getByText('Alex Example')).toBeInTheDocument()
 
@@ -178,5 +188,101 @@ describe('StatementsPage', () => {
       expect(screen.queryByText('owner-statement.pdf')).not.toBeInTheDocument()
     })
     expect(screen.getByText('alex-statement.pdf')).toBeInTheDocument()
+  })
+
+  it('requires a verified-brand choice before continuing a recovery import', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+
+      if (url === '/api/household/profiles') {
+        return createJsonResponse({ profiles: [] })
+      }
+
+      if (url === '/api/ai/statement' && init?.method === 'POST') {
+        return createJsonResponse({
+          error: 'Account matching needs your review before import can continue.',
+          code: 'transaction_account_match_required',
+          parseSessionId: 'session-1',
+          unmatchedAccountDescriptors: [
+            {
+              descriptorKey: 'dbs-1',
+              label: 'DBS — Altitude Card',
+              transactionCount: 1,
+              sampleRowIndexes: [0],
+              institution_name: 'DBS',
+              institution_code: 'dbs_bank',
+              account_type: 'credit_card',
+              product_name: 'Altitude Card',
+              identifier_hint: '4242',
+              card_name: 'Altitude Card',
+              card_last4: '4242',
+              currency: 'SGD',
+              suggestedExistingAccountId: null,
+              suggestedExistingAccountLabel: null,
+              suggestedScore: null,
+            },
+          ],
+          suggestedExistingAccounts: [],
+        }, false, 422)
+      }
+
+      if (url.startsWith('/api/institutions/brand-preview?')) {
+        return createJsonResponse({
+          matched: true,
+          brandCode: 'dbs_bank',
+          canonicalName: 'DBS Bank Ltd',
+          websiteUrl: 'https://www.dbs.com/',
+          iconUrl: 'https://www.dbs.com/favicon.ico',
+        })
+      }
+
+      if (url === '/api/ai/statement/resolve-account' && init?.method === 'POST') {
+        return createJsonResponse({
+          reviewUrl: '/statements/review/import-1',
+          transactionsCount: 1,
+        })
+      }
+
+      throw new Error(`Unexpected fetch call ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<StatementsPage />)
+
+    await screen.findByText('Drop your statement here or click to browse')
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+
+    const file = new File(['statement'], 'statement.pdf', { type: 'application/pdf' })
+    if (!input) throw new Error('File input not found')
+    await userEvent.upload(input, file)
+
+    expect(await screen.findByText('Account Matching Needs Review')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Use verified brand' })).toBeInTheDocument()
+    vi.mocked(toast.error).mockClear()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continue Import' }))
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some((call) => String(call[0]) === '/api/ai/statement/resolve-account')).toBe(false)
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Use verified brand' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Continue Import' }))
+
+    await waitFor(() => {
+      const resolveCall = fetchMock.mock.calls.find((call) => String(call[0]) === '/api/ai/statement/resolve-account')
+      expect(resolveCall).toBeTruthy()
+      const payload = JSON.parse(String(resolveCall?.[1]?.body ?? '{}'))
+      expect(payload.resolutions).toEqual([
+        {
+          descriptorKey: 'dbs-1',
+          createAccount: expect.objectContaining({
+            institution_name: 'DBS Bank Ltd',
+            institution_brand_code: 'dbs_bank',
+            institution_brand_decision: 'verified',
+          }),
+        },
+      ])
+    })
   })
 })

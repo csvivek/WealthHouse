@@ -1,198 +1,160 @@
 // @vitest-environment node
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { POST } from '@/app/api/ai/chat/route'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { getFinancialAdvice } from '@/lib/ai/advisor'
+import { createChatEventStream } from '@/lib/ai/chat/orchestrator'
+import {
+  getAuthenticatedChatRequestContext,
+  getAuthorizedChatSessionContext,
+} from '@/lib/ai/chat/request-context'
+import type { ChatSessionPayload } from '@/lib/ai/chat/types'
 
-vi.mock('@/lib/supabase/server', () => ({
-  createServerSupabaseClient: vi.fn(),
+vi.mock('@/lib/ai/chat/orchestrator', () => ({
+  createChatEventStream: vi.fn(),
 }))
 
-vi.mock('@/lib/ai/advisor', () => ({
-  getFinancialAdvice: vi.fn(),
+vi.mock('@/lib/ai/chat/request-context', () => ({
+  getAuthenticatedChatRequestContext: vi.fn(),
+  getAuthorizedChatSessionContext: vi.fn(),
 }))
 
-const mockedCreateServerSupabaseClient = vi.mocked(createServerSupabaseClient)
-const mockedGetFinancialAdvice = vi.mocked(getFinancialAdvice)
+const mockedCreateChatEventStream = vi.mocked(createChatEventStream)
+const mockedGetAuthenticatedChatRequestContext = vi.mocked(getAuthenticatedChatRequestContext)
+const mockedGetAuthorizedChatSessionContext = vi.mocked(getAuthorizedChatSessionContext)
 
-function createRequest(payload: unknown) {
-  return new NextRequest('http://localhost/api/ai/chat', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-    headers: { 'content-type': 'application/json' },
-  })
+const sessionPayload: ChatSessionPayload = {
+  userDisplayName: 'Owner User',
+  householdId: 'hh-1',
+  householdName: 'Home',
+  baseCurrency: 'SGD',
+  accounts: [
+    {
+      id: 'acct-1',
+      name: 'DBS Altitude',
+      productName: 'DBS Altitude',
+      nickname: null,
+      institutionName: 'DBS',
+      identifierHint: '1234',
+      accountType: 'credit_card',
+      currency: 'SGD',
+    },
+  ],
+  promptChips: ["What's my net worth today?"],
+  coverage: {
+    transactions: { start: '2026-01-01', end: '2026-03-01' },
+    ledger: { start: '2026-01-01', end: '2026-03-01' },
+    statementSummaries: { start: '2026-01-31', end: '2026-02-28' },
+  },
 }
 
-function createSupabaseMock(params: {
-  user: { id: string } | null
-  householdId?: string | null
-  accounts?: Array<{ id: string; product_name: string; account_type: string; currency: string }>
-  transactions?: Array<{ merchant_normalized: string | null; merchant_raw: string | null; amount: number; txn_date: string; merchant?: { name: string | null } | null }>
-  balances?: Array<{ balance: number; assets: { symbol: string } | null }>
-}) {
-  return {
-    auth: {
-      getUser: async () => ({ data: { user: params.user } }),
-    },
-    from: (table: string) => {
-      if (table === 'user_profiles') {
-        return {
-          select: () => ({
-            eq: () => ({
-              single: async () => ({
-                data: params.householdId ? { household_id: params.householdId } : null,
-              }),
-            }),
-          }),
-        }
-      }
-
-      if (table === 'accounts') {
-        return {
-          select: () => ({
-            eq: async () => ({ data: params.accounts ?? [] }),
-          }),
-        }
-      }
-
-      if (table === 'statement_transactions') {
-        return {
-          select: () => ({
-            in: () => ({
-              order: () => ({
-                limit: async () => ({ data: params.transactions ?? [] }),
-              }),
-            }),
-          }),
-        }
-      }
-
-      if (table === 'asset_balances') {
-        return {
-          select: () => ({
-            in: async () => ({ data: params.balances ?? [] }),
-          }),
-        }
-      }
-
-      throw new Error(`Unexpected table ${table}`)
-    },
-  }
+function createRequest(body: unknown) {
+  return new NextRequest('http://localhost/api/ai/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 describe('POST /api/ai/chat', () => {
   beforeEach(() => {
-    mockedCreateServerSupabaseClient.mockReset()
-    mockedGetFinancialAdvice.mockReset()
+    mockedCreateChatEventStream.mockReset()
+    mockedGetAuthenticatedChatRequestContext.mockReset()
+    mockedGetAuthorizedChatSessionContext.mockReset()
   })
 
-  it('returns 401 for unauthenticated users', async () => {
-    mockedCreateServerSupabaseClient.mockResolvedValueOnce(
-      createSupabaseMock({ user: null }) as never,
-    )
+  it('returns 401 when unauthenticated', async () => {
+    mockedGetAuthenticatedChatRequestContext.mockResolvedValueOnce(null)
 
-    const response = await POST(createRequest({ message: 'hi' }))
+    const response = await POST(createRequest({ message: 'hello' }))
     const payload = await response.json()
 
     expect(response.status).toBe(401)
     expect(payload).toEqual({ error: 'Unauthorized' })
-    expect(mockedGetFinancialAdvice).not.toHaveBeenCalled()
   })
 
-  it('returns 400 when message is missing', async () => {
-    mockedCreateServerSupabaseClient.mockResolvedValueOnce(
-      createSupabaseMock({ user: { id: 'user-1' }, householdId: 'hh-1' }) as never,
-    )
+  it('returns 400 when message is empty', async () => {
+    mockedGetAuthenticatedChatRequestContext.mockResolvedValueOnce({
+      supabase: {} as never,
+      userId: 'user-1',
+      householdId: 'hh-1',
+    })
 
-    const response = await POST(createRequest({ history: [] }))
+    const response = await POST(createRequest({ message: '   ' }))
     const payload = await response.json()
 
     expect(response.status).toBe(400)
     expect(payload).toEqual({ error: 'Message is required' })
+    expect(mockedGetAuthorizedChatSessionContext).not.toHaveBeenCalled()
+    expect(mockedCreateChatEventStream).not.toHaveBeenCalled()
   })
 
-  it('builds typed context and returns advice for valid requests', async () => {
-    mockedCreateServerSupabaseClient.mockResolvedValueOnce(
-      createSupabaseMock({
-        user: { id: 'user-1' },
-        householdId: 'hh-1',
-        accounts: [
-          { id: 'acc-1', product_name: 'DBS Savings', account_type: 'bank', currency: 'SGD' },
-        ],
-        transactions: [
-          {
-            merchant_normalized: 'ntuc',
-            merchant_raw: null,
-            amount: 34.5,
-            txn_date: '2026-03-01',
+  it('returns an event stream and passes parsed history plus session context', async () => {
+    mockedGetAuthenticatedChatRequestContext.mockResolvedValueOnce({
+      supabase: {} as never,
+      userId: 'user-1',
+      householdId: 'hh-1',
+    })
+    mockedGetAuthorizedChatSessionContext.mockResolvedValueOnce(sessionPayload)
+    mockedCreateChatEventStream.mockReturnValueOnce(new ReadableStream({
+      start(controller) {
+        controller.close()
+      },
+    }))
+
+    const response = await POST(createRequest({
+      message: 'Show me my last 5 DBS transactions',
+      history: [
+        { role: 'user', content: 'How much did I spend last month?' },
+        {
+          role: 'assistant',
+          content: 'You spent SGD 420.',
+          assistantContext: {
+            intent: 'spending',
+            periodLabel: 'last month',
+            dateFrom: '2026-02-01',
+            dateTo: '2026-02-28',
+            comparisonDateFrom: null,
+            comparisonDateTo: null,
+            comparisonPeriodLabel: null,
+            accountIds: ['acct-1'],
+            accountNames: ['DBS Altitude'],
+            merchant: null,
+            categoryNames: ['Eating Out'],
+            counterpartyName: null,
+            currencyMode: 'single_currency',
+            groupBy: 'merchant',
+            nextCursor: null,
+            dataAvailability: 'available',
           },
-        ],
-        balances: [{ balance: 2.5, assets: { symbol: 'BTC' } }],
-      }) as never,
-    )
-    mockedGetFinancialAdvice.mockResolvedValueOnce('Advice output')
-
-    const response = await POST(
-      createRequest({
-        message: 'How am I doing?',
-        history: [{ role: 'user', content: 'hello' }, { role: 'bad', content: 10 }],
-      }),
-    )
-
-    const payload = await response.json()
+        },
+        { role: 'system', content: 'skip me' },
+        { role: 'assistant', content: 42 },
+      ],
+      sessionContext: sessionPayload,
+    }))
 
     expect(response.status).toBe(200)
-    expect(payload).toEqual({ response: 'Advice output' })
-    expect(mockedGetFinancialAdvice).toHaveBeenCalledWith(
-      'How am I doing?',
-      [{ role: 'user', content: 'hello' }],
-      {
-        accounts: [{ name: 'DBS Savings', type: 'bank', currency: 'SGD' }],
-        recentTransactions: [
-          { merchant_display: 'ntuc', amount: 34.5, txn_date: '2026-03-01' },
-        ],
-        holdings: [{ symbol: 'BTC', balance: 2.5 }],
-      },
-    )
-  })
-
-  it('prefers canonical merchant names over normalized/raw fallbacks in chat context', async () => {
-    mockedCreateServerSupabaseClient.mockResolvedValueOnce(
-      createSupabaseMock({
-        user: { id: 'user-1' },
-        householdId: 'hh-1',
-        accounts: [
-          { id: 'acc-1', product_name: 'DBS Savings', account_type: 'bank', currency: 'SGD' },
-        ],
-        transactions: [
-          {
-            merchant_normalized: 'starbucks sg',
-            merchant_raw: 'STARBUCKS - Plaza Sing',
-            merchant: { name: 'Starbucks' },
-            amount: 8.2,
-            txn_date: '2026-03-02',
-          },
-        ],
-      }) as never,
-    )
-    mockedGetFinancialAdvice.mockResolvedValueOnce('Advice output')
-
-    const response = await POST(createRequest({ message: 'Summarize spending' }))
-    const payload = await response.json()
-
-    expect(response.status).toBe(200)
-    expect(payload).toEqual({ response: 'Advice output' })
-    expect(mockedGetFinancialAdvice).toHaveBeenCalledWith(
-      'Summarize spending',
-      [],
-      {
-        accounts: [{ name: 'DBS Savings', type: 'bank', currency: 'SGD' }],
-        recentTransactions: [
-          { merchant_display: 'Starbucks', amount: 8.2, txn_date: '2026-03-02' },
-        ],
-        holdings: [],
-      },
-    )
+    expect(response.headers.get('Content-Type')).toContain('text/event-stream')
+    expect(mockedGetAuthorizedChatSessionContext).toHaveBeenCalledWith({
+      requestedSession: sessionPayload,
+      userId: 'user-1',
+      householdId: 'hh-1',
+    })
+    expect(mockedCreateChatEventStream).toHaveBeenCalledWith({
+      message: 'Show me my last 5 DBS transactions',
+      history: [
+        { role: 'user', content: 'How much did I spend last month?', assistantContext: null },
+        {
+          role: 'assistant',
+          content: 'You spent SGD 420.',
+          assistantContext: expect.objectContaining({
+            intent: 'spending',
+            dateFrom: '2026-02-01',
+            accountIds: ['acct-1'],
+          }),
+        },
+      ],
+      session: sessionPayload,
+    })
   })
 })

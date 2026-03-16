@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   AccountMutationError,
+  type InstitutionBrandDecision,
   updateAccountWithRelatedRecords,
 } from '@/lib/server/accounts'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
@@ -69,6 +70,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       cardName: typeof body?.card_name === 'string' ? body.card_name.trim() || null : null,
       cardLast4: typeof body?.card_last4 === 'string' ? body.card_last4 : null,
       accountType: typeof body?.account_type === 'string' ? body.account_type : null,
+      institutionBrandCode: typeof body?.institution_brand_code === 'string' ? body.institution_brand_code : null,
+      institutionBrandDecision: (
+        body?.institution_brand_decision === 'verified' || body?.institution_brand_decision === 'generic'
+          ? body.institution_brand_decision
+          : null
+      ) as InstitutionBrandDecision | null,
     })
 
     return NextResponse.json(result)

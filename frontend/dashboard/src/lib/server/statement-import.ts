@@ -605,10 +605,14 @@ export async function stageRoutedTransactions(params: {
   mimeType: string
   fileSizeBytes: number
   primaryAccount: ResolvedAccount
+  fileImportId?: string
+  storageBucket?: string | null
+  storagePath?: string | null
 }) {
   const { data: fileImport, error: fileImportError } = await params.supabase
     .from('file_imports')
     .insert({
+      id: params.fileImportId,
       household_id: params.householdId,
       account_id: params.primaryAccount.id,
       uploaded_by: params.userId,
@@ -616,6 +620,8 @@ export async function stageRoutedTransactions(params: {
       file_sha256: params.fileSha256,
       mime_type: params.mimeType || 'application/octet-stream',
       file_size_bytes: params.fileSizeBytes,
+      storage_bucket: params.storageBucket ?? null,
+      storage_path: params.storagePath ?? null,
       status: 'parsing',
       institution_id: params.primaryAccount.institutionId,
     })

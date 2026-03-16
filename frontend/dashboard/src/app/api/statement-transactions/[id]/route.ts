@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { Database } from '@/types/database'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { getAuthenticatedHouseholdContext } from '@/lib/server/household-context'
 import { isApprovedMappingStatus, withApprovedMappingStatusFallback } from '@/lib/statement-linking/config'
@@ -7,10 +8,14 @@ import { isPaymentCategoryTypeCompatible, normalizeTxnDirection } from '@/lib/tr
 import {
   buildInternalTransferLinkSummary,
   getInternalTransferCounterpartId,
-  isInternalTransferCategoryName,
+  resolveTransferCategoryLinkType,
   type InternalTransferLinkRecord,
   type InternalTransferTransactionLike,
 } from '@/lib/transactions/internal-transfer-links'
+
+const SUPPORTED_TRANSFER_LINK_TYPES = ['internal_transfer', 'credit_card_payment', 'loan_repayment'] as const
+
+type SupportedTransferLinkType = typeof SUPPORTED_TRANSFER_LINK_TYPES[number]
 
 interface CategoryResponse {
   id: number
@@ -39,6 +44,7 @@ interface TagResponse {
 interface StatementTransactionAccessRow {
   id: string
   txn_type: string
+  amount: number
   category_id: number | null
   account_id: string
 }
@@ -65,6 +71,15 @@ interface StatementTransactionEditorResponse extends StatementTransactionSummary
   category_id: number | null
   category: CategoryResponse | null
   statement_transaction_tags: unknown
+}
+
+function isSupportedTransferLinkType(value: unknown): value is SupportedTransferLinkType {
+  return typeof value === 'string' && SUPPORTED_TRANSFER_LINK_TYPES.includes(value as SupportedTransferLinkType)
+}
+
+function isTransferCategory(category: CategoryResponse | null) {
+  const categoryType = category?.type ?? category?.payment_subtype
+  return categoryType === 'transfer'
 }
 
 class RouteError extends Error {
@@ -105,7 +120,7 @@ async function getStatementTransactionForHousehold(
 ) {
   const { data: transaction, error: transactionError } = await db
     .from('statement_transactions')
-    .select('id, txn_type, category_id, account_id')
+    .select('id, txn_type, amount, category_id, account_id')
     .eq('id', transactionId)
     .maybeSingle()
 
@@ -166,7 +181,7 @@ async function getStatementTransactionEditorState(
   if (!data) throw new Error('Transaction not found.')
 
   const row = data as unknown as StatementTransactionEditorResponse
-  const links = await getInternalTransferLinksForTransaction(db, transactionId)
+  const links = await getTransferLinksForTransaction(db, transactionId)
   const counterpartId = links
     .map((link) => getInternalTransferCounterpartId(transactionId, link))
     .find((value): value is string => Boolean(value))
@@ -192,20 +207,18 @@ async function getStatementTransactionEditorState(
   }
 }
 
-async function getInternalTransferLinksForTransaction(
+async function getTransferLinksForTransaction(
   db: ReturnType<typeof createServiceSupabaseClient>,
   transactionId: string,
 ) {
   const [outgoingResult, incomingResult] = await Promise.all([
     db
       .from('transaction_links')
-      .select('id, from_transaction_id, to_transaction_id, link_type, status')
-      .eq('link_type', 'internal_transfer')
+      .select('id, from_transaction_id, to_transaction_id, link_type, status, transfer_chain_id, allocated_amount')
       .eq('from_transaction_id', transactionId),
     db
       .from('transaction_links')
-      .select('id, from_transaction_id, to_transaction_id, link_type, status')
-      .eq('link_type', 'internal_transfer')
+      .select('id, from_transaction_id, to_transaction_id, link_type, status, transfer_chain_id, allocated_amount')
       .eq('to_transaction_id', transactionId),
   ])
 
@@ -222,21 +235,37 @@ async function deleteInternalTransferLinksForTransaction(
   db: ReturnType<typeof createServiceSupabaseClient>,
   transactionId: string,
 ) {
-  const [outgoingResult, incomingResult] = await Promise.all([
+  const deletes = SUPPORTED_TRANSFER_LINK_TYPES.flatMap((linkType) => ([
     db
       .from('transaction_links')
       .delete()
-      .eq('link_type', 'internal_transfer')
+      .eq('link_type', linkType)
       .eq('from_transaction_id', transactionId),
     db
       .from('transaction_links')
       .delete()
-      .eq('link_type', 'internal_transfer')
+      .eq('link_type', linkType)
       .eq('to_transaction_id', transactionId),
-  ])
+  ]))
 
-  if (outgoingResult.error) throw new Error(outgoingResult.error.message)
-  if (incomingResult.error) throw new Error(incomingResult.error.message)
+  const results = await Promise.all(deletes)
+  const firstError = results.find((result) => result.error)?.error
+  if (firstError) throw new Error(firstError.message)
+}
+
+async function updateTransferChainIdForLinks(
+  db: ReturnType<typeof createServiceSupabaseClient>,
+  linkIds: string[],
+  transferChainId: string,
+) {
+  if (linkIds.length === 0) return
+
+  const { error } = await db
+    .from('transaction_links')
+    .update({ transfer_chain_id: transferChainId })
+    .in('id', linkIds)
+
+  if (error) throw new Error(error.message)
 }
 
 function normalizeInternalTransferLinks(value: unknown): InternalTransferLinkRecord[] {
@@ -254,6 +283,12 @@ function normalizeInternalTransferLinks(value: unknown): InternalTransferLinkRec
       toTransactionId: link.to_transaction_id,
       linkType: typeof link.link_type === 'string' ? link.link_type : null,
       status: typeof link.status === 'string' ? link.status : null,
+      transferChainId: typeof link.transfer_chain_id === 'string' ? link.transfer_chain_id : null,
+      allocatedAmount: typeof link.allocated_amount === 'number'
+        ? link.allocated_amount
+        : typeof link.allocated_amount === 'string'
+          ? Number(link.allocated_amount)
+          : null,
     }]
   })
 }
@@ -300,6 +335,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const rawTagIds = body?.tagIds
     const rawCategoryId = body?.categoryId
     const rawInternalTransferTargetId = body?.internalTransferTargetId
+    const rawTransferLinkType = body?.transferLinkType
 
     if (!Array.isArray(rawTagIds) || !rawTagIds.every((value) => typeof value === 'string')) {
       return NextResponse.json({ error: 'tagIds must be an array of strings.' }, { status: 400 })
@@ -317,10 +353,21 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: 'internalTransferTargetId must be a string or null.' }, { status: 400 })
     }
 
+    if (
+      rawTransferLinkType !== undefined &&
+      rawTransferLinkType !== null &&
+      !isSupportedTransferLinkType(rawTransferLinkType)
+    ) {
+      return NextResponse.json({ error: 'transferLinkType must be a supported transfer link type or null.' }, { status: 400 })
+    }
+
     const tagIds = rawTagIds as string[]
     const categoryId = rawCategoryId as number | null
     const internalTransferTargetId = typeof rawInternalTransferTargetId === 'string'
       ? rawInternalTransferTargetId
+      : null
+    const requestedTransferLinkType = isSupportedTransferLinkType(rawTransferLinkType)
+      ? rawTransferLinkType
       : null
     const db = createServiceSupabaseClient()
     const transaction = await getStatementTransactionForHousehold(db, ctx.householdId, id)
@@ -343,12 +390,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
     }
 
-    const wantsInternalTransferLink = internalTransferTargetId !== null
-    const isInternalTransferCategory = isInternalTransferCategoryName(category?.name)
+    const wantsTransferLink = internalTransferTargetId !== null
+    const transferCategoryLinkType = resolveTransferCategoryLinkType(category?.name)
+    const resolvedTransferLinkType = requestedTransferLinkType ?? transferCategoryLinkType ?? 'internal_transfer'
+    const categorySupportsTransferLinking = isTransferCategory(category)
 
-    if (wantsInternalTransferLink && !isInternalTransferCategory) {
-      throw new RouteError(400, 'Counterpart selection is only available for the Internal Transfer category.')
+    if (wantsTransferLink && !categorySupportsTransferLinking) {
+      throw new RouteError(400, 'Counterpart selection is only available for transfer categories.')
     }
+
+    let nextTransferChainId: string | null = null
+    let nextAllocatedAmount: number | null = null
 
     if (internalTransferTargetId) {
       if (internalTransferTargetId === id) {
@@ -368,15 +420,58 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         throw new RouteError(400, 'Transfer counterpart must have the opposite direction.')
       }
 
-      const targetLinks = await getInternalTransferLinksForTransaction(db, internalTransferTargetId)
+      const [sourceLinks, targetLinks] = await Promise.all([
+        getTransferLinksForTransaction(db, id),
+        getTransferLinksForTransaction(db, internalTransferTargetId),
+      ])
+
+      const existingChainIds = Array.from(new Set(
+        [...sourceLinks, ...targetLinks]
+          .map((link) => link.transferChainId ?? null)
+          .filter((value): value is string => Boolean(value)),
+      ))
+
+      if (existingChainIds.length > 1) {
+        throw new RouteError(400, 'Transactions belong to different transfer chains.')
+      }
+
+      nextTransferChainId = existingChainIds[0] ?? null
+      if (!nextTransferChainId && (sourceLinks.length > 0 || targetLinks.length > 0)) {
+        nextTransferChainId = crypto.randomUUID()
+      }
+
+      if (nextTransferChainId) {
+        const linkIdsToPromote = Array.from(new Set(
+          [...sourceLinks, ...targetLinks]
+            .filter((link) => link.id && !link.transferChainId)
+            .map((link) => String(link.id)),
+        ))
+        await updateTransferChainIdForLinks(db, linkIdsToPromote, nextTransferChainId)
+
+        for (const link of [...sourceLinks, ...targetLinks]) {
+          if (link.id && linkIdsToPromote.includes(String(link.id))) {
+            link.transferChainId = nextTransferChainId
+          }
+        }
+      }
+
       const targetLinkedElsewhere = targetLinks.some((link) => {
         const counterpartId = getInternalTransferCounterpartId(internalTransferTargetId, link)
-        return counterpartId !== null && counterpartId !== id
+        if (counterpartId === null || counterpartId === id) return false
+
+        const sameType = link.linkType === resolvedTransferLinkType
+        const sameChain = (link.transferChainId ?? null) === (nextTransferChainId ?? null)
+        return sameType && sameChain
       })
 
       if (targetLinkedElsewhere) {
-        throw new RouteError(400, 'Transfer counterpart is already linked to another internal transfer.')
+        throw new RouteError(400, 'Transfer counterpart is already linked to another transfer link.')
       }
+
+      const amountDelta = Math.abs(Math.abs(Number(transaction.amount ?? 0)) - Math.abs(Number(targetTransaction.amount ?? 0)))
+      nextAllocatedAmount = amountDelta <= 0.01
+        ? null
+        : Number(Math.min(Math.abs(Number(transaction.amount ?? 0)), Math.abs(Number(targetTransaction.amount ?? 0))).toFixed(2))
     }
 
     const { error: updateError } = await db
@@ -396,16 +491,18 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     await deleteInternalTransferLinksForTransaction(db, id)
 
-    if (internalTransferTargetId && isInternalTransferCategory) {
+    if (internalTransferTargetId && categorySupportsTransferLinking) {
       const { error: insertError } = await withApprovedMappingStatusFallback((approvedStatus) => (
         db
           .from('transaction_links')
           .insert({
             from_transaction_id: id,
             to_transaction_id: internalTransferTargetId,
-            link_type: 'internal_transfer',
+            link_type: resolvedTransferLinkType as Database['public']['Enums']['link_type'],
             link_score: 1,
             link_reason: { source: 'transactions_editor' },
+            transfer_chain_id: nextTransferChainId,
+            allocated_amount: nextAllocatedAmount,
             status: approvedStatus,
             matched_by: 'user',
             matched_by_user_id: ctx.userId,

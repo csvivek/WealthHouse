@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Coins, Loader2 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
@@ -77,8 +78,12 @@ export default function CryptoPage() {
 
   if (exchanges.length === 0 && holdings.length === 0) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Crypto</h1>
+      <ExecutivePage>
+        <ExecutivePageHeader
+          eyebrow="Net Worth Workspace"
+          title="Crypto"
+          description="Track exchange accounts and asset balances under the same wealth shell as the rest of the portfolio."
+        />
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16 text-center">
             <Coins className="mb-4 h-12 w-12 text-muted-foreground" />
@@ -87,13 +92,23 @@ export default function CryptoPage() {
             </p>
           </CardContent>
         </Card>
-      </div>
+      </ExecutivePage>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Crypto</h1>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Net Worth Workspace"
+        title="Crypto"
+        description="Track exchange accounts and asset balances under the same wealth shell as the rest of the portfolio."
+        badges={(
+          <>
+            <Badge variant="outline">{exchanges.length} exchanges</Badge>
+            <Badge variant="outline">{holdings.length} positions</Badge>
+          </>
+        )}
+      />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card>
@@ -158,6 +173,6 @@ export default function CryptoPage() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </ExecutivePage>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { MailPlus, Save, Shield, Trash2, Download, Moon, Sun } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -327,11 +328,13 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground">Manage your account preferences and security.</p>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="System Workspace"
+        title="Settings"
+        description="Manage your account preferences, household membership, security, and taxonomy tools without removing any administrative controls."
+        badges={currentProfile?.role ? <Badge variant="outline">{currentProfile.role}</Badge> : undefined}
+      />
 
       <Tabs defaultValue="profile" className="space-y-6">
         <TabsList>
@@ -977,6 +980,6 @@ export default function SettingsPage() {
           </div>
         </TabsContent>
       </Tabs>
-    </div>
+    </ExecutivePage>
   )
 }

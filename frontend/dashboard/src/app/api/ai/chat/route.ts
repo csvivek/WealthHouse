@@ -1,164 +1,150 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getFinancialAdvice } from '@/lib/ai/advisor'
-import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
-import { createServerSupabaseClient } from '@/lib/supabase/server'
-import type { Database } from '@/types/database'
+import { createChatEventStream } from '@/lib/ai/chat/orchestrator'
+import {
+  getAuthenticatedChatRequestContext,
+  getAuthorizedChatSessionContext,
+} from '@/lib/ai/chat/request-context'
+import type {
+  ChatAssistantContext,
+  ChatHistoryItem,
+  ChatSessionPayload,
+} from '@/lib/ai/chat/types'
 
 interface ChatRequestBody {
   message?: unknown
   history?: unknown
+  sessionContext?: unknown
 }
 
-interface ChatHistoryItem {
-  role: 'user' | 'assistant'
-  content: string
-}
+function parseAssistantContext(value: unknown): ChatAssistantContext | null {
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as Partial<ChatAssistantContext>
+  if (typeof candidate.intent !== 'string' || typeof candidate.periodLabel !== 'string') {
+    return null
+  }
 
-type AccountRow = Pick<
-  Database['public']['Tables']['accounts']['Row'],
-  'id' | 'product_name' | 'account_type' | 'currency'
->
-
-type StatementTransactionRow = Pick<
-  Database['public']['Tables']['statement_transactions']['Row'],
-  'merchant_normalized' | 'merchant_raw' | 'amount' | 'txn_date'
-> & {
-  merchant?: { name: string | null } | { name: string | null }[] | null
-}
-
-function merchantNameFromJoin(value: StatementTransactionRow['merchant']) {
-  if (!value) return null
-  if (Array.isArray(value)) return value[0]?.name ?? null
-  return value.name ?? null
-}
-
-interface AssetBalanceWithSymbol {
-  balance: number
-  assets: { symbol: string } | { symbol: string }[] | null
+  return {
+    intent: candidate.intent as ChatAssistantContext['intent'],
+    periodLabel: candidate.periodLabel,
+    dateFrom: typeof candidate.dateFrom === 'string' ? candidate.dateFrom : null,
+    dateTo: typeof candidate.dateTo === 'string' ? candidate.dateTo : null,
+    comparisonDateFrom: typeof candidate.comparisonDateFrom === 'string' ? candidate.comparisonDateFrom : null,
+    comparisonDateTo: typeof candidate.comparisonDateTo === 'string' ? candidate.comparisonDateTo : null,
+    comparisonPeriodLabel: typeof candidate.comparisonPeriodLabel === 'string' ? candidate.comparisonPeriodLabel : null,
+    accountIds: Array.isArray(candidate.accountIds) ? candidate.accountIds.filter((item): item is string => typeof item === 'string') : [],
+    accountNames: Array.isArray(candidate.accountNames) ? candidate.accountNames.filter((item): item is string => typeof item === 'string') : [],
+    merchant: typeof candidate.merchant === 'string' ? candidate.merchant : null,
+    categoryNames: Array.isArray(candidate.categoryNames) ? candidate.categoryNames.filter((item): item is string => typeof item === 'string') : [],
+    counterpartyName: typeof candidate.counterpartyName === 'string' ? candidate.counterpartyName : null,
+    currencyMode: candidate.currencyMode === 'single_currency' ? 'single_currency' : 'segment_by_currency',
+    groupBy: ['merchant', 'category', 'month', 'account', 'none'].includes(String(candidate.groupBy))
+      ? candidate.groupBy as ChatAssistantContext['groupBy']
+      : 'none',
+    nextCursor: typeof candidate.nextCursor === 'string' ? candidate.nextCursor : null,
+    dataAvailability: ['available', 'no_match', 'unavailable', 'missing_account', 'out_of_scope'].includes(String(candidate.dataAvailability))
+      ? candidate.dataAvailability as ChatAssistantContext['dataAvailability']
+      : 'available',
+  }
 }
 
 function parseHistory(value: unknown): ChatHistoryItem[] {
-  if (!Array.isArray(value)) {
-    return []
+  if (!Array.isArray(value)) return []
+
+  const parsed: ChatHistoryItem[] = []
+
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const candidate = item as { role?: unknown; content?: unknown; assistantContext?: unknown }
+    if ((candidate.role !== 'user' && candidate.role !== 'assistant') || typeof candidate.content !== 'string') {
+      continue
+    }
+
+    parsed.push({
+      role: candidate.role,
+      content: candidate.content,
+      assistantContext: candidate.role === 'assistant'
+        ? parseAssistantContext(candidate.assistantContext)
+        : null,
+    })
   }
 
-  return value
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null
-      const candidate = item as { role?: unknown; content?: unknown }
-      if ((candidate.role !== 'user' && candidate.role !== 'assistant') || typeof candidate.content !== 'string') {
-        return null
-      }
-
-      return {
-        role: candidate.role,
-        content: candidate.content,
-      }
-    })
-    .filter((item): item is ChatHistoryItem => item !== null)
+  return parsed
 }
 
-function extractSymbol(value: AssetBalanceWithSymbol['assets']): string {
-  if (!value) return '?'
-  if (Array.isArray(value)) {
-    return value[0]?.symbol ?? '?'
+function parseSessionContext(value: unknown): ChatSessionPayload | null {
+  if (!value || typeof value !== 'object') return null
+  const candidate = value as Partial<ChatSessionPayload>
+  if (typeof candidate.householdId !== 'string' || typeof candidate.baseCurrency !== 'string') {
+    return null
   }
-  return value.symbol ?? '?'
+
+  return {
+    userDisplayName: typeof candidate.userDisplayName === 'string' ? candidate.userDisplayName : null,
+    householdId: candidate.householdId,
+    householdName: typeof candidate.householdName === 'string' ? candidate.householdName : null,
+    baseCurrency: candidate.baseCurrency,
+    accounts: Array.isArray(candidate.accounts) ? candidate.accounts.filter((item): item is ChatSessionPayload['accounts'][number] => {
+      if (!item || typeof item !== 'object') return false
+      const account = item as ChatSessionPayload['accounts'][number]
+      return typeof account.id === 'string' && typeof account.name === 'string' && typeof account.accountType === 'string'
+    }) : [],
+    promptChips: Array.isArray(candidate.promptChips) ? candidate.promptChips.filter((item): item is string => typeof item === 'string') : [],
+    coverage: candidate.coverage && typeof candidate.coverage === 'object'
+      ? {
+          transactions: {
+            start: typeof candidate.coverage.transactions?.start === 'string' ? candidate.coverage.transactions.start : null,
+            end: typeof candidate.coverage.transactions?.end === 'string' ? candidate.coverage.transactions.end : null,
+          },
+          ledger: {
+            start: typeof candidate.coverage.ledger?.start === 'string' ? candidate.coverage.ledger.start : null,
+            end: typeof candidate.coverage.ledger?.end === 'string' ? candidate.coverage.ledger.end : null,
+          },
+          statementSummaries: {
+            start: typeof candidate.coverage.statementSummaries?.start === 'string' ? candidate.coverage.statementSummaries.start : null,
+            end: typeof candidate.coverage.statementSummaries?.end === 'string' ? candidate.coverage.statementSummaries.end : null,
+          },
+        }
+      : {
+          transactions: { start: null, end: null },
+          ledger: { start: null, end: null },
+          statementSummaries: { start: null, end: null },
+        },
+  }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createServerSupabaseClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
+    const context = await getAuthenticatedChatRequestContext()
+    if (!context) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const body = (await request.json()) as ChatRequestBody
     const message = typeof body.message === 'string' ? body.message.trim() : ''
     const history = parseHistory(body.history)
+    const requestedSession = parseSessionContext(body.sessionContext)
 
     if (!message) {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 })
     }
 
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('household_id')
-      .eq('id', user.id)
-      .single()
+    const session = await getAuthorizedChatSessionContext({
+      requestedSession,
+      userId: context.userId,
+      householdId: context.householdId,
+    })
 
-    const householdId = profile?.household_id
-
-    let accounts: AccountRow[] = []
-    let recentTransactions: { merchant_display: string | null; amount: number; txn_date: string }[] = []
-    let holdings: { symbol: string; balance: number }[] = []
-
-    if (householdId) {
-      const { data: accountRows } = await supabase
-        .from('accounts')
-        .select('id, product_name, account_type, currency')
-        .eq('household_id', householdId)
-
-      accounts = (accountRows as AccountRow[] | null) ?? []
-      const accountIds = accounts.map((account) => account.id)
-
-      if (accountIds.length > 0) {
-        const buildTransactionQuery = (includeMerchantJoin: boolean) =>
-          supabase
-            .from('statement_transactions')
-            .select(
-              includeMerchantJoin
-                ? 'merchant_normalized, merchant_raw, amount, txn_date, merchant:merchants(name)'
-                : 'merchant_normalized, merchant_raw, amount, txn_date',
-            )
-            .in('account_id', accountIds)
-            .order('txn_date', { ascending: false })
-            .limit(20)
-
-        let [txnRes, balanceRes] = await Promise.all([
-          buildTransactionQuery(true),
-          supabase
-            .from('asset_balances')
-            .select('balance, assets(symbol)')
-            .in('account_id', accountIds),
-        ])
-
-        if (isMerchantSchemaNotReadyError(txnRes.error, 'merchants')) {
-          txnRes = await buildTransactionQuery(false)
-        }
-
-        const txnRows = (txnRes.data as StatementTransactionRow[] | null) ?? []
-        recentTransactions = txnRows.map((row) => ({
-          merchant_display: merchantNameFromJoin(row.merchant) ?? row.merchant_normalized ?? row.merchant_raw,
-          amount: row.amount,
-          txn_date: row.txn_date,
-        }))
-
-        const balanceRows = (balanceRes.data as AssetBalanceWithSymbol[] | null) ?? []
-        holdings = balanceRows.map((row) => ({
-          symbol: extractSymbol(row.assets),
-          balance: row.balance,
-        }))
-      }
-    }
-
-    const context = {
-      accounts: accounts.map((account) => ({
-        name: account.product_name,
-        type: account.account_type,
-        currency: account.currency,
-      })),
-      recentTransactions,
-      holdings,
-    }
-
-    const response = await getFinancialAdvice(message, history, context)
-
-    return NextResponse.json({ response })
+    return new Response(createChatEventStream({
+      message,
+      history,
+      session,
+    }), {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+      },
+    })
   } catch (error) {
     console.error('Chat API error:', error)
     return NextResponse.json({ error: 'Failed to generate response' }, { status: 500 })

@@ -1,6 +1,18 @@
 import { normalizeTxnDirection } from './category-compatibility'
 
 const DAY_MS = 24 * 60 * 60 * 1000
+const TRANSFER_CATEGORY_NAME_TO_LINK_TYPE = {
+  'internal transfer': 'internal_transfer',
+  'credit card payment': 'credit_card_payment',
+  'cc payment': 'credit_card_payment',
+  'loan repayment': 'loan_repayment',
+} as const
+
+const TRANSFER_LINK_LABELS = {
+  internal_transfer: 'Transfer',
+  credit_card_payment: 'CC Payment',
+  loan_repayment: 'Loan Repayment',
+} as const
 
 export interface InternalTransferLinkRecord {
   id?: string | null
@@ -8,6 +20,8 @@ export interface InternalTransferLinkRecord {
   toTransactionId: string
   linkType?: string | null
   status?: string | null
+  transferChainId?: string | null
+  allocatedAmount?: number | null
 }
 
 export interface InternalTransferAccountLike {
@@ -39,6 +53,20 @@ export interface InternalTransferLinkSummary {
 
 export function isInternalTransferCategoryName(name: string | null | undefined) {
   return String(name ?? '').trim().toLowerCase() === 'internal transfer'
+}
+
+export function isTransferCategoryName(name: string | null | undefined) {
+  return Boolean(resolveTransferCategoryLinkType(name))
+}
+
+export function resolveTransferCategoryLinkType(name: string | null | undefined) {
+  const normalized = String(name ?? '').trim().toLowerCase()
+  return TRANSFER_CATEGORY_NAME_TO_LINK_TYPE[normalized as keyof typeof TRANSFER_CATEGORY_NAME_TO_LINK_TYPE] ?? null
+}
+
+export function getTransferLinkLabel(linkType: string | null | undefined) {
+  if (!linkType) return 'Transfer'
+  return TRANSFER_LINK_LABELS[linkType as keyof typeof TRANSFER_LINK_LABELS] ?? 'Transfer'
 }
 
 export function getInternalTransferCounterpartId(transactionId: string, link: InternalTransferLinkRecord) {

@@ -67,7 +67,7 @@ interface AccountRecord {
   identifier_hint: string | null
   currency: string
   is_active: boolean
-  institutions: { name: string } | null
+  institutions: { name: string; website_url: string | null; icon_url: string | null } | null
   cards: Array<{ card_name: string; card_last4: string; total_outstanding: number | null }> | null
 }
 
@@ -127,7 +127,7 @@ describe('AccountsPage', () => {
         identifier_hint: '1234',
         currency: 'SGD',
         is_active: true,
-        institutions: { name: 'DBS Bank Ltd' },
+        institutions: { name: 'DBS Bank Ltd', website_url: null, icon_url: null },
         cards: [{ card_name: 'Altitude Visa', card_last4: '1234', total_outstanding: 320.5 }],
       },
     ]
@@ -136,6 +136,16 @@ describe('AccountsPage', () => {
 
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
+      if (url.startsWith('/api/institutions/brand-preview?')) {
+        return createJsonResponse({
+          matched: true,
+          brandCode: 'dbs_bank',
+          canonicalName: 'DBS Bank Ltd',
+          websiteUrl: 'https://www.dbs.com/',
+          iconUrl: 'https://www.dbs.com/favicon.ico',
+        })
+      }
+
       if (url === '/api/accounts/acct-1' && init?.method === 'PATCH') {
         const body = JSON.parse(String(init.body ?? '{}'))
         accounts[0] = {
@@ -145,7 +155,7 @@ describe('AccountsPage', () => {
           identifier_hint: body.identifier_hint,
           currency: body.currency,
           is_active: body.is_active,
-          institutions: { name: body.institution_name },
+          institutions: { name: body.institution_name, website_url: null, icon_url: null },
           cards: [
             {
               ...accounts[0].cards?.[0],
@@ -210,5 +220,59 @@ describe('AccountsPage', () => {
     expect(await screen.findByText('Travel Card')).toBeInTheDocument()
     expect(screen.getByText('Inactive')).toBeInTheDocument()
     expect(toast.success).toHaveBeenCalledWith('Account updated.')
+  })
+
+  it('requires a verified-brand decision for matched institutions and submits canonical branding on create', async () => {
+    mockedCreateClient.mockReturnValue(createSupabaseClientMock([]) as never)
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('/api/institutions/brand-preview?')) {
+        return createJsonResponse({
+          matched: true,
+          brandCode: 'dbs_bank',
+          canonicalName: 'DBS Bank Ltd',
+          websiteUrl: 'https://www.dbs.com/',
+          iconUrl: 'https://www.dbs.com/favicon.ico',
+        })
+      }
+
+      if (url === '/api/accounts' && init?.method === 'POST') {
+        return createJsonResponse({ account: { id: 'acct-new' } })
+      }
+
+      throw new Error(`Unexpected fetch call ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<AccountsPage />)
+
+    const addButtons = await screen.findAllByRole('button', { name: 'Add Account' })
+    await userEvent.click(addButtons[0])
+
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.type(within(dialog).getByLabelText('Institution Name'), 'DBS')
+    await userEvent.type(within(dialog).getByLabelText('Product Name'), 'Multiplier Account')
+
+    expect(await within(dialog).findByText('DBS Bank Ltd')).toBeInTheDocument()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save Account' }))
+    expect(toast.error).toHaveBeenCalledWith('Choose whether to use the verified institution brand or keep the account generic.')
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Use verified brand' }))
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save Account' }))
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find((call) => String(call[0]) === '/api/accounts')
+      expect(postCall).toBeTruthy()
+      const payload = JSON.parse(String(postCall?.[1]?.body ?? '{}'))
+      expect(payload).toMatchObject({
+        institution_name: 'DBS Bank Ltd',
+        product_name: 'Multiplier Account',
+        account_type: 'savings',
+        institution_brand_code: 'dbs_bank',
+        institution_brand_decision: 'verified',
+      })
+    })
   })
 })

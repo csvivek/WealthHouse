@@ -11,6 +11,7 @@ import {
 import {
   createAccountWithRelatedRecords,
   findOrCreateInstitution,
+  type InstitutionBrandDecision,
   normalizeAccountType,
 } from '@/lib/server/accounts'
 import { normalizeInstitutionCode } from '@/lib/accounts/normalization'
@@ -29,6 +30,8 @@ interface RerouteCreateAccountInput {
   account_type?: string | null
   card_name?: string | null
   card_last4?: string | null
+  institution_brand_code?: string | null
+  institution_brand_decision?: InstitutionBrandDecision | null
 }
 
 export interface StatementRerouteInput {
@@ -113,6 +116,8 @@ async function resolveTargetAccount(params: {
   const institution = await findOrCreateInstitution(params.supabase as never, {
     institutionName,
     institutionCode: create?.institution_code || null,
+    institutionBrandCode: create?.institution_brand_code || null,
+    institutionBrandDecision: create?.institution_brand_decision || null,
   })
 
   const createdAccount = await createAccountWithRelatedRecords(params.supabase as never, {

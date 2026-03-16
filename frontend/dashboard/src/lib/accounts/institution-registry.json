@@ -1,0 +1,90 @@
+[
+  {
+    "code": "dbs_bank",
+    "name": "DBS Bank Ltd",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.dbs.com/",
+    "aliases": ["dbs", "dbs bank", "dbs bank ltd", "dbs card", "dbs cards", "dbs credit card", "paylah", "paylah wallet"]
+  },
+  {
+    "code": "ocbc",
+    "name": "OCBC Bank",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.ocbc.com/",
+    "aliases": ["ocbc", "ocbc bank"]
+  },
+  {
+    "code": "uob",
+    "name": "UOB",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.uob.com.sg/",
+    "aliases": ["uob", "united overseas bank"]
+  },
+  {
+    "code": "posb",
+    "name": "POSB",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.posb.com.sg/",
+    "aliases": ["posb"]
+  },
+  {
+    "code": "trust_bank",
+    "name": "Trust Bank Singapore Limited",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://trustbank.sg/",
+    "aliases": ["trust", "trust bank", "trust bank singapore limited"]
+  },
+  {
+    "code": "wise",
+    "name": "Wise",
+    "countryCode": "SG",
+    "type": "other",
+    "websiteUrl": "https://wise.com/",
+    "aliases": ["wise"]
+  },
+  {
+    "code": "citibank",
+    "name": "Citibank Singapore Ltd",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.citibank.com.sg/",
+    "aliases": ["citibank", "citibank singapore ltd", "citi", "citi bank", "citibank singapore"]
+  },
+  {
+    "code": "cimb",
+    "name": "CIMB Bank",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.cimb.com.sg/",
+    "aliases": ["cimb", "cimb bank"]
+  },
+  {
+    "code": "hsbc",
+    "name": "HSBC",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.hsbc.com.sg/",
+    "aliases": ["hsbc", "hsbc singapore"]
+  },
+  {
+    "code": "gxs",
+    "name": "GXS Bank",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.gxs.com.sg/",
+    "aliases": ["gxs", "gxs bank"]
+  },
+  {
+    "code": "instarem",
+    "name": "Instarem",
+    "countryCode": "SG",
+    "type": "bank",
+    "websiteUrl": "https://www.instarem.com/",
+    "aliases": ["instarem"]
+  }
+]

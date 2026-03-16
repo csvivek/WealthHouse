@@ -1,19 +1,24 @@
 import { PieChart } from 'lucide-react'
+import { ExecutiveEmptyState, ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent } from '@/components/ui/card'
 
 export default function BudgetsPage() {
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold tracking-tight">Budgets</h1>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Net Worth Workspace"
+        title="Budgets"
+        description="Budget planning will live inside the broader net worth workspace once this module is ready."
+      />
       <Card>
-        <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-          <PieChart className="mb-4 size-12 text-muted-foreground" />
-          <h2 className="text-lg font-semibold">Coming Soon</h2>
-          <p className="text-sm text-muted-foreground">
-            Budget tracking is planned for a future release.
-          </p>
+        <CardContent>
+          <ExecutiveEmptyState
+            icon={PieChart}
+            title="Budget tracking is planned next"
+            description="The feature placeholder remains available in the new shell so the route stays discoverable without inventing backend behavior."
+          />
         </CardContent>
       </Card>
-    </div>
+    </ExecutivePage>
   )
 }

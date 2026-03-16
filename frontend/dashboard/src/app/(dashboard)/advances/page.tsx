@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { HandCoins, Loader2 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
@@ -56,11 +57,18 @@ export default function AdvancesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Advances</h1>
-        <p className="text-muted-foreground">Track money lent to or borrowed from others.</p>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Money Workspace"
+        title="Advances"
+        description="Track money lent to or borrowed from others with the same executive treatment as the rest of the ledger."
+        badges={(
+          <>
+            <Badge variant="outline">{advances.length} records</Badge>
+            <Badge variant="outline">{formatCurrency(totalPending)} outstanding</Badge>
+          </>
+        )}
+      />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
@@ -129,6 +137,6 @@ export default function AdvancesPage() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </ExecutivePage>
   )
 }

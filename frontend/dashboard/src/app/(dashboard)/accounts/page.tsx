@@ -1,9 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Banknote,
-  Building2,
   Coins,
   CreditCard,
   Landmark,
@@ -14,9 +13,12 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { InstitutionBrandPicker, type InstitutionBrandDecision, type InstitutionBrandPreviewState } from '@/components/institution-brand-picker'
+import { InstitutionIcon } from '@/components/institution-icon'
 import {
   Dialog,
   DialogContent,
@@ -59,7 +61,7 @@ interface AccountRow {
   identifier_hint: string | null
   currency: string
   is_active: boolean
-  institutions: { name: string } | null
+  institutions: { name: string; website_url: string | null; icon_url: string | null } | null
   cards: { card_name: string; card_last4: string; total_outstanding: number | null }[] | null
 }
 
@@ -106,6 +108,8 @@ export default function AccountsPage() {
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null)
   const [savingAccount, setSavingAccount] = useState(false)
   const [formState, setFormState] = useState<AccountFormState>(EMPTY_FORM_STATE)
+  const [institutionBrandPreview, setInstitutionBrandPreview] = useState<InstitutionBrandPreviewState | null>(null)
+  const [institutionBrandDecision, setInstitutionBrandDecision] = useState<InstitutionBrandDecision>(null)
 
   async function fetchAccounts() {
     const supabase = createClient()
@@ -133,7 +137,7 @@ export default function AccountsPage() {
 
     const { data } = await supabase
       .from('accounts')
-      .select('id, account_type, product_name, nickname, identifier_hint, currency, is_active, institutions(name), cards(card_name, card_last4, total_outstanding)')
+      .select('id, account_type, product_name, nickname, identifier_hint, currency, is_active, institutions(name, website_url, icon_url), cards(card_name, card_last4, total_outstanding)')
       .eq('household_id', profile.household_id)
       .order('created_at', { ascending: false })
 
@@ -157,6 +161,8 @@ export default function AccountsPage() {
     setFormMode('create')
     setEditingAccountId(null)
     setFormState(EMPTY_FORM_STATE)
+    setInstitutionBrandPreview(null)
+    setInstitutionBrandDecision(null)
   }
 
   function handleDialogOpenChange(open: boolean) {
@@ -187,7 +193,22 @@ export default function AccountsPage() {
       cardLast4: primaryCard?.card_last4 ?? account.identifier_hint ?? '',
       isActive: account.is_active,
     })
+    setInstitutionBrandPreview(account.institutions?.website_url || account.institutions?.icon_url
+      ? {
+        matched: true,
+        canonicalName: account.institutions?.name,
+        websiteUrl: account.institutions?.website_url ?? undefined,
+        iconUrl: account.institutions?.icon_url ?? undefined,
+      }
+      : null)
+    setInstitutionBrandDecision(account.institutions?.website_url || account.institutions?.icon_url ? 'verified' : 'generic')
     setDialogOpen(true)
+  }
+
+  function handleInstitutionNameChange(value: string) {
+    updateForm('institutionName', value)
+    setInstitutionBrandPreview(null)
+    setInstitutionBrandDecision(null)
   }
 
   async function handleSaveAccount() {
@@ -201,16 +222,28 @@ export default function AccountsPage() {
       return
     }
 
+    if (institutionBrandPreview?.matched && !institutionBrandDecision) {
+      toast.error('Choose whether to use the verified institution brand or keep the account generic.')
+      return
+    }
+
+    const verifiedBrand = institutionBrandDecision === 'verified' ? institutionBrandPreview : null
+    const institutionName = verifiedBrand?.canonicalName?.trim() || formState.institutionName.trim()
+
     const payload: Record<string, unknown> = {
-      institution_name: formState.institutionName.trim(),
+      institution_name: institutionName,
       product_name: formState.productName.trim(),
       nickname: formState.nickname.trim() || null,
       identifier_hint: formState.identifierHint.trim() || null,
       currency: formState.currency,
+      institution_brand_code: verifiedBrand?.brandCode ?? null,
+      institution_brand_decision: verifiedBrand ? 'verified' : 'generic',
     }
 
     if (formMode === 'edit') {
       payload.is_active = formState.isActive
+    } else {
+      payload.account_type = formState.accountType
     }
 
     if (formState.accountType === 'credit_card') {
@@ -265,14 +298,25 @@ export default function AccountsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Accounts</h1>
-        <Button onClick={openCreateDialog}>
-          <Plus />
-          Add Account
-        </Button>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Money Workspace"
+        title="Accounts"
+        description="Manage linked and manual accounts without changing any of the current account creation or editing flows."
+        badges={(
+          <>
+            <Badge variant="outline">{activeCount} active</Badge>
+            <Badge variant="outline">{creditCardCount} cards</Badge>
+            <Badge variant="outline">{formatCurrency(totalOutstanding)} outstanding</Badge>
+          </>
+        )}
+        actions={(
+          <Button onClick={openCreateDialog}>
+            <Plus />
+            Add Account
+          </Button>
+        )}
+      />
 
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
         <DialogContent>
@@ -291,10 +335,17 @@ export default function AccountsPage() {
               <Input
                 id="institution-name"
                 value={formState.institutionName}
-                onChange={(event) => updateForm('institutionName', event.target.value)}
+                onChange={(event) => handleInstitutionNameChange(event.target.value)}
                 placeholder="DBS Bank, OCBC, UOB, Wise..."
               />
             </div>
+
+            <InstitutionBrandPicker
+              institutionName={formState.institutionName}
+              selection={institutionBrandDecision}
+              onSelectionChange={setInstitutionBrandDecision}
+              onPreviewChange={setInstitutionBrandPreview}
+            />
 
             <div className="space-y-2">
               <Label htmlFor="product-name">Product Name</Label>
@@ -481,15 +532,16 @@ export default function AccountsPage() {
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className={cn('rounded-lg p-2', config?.bgColor)}>
-                        <Icon className={cn('size-5', config?.color)} />
-                      </div>
+                      <InstitutionIcon
+                        iconUrl={account.institutions?.icon_url}
+                        alt={`${institutionNameLabel} icon`}
+                        className="size-11 rounded-xl border border-border/70 bg-background p-2 shadow-sm"
+                        fallbackIcon={Icon}
+                        fallbackClassName={cn('size-5', config?.color)}
+                      />
                       <div>
                         <CardTitle className="text-base">{account.nickname ?? account.product_name}</CardTitle>
-                        <div className="mt-1 flex items-center gap-2">
-                          <Building2 className="size-3 text-muted-foreground" />
-                          <span className="text-xs text-muted-foreground">{institutionNameLabel}</span>
-                        </div>
+                        <span className="mt-1 block text-xs text-muted-foreground">{institutionNameLabel}</span>
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">
@@ -534,6 +586,6 @@ export default function AccountsPage() {
           })}
         </div>
       )}
-    </div>
+    </ExecutivePage>
   )
 }

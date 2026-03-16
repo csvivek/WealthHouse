@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import { DollarSign, BarChart3, Loader2, TrendingUp } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
@@ -127,8 +128,12 @@ export default function InvestmentsPage() {
 
   if (holdings.length === 0) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Investments</h1>
+      <ExecutivePage>
+        <ExecutivePageHeader
+          eyebrow="Net Worth Workspace"
+          title="Investments"
+          description="Track holdings, asset allocation, and recent investment transactions from imported or linked accounts."
+        />
         <Card>
           <CardContent>
             <EmptyState
@@ -139,13 +144,23 @@ export default function InvestmentsPage() {
             />
           </CardContent>
         </Card>
-      </div>
+      </ExecutivePage>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Investments</h1>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Net Worth Workspace"
+        title="Investments"
+        description="Track holdings, asset allocation, and recent investment transactions from imported or linked accounts."
+        badges={(
+          <>
+            <Badge variant="outline">{holdings.length} holdings</Badge>
+            <Badge variant="outline">{recentTxns.length} recent trades</Badge>
+          </>
+        )}
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
@@ -208,6 +223,6 @@ export default function InvestmentsPage() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </ExecutivePage>
   )
 }

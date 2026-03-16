@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Search, Trash2 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -181,14 +182,13 @@ export default function TagsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Tags</h1>
-          <p className="text-sm text-muted-foreground">Household-scoped labels for statement and receipt transactions.</p>
-        </div>
-        <Button onClick={openCreate}>Create Tag</Button>
-      </div>
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Manage Workspace"
+        title="Tags"
+        description="Household-scoped labels for statement and receipt transactions, preserved with the same create, edit, merge, and sort flows."
+        actions={<Button onClick={openCreate}>Create Tag</Button>}
+      />
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative w-full max-w-xs">
@@ -397,6 +397,6 @@ export default function TagsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ExecutivePage>
   )
 }

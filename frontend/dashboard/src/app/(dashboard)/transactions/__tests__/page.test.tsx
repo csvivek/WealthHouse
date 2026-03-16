@@ -35,11 +35,15 @@ function createSupabaseClientMock(params?: {
       id: 'acct-1',
       product_name: 'Main Card',
       nickname: 'Main Card',
+      account_type: 'credit_card',
+      institutions: { name: 'DBS Bank Ltd', website_url: 'https://www.dbs.com/', icon_url: 'https://www.dbs.com/favicon.ico' },
     },
     {
       id: 'acct-2',
       product_name: 'Savings',
       nickname: 'Savings',
+      account_type: 'savings',
+      institutions: { name: 'OCBC Bank', website_url: 'https://www.ocbc.com/', icon_url: null },
     },
   ]
 
@@ -292,6 +296,33 @@ describe('TransactionsPage', () => {
     })
   })
 
+  it('does not show a low confidence badge for imported transactions', async () => {
+    mockedCreateClient.mockReturnValue(createSupabaseClientMock({
+      transactions: [
+        {
+          id: 'txn-low',
+          txn_date: '2026-03-10',
+          amount: 42.5,
+          txn_type: 'purchase',
+          merchant_normalized: 'Cafe Example',
+          merchant_raw: 'Cafe Example',
+          description: 'Lunch',
+          category_id: null,
+          account_id: 'acct-1',
+          confidence: 0.42,
+          category: null,
+          statement_transaction_tags: [],
+        },
+      ],
+    }) as never)
+    vi.stubGlobal('fetch', vi.fn(async () => createJsonResponse({ tags: [] })))
+
+    render(<TransactionsPage />)
+
+    expect(await screen.findByText('Cafe Example')).toBeInTheDocument()
+    expect(screen.queryByText('Low conf')).not.toBeInTheDocument()
+  })
+
   it('reveals the counterpart picker only for the Internal Transfer category', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => createJsonResponse({ tags: [] })))
 
@@ -416,6 +447,7 @@ describe('TransactionsPage', () => {
       categoryId: 99,
       tagIds: ['tag-1'],
       internalTransferTargetId: 'txn-3',
+      transferLinkType: 'credit_card_payment',
     })
     expect(toast.success).toHaveBeenCalledWith('Transaction updated')
   })

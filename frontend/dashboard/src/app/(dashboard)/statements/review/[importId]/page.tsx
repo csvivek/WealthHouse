@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Copy,
+  FileText,
   Loader2,
   Pencil,
   Plus,
@@ -15,6 +16,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react'
+import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -53,10 +55,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { formatCurrency, formatDate } from '@/lib/format'
+import { getKnownInstitutionMetadataByCode } from '@/lib/accounts/normalization'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
+import {
+  buildStatementReviewCategoryFilterOptions,
+  filterStatementReviewRowsByCategory,
+  filterStatementReviewRowsByStatus,
+  type ReviewCategoryFilterValue,
+  type StatementReviewStatusFilter,
+} from '@/lib/statement-review-filters'
 import {
   isPaymentCategoryTypeCompatible,
   normalizeTxnDirection,
@@ -65,6 +75,7 @@ import { CategoryBadge } from '@/components/category-badge'
 import { CategoryIcon } from '@/components/category-icon'
 import { TagBadge } from '@/components/tag-badge'
 import { TagSelector } from '@/components/tag-selector'
+import { InstitutionBrandPicker, type InstitutionBrandDecision, type InstitutionBrandPreviewState } from '@/components/institution-brand-picker'
 
 interface ImportMeta {
   id: string
@@ -84,6 +95,7 @@ interface ImportMeta {
   cardInfo: Record<string, unknown> | null
   currency: string | null
   createdAt: string
+  sourceFileHref: string | null
   uploadedBy: {
     id: string
     displayName: string | null
@@ -255,6 +267,9 @@ interface RerouteDraft {
   createAccount: {
     institution_name: string
     institution_code: string
+    institution_brand_code: string
+    institution_brand_decision: InstitutionBrandDecision
+    institution_brand_preview: InstitutionBrandPreviewState | null
     product_name: string
     account_type: string
     identifier_hint: string
@@ -265,7 +280,7 @@ interface RerouteDraft {
   }
 }
 
-type FilterStatus = 'all' | 'pending' | 'approved' | 'rejected' | 'committed' | 'already_imported' | 'duplicate'
+type FilterStatus = StatementReviewStatusFilter
 
 const CREATE_CATEGORY_VALUE = '__create_category__'
 const UNCATEGORIZED_VALUE = 'uncategorized'
@@ -391,6 +406,7 @@ export default function ReviewPage() {
   const [tags, setTags] = useState<ReviewTag[]>([])
 
   const [filter, setFilter] = useState<FilterStatus>('all')
+  const [categoryFilterValue, setCategoryFilterValue] = useState<ReviewCategoryFilterValue>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [editingRowId, setEditingRowId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState<EditDraft>({})
@@ -408,6 +424,9 @@ export default function ReviewPage() {
     createAccount: {
       institution_name: '',
       institution_code: '',
+      institution_brand_code: '',
+      institution_brand_decision: null,
+      institution_brand_preview: null,
       product_name: '',
       account_type: 'savings',
       identifier_hint: '',
@@ -460,6 +479,9 @@ export default function ReviewPage() {
       createAccount: {
         institution_name: importMeta.institutionName || '',
         institution_code: importMeta.institutionCode || '',
+        institution_brand_code: getKnownInstitutionMetadataByCode(importMeta.institutionCode)?.code || '',
+        institution_brand_decision: null,
+        institution_brand_preview: null,
         product_name: importMeta.parsedProductName || importMeta.parsedCardName || '',
         account_type: parsedAccountType,
         identifier_hint: importMeta.parsedIdentifierHint || importMeta.parsedCardLast4 || '',
@@ -490,12 +512,29 @@ export default function ReviewPage() {
 
   const stats = useMemo(() => calculateStats(rows), [rows])
 
-  const filteredRows = useMemo(() => {
-    if (filter === 'all') return rows
-    if (filter === 'duplicate') return rows.filter((row) => row.flagStatus === 'duplicate_in_file')
-    if (filter === 'already_imported') return rows.filter((row) => row.flagStatus === 'already_imported')
-    return rows.filter((row) => row.reviewStatus === filter)
+  const statusScopedRows = useMemo(() => {
+    return filterStatementReviewRowsByStatus(rows, filter)
   }, [rows, filter])
+
+  const categoryFilterOptions = useMemo(() => {
+    return buildStatementReviewCategoryFilterOptions(statusScopedRows, categories, {
+      uncategorizedValue: UNCATEGORIZED_VALUE,
+    })
+  }, [statusScopedRows, categories])
+
+  const filteredRows = useMemo(() => {
+    return filterStatementReviewRowsByCategory(statusScopedRows, categoryFilterValue, {
+      uncategorizedValue: UNCATEGORIZED_VALUE,
+    })
+  }, [statusScopedRows, categoryFilterValue])
+
+  useEffect(() => {
+    if (categoryFilterValue === 'all') return
+    if (categoryFilterOptions.some((option) => option.value === categoryFilterValue)) return
+
+    setCategoryFilterValue('all')
+    setSelectedIds(new Set())
+  }, [categoryFilterOptions, categoryFilterValue])
 
   const selectedRows = useMemo(
     () => rows.filter((row) => selectedIds.has(row.id)),
@@ -1014,6 +1053,11 @@ export default function ReviewPage() {
         toast.error('Institution and product name are required to create a reroute account.')
         return
       }
+
+      if ((create.institution_brand_preview?.matched || create.institution_brand_code) && !create.institution_brand_decision) {
+        toast.error('Choose whether to use the verified institution brand before creating the reroute account.')
+        return
+      }
     }
 
     setRerouting(true)
@@ -1023,17 +1067,25 @@ export default function ReviewPage() {
             targetAccountId: rerouteDraft.existingAccountId,
           }
         : {
-            createAccount: {
-              institution_name: rerouteDraft.createAccount.institution_name.trim(),
-              institution_code: rerouteDraft.createAccount.institution_code.trim() || null,
-              product_name: rerouteDraft.createAccount.product_name.trim(),
-              account_type: rerouteDraft.createAccount.account_type,
-              identifier_hint: rerouteDraft.createAccount.identifier_hint.trim() || null,
-              currency: rerouteDraft.createAccount.currency.trim() || null,
-              nickname: rerouteDraft.createAccount.nickname.trim() || null,
-              card_name: rerouteDraft.createAccount.card_name.trim() || null,
-              card_last4: rerouteDraft.createAccount.card_last4.trim() || null,
-            },
+            createAccount: (() => {
+              const create = rerouteDraft.createAccount
+              const verifiedBrand = create.institution_brand_decision === 'verified'
+                ? create.institution_brand_preview
+                : null
+              return {
+                institution_name: verifiedBrand?.canonicalName?.trim() || create.institution_name.trim(),
+                institution_code: create.institution_code.trim() || null,
+                institution_brand_code: verifiedBrand?.brandCode || null,
+                institution_brand_decision: verifiedBrand ? 'verified' : 'generic',
+                product_name: create.product_name.trim(),
+                account_type: create.account_type,
+                identifier_hint: create.identifier_hint.trim() || null,
+                currency: create.currency.trim() || null,
+                nickname: create.nickname.trim() || null,
+                card_name: create.card_name.trim() || null,
+                card_last4: create.card_last4.trim() || null,
+              }
+            })(),
           }
 
       const res = await fetch(`/api/ai/statement/${importId}/reroute`, {
@@ -1139,37 +1191,34 @@ You can leave this page while the commit continues.`,
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => router.push('/statements')}>
-            <ArrowLeft className="size-4" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Review Import</h1>
-            <p className="text-sm text-muted-foreground">
-              {importMeta.fileName}
-              {importMeta.institutionName && ` · ${importMeta.institutionName}`}
-              {!importMeta.institutionName && importMeta.institutionCode && ` · ${importMeta.institutionCode}`}
-              {importMeta.statementDate && ` · ${formatDate(importMeta.statementDate)}`}
-              {(importMeta.uploadedBy.displayName || importMeta.uploadedBy.email) && (
-                ` · Uploaded by ${importMeta.uploadedBy.displayName || importMeta.uploadedBy.email}`
-              )}
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {importMeta.parsedAccountType && (
-                <Badge variant="outline">Parsed as {formatAccountTypeLabel(importMeta.parsedAccountType)}</Badge>
-              )}
-              {importMeta.matchedAccountLabel && (
-                <Badge variant="outline">Matched to {importMeta.matchedAccountLabel}</Badge>
-              )}
-              {importMeta.institutionCode && importMeta.institutionName && (
-                <Badge variant="outline">Code {importMeta.institutionCode}</Badge>
-              )}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+    <ExecutivePage>
+      <ExecutivePageHeader
+        eyebrow="Import Workspace"
+        title="Review Import"
+        description={`${importMeta.fileName}${importMeta.institutionName ? ` · ${importMeta.institutionName}` : ''}${!importMeta.institutionName && importMeta.institutionCode ? ` · ${importMeta.institutionCode}` : ''}${importMeta.statementDate ? ` · ${formatDate(importMeta.statementDate)}` : ''}${(importMeta.uploadedBy.displayName || importMeta.uploadedBy.email) ? ` · Uploaded by ${importMeta.uploadedBy.displayName || importMeta.uploadedBy.email}` : ''}`}
+        backHref="/statements"
+        badges={(
+          <>
+            {importMeta.parsedAccountType ? (
+              <Badge variant="outline">Parsed as {formatAccountTypeLabel(importMeta.parsedAccountType)}</Badge>
+            ) : null}
+            {importMeta.matchedAccountLabel ? (
+              <Badge variant="outline">Matched to {importMeta.matchedAccountLabel}</Badge>
+            ) : null}
+            {importMeta.institutionCode && importMeta.institutionName ? (
+              <Badge variant="outline">Code {importMeta.institutionCode}</Badge>
+            ) : null}
+          </>
+        )}
+        actions={<div className="flex items-center gap-2">
+          {importMeta.sourceFileHref && (
+            <Button asChild variant="outline" className="gap-2">
+              <a href={importMeta.sourceFileHref} target="_blank" rel="noreferrer">
+                <FileText className="size-4" />
+                Open Statement
+              </a>
+            </Button>
+          )}
           {importMeta.canReopen && (
             <Button
               variant="outline"
@@ -1200,8 +1249,8 @@ You can leave this page while the commit continues.`,
               {commitJobActive ? 'Commit Running' : importMeta.isRevision ? 'Re-Commit' : 'Commit'} {stats.approved} Approved
             </Button>
           )}
-        </div>
-      </div>
+        </div>}
+      />
 
       {importMeta.isRevision && (
         <Card className="border-blue-200 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/20">
@@ -1301,6 +1350,31 @@ You can leave this page while the commit continues.`,
                       createAccount: {
                         ...current.createAccount,
                         institution_name: event.target.value,
+                        institution_brand_code: '',
+                        institution_brand_decision: null,
+                        institution_brand_preview: null,
+                      },
+                    }))}
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <InstitutionBrandPicker
+                    institutionName={rerouteDraft.createAccount.institution_name}
+                    institutionCode={rerouteDraft.createAccount.institution_code}
+                    selection={rerouteDraft.createAccount.institution_brand_decision}
+                    onSelectionChange={(selection) => setRerouteDraft((current) => ({
+                      ...current,
+                      createAccount: {
+                        ...current.createAccount,
+                        institution_brand_decision: selection,
+                      },
+                    }))}
+                    onPreviewChange={(preview) => setRerouteDraft((current) => ({
+                      ...current,
+                      createAccount: {
+                        ...current.createAccount,
+                        institution_brand_preview: preview,
+                        institution_brand_code: preview?.brandCode || '',
                       },
                     }))}
                   />
@@ -1579,6 +1653,24 @@ You can leave this page while the commit continues.`,
                   <SelectItem value="committed">Committed</SelectItem>
                   <SelectItem value="already_imported">Already Imported</SelectItem>
                   <SelectItem value="duplicate">Duplicate in File</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={categoryFilterValue}
+                onValueChange={(value) => {
+                  setCategoryFilterValue(value)
+                  setSelectedIds(new Set())
+                }}
+              >
+                <SelectTrigger className="h-8 w-[180px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {categoryFilterOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <span className="text-xs text-muted-foreground">
@@ -2153,7 +2245,7 @@ You can leave this page while the commit continues.`,
         </SheetContent>
       </Sheet>
 
-    </div>
+    </ExecutivePage>
   )
 }
 
