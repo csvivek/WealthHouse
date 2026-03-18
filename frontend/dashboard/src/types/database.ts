@@ -2548,38 +2548,66 @@ export type Database = {
       advances: {
         Row: {
           id: string
+          household_id: string | null
           ledger_entry_id: string
           counterparty_id: string
+          direction: Database['public']['Enums']['advance_direction'] | null
           is_recoverable: boolean
           expected_recovery_amount: number
           status: Database['public']['Enums']['advance_status']
+          payment_mode: string | null
+          is_cash_advance: boolean
           due_date: string | null
+          writeoff_date: string | null
+          writeoff_reason: string | null
           notes: string | null
           created_at: string
+          updated_at: string
         }
         Insert: {
           id?: string
+          household_id: string
           ledger_entry_id: string
           counterparty_id: string
+          direction: Database['public']['Enums']['advance_direction']
           is_recoverable?: boolean
           expected_recovery_amount: number
           status?: Database['public']['Enums']['advance_status']
+          payment_mode?: string | null
+          is_cash_advance?: boolean
           due_date?: string | null
+          writeoff_date?: string | null
+          writeoff_reason?: string | null
           notes?: string | null
           created_at?: string
+          updated_at?: string
         }
         Update: {
           id?: string
+          household_id?: string | null
           ledger_entry_id?: string
           counterparty_id?: string
+          direction?: Database['public']['Enums']['advance_direction'] | null
           is_recoverable?: boolean
           expected_recovery_amount?: number
           status?: Database['public']['Enums']['advance_status']
+          payment_mode?: string | null
+          is_cash_advance?: boolean
           due_date?: string | null
+          writeoff_date?: string | null
+          writeoff_reason?: string | null
           notes?: string | null
           created_at?: string
+          updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: 'advances_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
           {
             foreignKeyName: 'advances_ledger_entry_id_fkey'
             columns: ['ledger_entry_id']
@@ -2602,6 +2630,7 @@ export type Database = {
           advance_id: string
           repayment_date: string
           amount: number
+          event_type: Database['public']['Enums']['advance_event_type']
           statement_transaction_id: string | null
           method: string | null
           notes: string | null
@@ -2612,6 +2641,7 @@ export type Database = {
           advance_id: string
           repayment_date: string
           amount: number
+          event_type?: Database['public']['Enums']['advance_event_type']
           statement_transaction_id?: string | null
           method?: string | null
           notes?: string | null
@@ -2622,6 +2652,7 @@ export type Database = {
           advance_id?: string
           repayment_date?: string
           amount?: number
+          event_type?: Database['public']['Enums']['advance_event_type']
           statement_transaction_id?: string | null
           method?: string | null
           notes?: string | null
@@ -2647,26 +2678,46 @@ export type Database = {
       counterparties: {
         Row: {
           id: string
+          household_id: string | null
           name: string
           relationship: string | null
+          phone: string | null
+          counterparty_type: string | null
           notes: string | null
           created_at: string
+          updated_at: string
         }
         Insert: {
           id?: string
+          household_id: string
           name: string
           relationship?: string | null
+          phone?: string | null
+          counterparty_type?: string | null
           notes?: string | null
           created_at?: string
+          updated_at?: string
         }
         Update: {
           id?: string
+          household_id?: string | null
           name?: string
           relationship?: string | null
+          phone?: string | null
+          counterparty_type?: string | null
           notes?: string | null
           created_at?: string
+          updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: 'counterparties_household_id_fkey'
+            columns: ['household_id']
+            isOneToOne: false
+            referencedRelation: 'households'
+            referencedColumns: ['id']
+          },
+        ]
       }
       mappings: {
         Row: {
@@ -3229,6 +3280,8 @@ export type Database = {
       category_domain_type: 'receipt' | 'payment'
       category_payment_subtype: 'expense' | 'transfer' | 'income'
       advance_status: 'pending' | 'partial' | 'settled' | 'written_off'
+      advance_direction: 'given' | 'taken'
+      advance_event_type: 'recovery' | 'repayment' | 'adjustment' | 'writeoff'
       match_type: 'exact' | 'fuzzy' | 'manual'
       mapping_status: 'needs_review' | 'confirmed' | 'rejected'
       tag_source: 'default' | 'member' | 'custom' | 'system'
