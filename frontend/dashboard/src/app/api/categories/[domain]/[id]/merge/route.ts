@@ -110,8 +110,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: 'Payment category merge target must have the same type' }, { status: 400 })
     }
 
-    await db.from('statement_transactions').update({ category_id: Number(targetId) }).eq('category_id', Number(id))
-    await db.from('ledger_entries').update({ category_id: Number(targetId) }).eq('category_id', Number(id))
+    const { error: txnsUpdateError } = await db.from('statement_transactions').update({ category_id: Number(targetId) }).eq('category_id', Number(id))
+    if (txnsUpdateError) throw new Error(txnsUpdateError.message)
+    const { error: ledgerUpdateError } = await db.from('ledger_entries').update({ category_id: Number(targetId) }).eq('category_id', Number(id))
+    if (ledgerUpdateError) throw new Error(ledgerUpdateError.message)
     const { data: targetMembership } = await db
       .from('payment_category_group_memberships')
       .select('group_id')

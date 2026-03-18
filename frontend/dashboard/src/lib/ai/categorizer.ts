@@ -62,10 +62,14 @@ Respond with ONLY valid JSON: {"category": "string", "confidence": number, "need
     response_format: { type: 'json_object' },
   })
 
-  const result = JSON.parse(response.choices[0].message.content || '{}')
+  const content = response.choices?.[0]?.message?.content
+  if (!content) {
+    return { category: 'Uncategorized', confidence: 0, needsConfirmation: true }
+  }
+  const result = JSON.parse(content)
   return {
     category: result.category || 'Uncategorized',
     confidence: result.confidence || 0,
-    needsConfirmation: result.needsConfirmation ?? result.confidence < 90,
+    needsConfirmation: result.needsConfirmation === true || (result.confidence ?? 0) < 90,
   }
 }

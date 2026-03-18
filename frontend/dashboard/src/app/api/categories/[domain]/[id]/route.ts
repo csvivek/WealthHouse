@@ -100,7 +100,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { data, error } = await db.from('categories').update({
     name: nextName,
     type: body?.type ?? existing.type,
-    payment_subtype: body?.type ?? existing.payment_subtype ?? existing.type,
+    payment_subtype: body?.payment_subtype !== undefined ? body.payment_subtype : existing.payment_subtype,
     group_name: body?.group_name ?? existing.group_name,
     icon_key: style.icon_key,
     color_token: style.color_token,

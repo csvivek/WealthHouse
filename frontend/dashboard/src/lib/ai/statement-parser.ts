@@ -153,15 +153,13 @@ If you cannot confidently detect a field, use null or unknown rather than invent
     })
   }
 
-  const result = await geminiProVision.generateContent(promptParts)
-
-  const text = result.response.text()
-  const payload = extractJson(text)
-
   try {
+    const result = await geminiProVision.generateContent(promptParts)
+    const text = result.response.text()
+    const payload = extractJson(text)
     return normalizeParsedStatement(JSON.parse(payload) as ParsedStatementResult)
   } catch (error) {
-    console.error('Failed to parse statement JSON from AI response:', payload, error)
+    console.error('Failed to parse statement JSON from AI response:', error)
     return {
       institution_code: 'unknown',
       institution_name: null,

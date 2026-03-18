@@ -45,5 +45,5 @@ Guidelines:
     max_tokens: 800,
   })
 
-  return response.choices[0].message.content || 'I apologize, I was unable to process your request. Please try again.'
+  return response.choices?.[0]?.message?.content || 'I apologize, I was unable to process your request. Please try again.'
 }

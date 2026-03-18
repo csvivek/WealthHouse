@@ -332,7 +332,7 @@ export async function processStatementCommit(params: {
       statement_name: accountLabel ? `${fileImport.file_name} — ${accountLabel}` : fileImport.file_name,
       source: 'upload',
       parse_status: 'parsed',
-      parse_confidence: Number(fileImport.parse_confidence) || 0.85,
+      parse_confidence: typeof fileImport.parse_confidence === 'number' ? fileImport.parse_confidence : 0.85,
     }
 
     const { data: stmtImport, error: stmtError } = await supabase

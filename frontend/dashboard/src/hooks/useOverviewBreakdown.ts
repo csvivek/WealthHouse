@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   DEFAULT_BREAKDOWN_DIMENSION,
@@ -35,8 +35,11 @@ export function useOverviewBreakdown(
   const [error, setError] = useState<string | null>(null)
   const [dimension, setDimension] = useState<BreakdownDimension>(initialDimension)
   const [data, setData] = useState<OverviewBreakdownDto>(EMPTY_DATA)
+  const fetchIdRef = useRef(0)
 
   const fetchData = useCallback(async () => {
+    const myId = ++fetchIdRef.current
+
     setLoading(true)
     setError(null)
 
@@ -47,6 +50,7 @@ export function useOverviewBreakdown(
         error: authError,
       } = await supabase.auth.getUser()
 
+      if (fetchIdRef.current !== myId) return
       if (authError) throw authError
       if (!user) {
         setData(mapOverviewBreakdownRows(dimension, []))
@@ -59,6 +63,7 @@ export function useOverviewBreakdown(
         .eq('id', user.id)
         .single()
 
+      if (fetchIdRef.current !== myId) return
       if (profileError) throw profileError
 
       const { data: rpcRows, error: rpcError } = await supabase.rpc(
@@ -69,6 +74,7 @@ export function useOverviewBreakdown(
         },
       )
 
+      if (fetchIdRef.current !== myId) return
       if (rpcError) throw rpcError
       setData(
         mapOverviewBreakdownRows(
@@ -77,11 +83,12 @@ export function useOverviewBreakdown(
         ),
       )
     } catch (err) {
+      if (fetchIdRef.current !== myId) return
       const message = err instanceof Error ? err.message : 'Failed to load overview breakdown.'
       setError(message)
       setData(mapOverviewBreakdownRows(dimension, []))
     } finally {
-      setLoading(false)
+      if (fetchIdRef.current === myId) setLoading(false)
     }
   }, [dimension])
 

@@ -114,20 +114,18 @@ Rules:
 - If receipt has no clear line items, return an empty array.
 - Return JSON only.`
 
-  const result = await geminiProVision.generateContent([
-    prompt,
-    {
-      inlineData: {
-        mimeType,
-        data: imageBase64,
-      },
-    },
-  ])
-
-  const text = result.response.text()
-  const payload = extractJson(text)
-
   try {
+    const result = await geminiProVision.generateContent([
+      prompt,
+      {
+        inlineData: {
+          mimeType,
+          data: imageBase64,
+        },
+      },
+    ])
+    const text = result.response.text()
+    const payload = extractJson(text)
     return toParsedReceipt(JSON.parse(payload) as unknown)
   } catch {
     return toParsedReceipt({
@@ -145,7 +143,7 @@ Rules:
       extractionConfidence: 0,
       warnings: ['parser_invalid_json'],
       items: [],
-      rawResponse: payload,
+      rawResponse: null,
     })
   }
 }
