@@ -9,6 +9,7 @@ import {
   FileText,
   ExternalLink,
   Pencil,
+  Trash2,
   AlertTriangle,
 } from 'lucide-react'
 import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
@@ -28,7 +29,6 @@ import { Label } from '@/components/ui/label'
 import { createClient } from '@/lib/supabase/client'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
 import { useStatementIngestionJobs } from '@/lib/statement-ingestion-jobs'
-import { getKnownInstitutionMetadataByCode } from '@/lib/accounts/normalization'
 import { formatDate } from '@/lib/format'
 import { isStatementStorageSchemaNotReadyError } from '@/lib/statements/config'
 import { cn } from '@/lib/utils'
@@ -40,6 +40,7 @@ interface AccountOption {
   id: string
   product_name: string
   nickname: string | null
+  identifier_hint: string | null
   account_type: string
   institutions: { name: string } | null
 }
@@ -116,6 +117,21 @@ interface ParseRecoveryState {
   suggestedExistingAccounts: SuggestedExistingAccount[]
 }
 
+interface ExistingImportSummary {
+  importId: string
+  importLabel: string
+  accountLabel: string | null
+  reviewUrl: string
+  status: string
+}
+
+interface DuplicateImportRecoveryState {
+  statementUploadId: string
+  fileName: string
+  importCount: number
+  imports: ExistingImportSummary[]
+}
+
 type ResolutionMode = 'existing' | 'create'
 
 interface DescriptorResolutionState {
@@ -174,8 +190,10 @@ export default function StatementsPage() {
 
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
   const [uploadingCount, setUploadingCount] = useState(0)
+  const [deletingImportId, setDeletingImportId] = useState<string | null>(null)
   const [resolvingRecoveryId, setResolvingRecoveryId] = useState<string | null>(null)
   const [parseRecoveries, setParseRecoveries] = useState<Record<string, ParseRecoveryState>>({})
+  const [duplicateImportRecoveries, setDuplicateImportRecoveries] = useState<Record<string, DuplicateImportRecoveryState>>({})
   const [descriptorResolutions, setDescriptorResolutions] = useState<Record<string, Record<string, DescriptorResolutionState>>>({})
 
   const { hasActiveJobs: hasActiveCommitJobs } = useStatementCommitJobs()
@@ -212,7 +230,7 @@ export default function StatementsPage() {
     const [acctRes, importRes, householdProfilesResponse] = await Promise.all([
       supabase
         .from('accounts')
-        .select('id, product_name, nickname, account_type, institutions(name)')
+        .select('id, product_name, nickname, identifier_hint, account_type, institutions(name)')
         .eq('household_id', profile.household_id)
         .eq('is_active', true)
         .order('created_at', { ascending: false }),
@@ -335,7 +353,8 @@ export default function StatementsPage() {
   }, [parseRecoveries, searchParams])
 
   function getAccountLabel(option: AccountOption) {
-    return `${option.institutions?.name ? `${option.institutions.name} — ` : ''}${option.nickname ?? option.product_name}`
+    const label = `${option.institutions?.name ? `${option.institutions.name} — ` : ''}${option.nickname ?? option.product_name}`
+    return option.identifier_hint ? `${label} (${option.identifier_hint})` : label
   }
 
   const uploaderOptions = useMemo(
@@ -383,7 +402,7 @@ export default function StatementsPage() {
         createAccount: {
           institution_name: descriptor.institution_name || '',
           institution_code: descriptor.institution_code || '',
-          institution_brand_code: getKnownInstitutionMetadataByCode(descriptor.institution_code)?.code || '',
+          institution_brand_code: '',
           institution_brand_decision: null,
           institution_brand_preview: null,
           product_name: descriptor.card_name || descriptor.product_name || '',
@@ -423,6 +442,32 @@ export default function StatementsPage() {
     })
   }
 
+  function initializeDuplicateImportRecovery(payload: DuplicateImportRecoveryState) {
+    setDuplicateImportRecoveries((current) => ({
+      ...current,
+      [payload.statementUploadId]: payload,
+    }))
+  }
+
+  function removeImportFromDuplicateRecoveries(importId: string) {
+    setDuplicateImportRecoveries((current) => {
+      const next: Record<string, DuplicateImportRecoveryState> = {}
+
+      for (const [statementUploadId, recovery] of Object.entries(current)) {
+        const remainingImports = recovery.imports.filter((existingImport) => existingImport.importId !== importId)
+        if (remainingImports.length === 0) continue
+
+        next[statementUploadId] = {
+          ...recovery,
+          importCount: Math.max(remainingImports.length, recovery.importCount - 1),
+          imports: remainingImports,
+        }
+      }
+
+      return next
+    })
+  }
+
   async function uploadSingleFile(file: File) {
     const formData = new FormData()
     formData.append('statement', file)
@@ -439,7 +484,90 @@ export default function StatementsPage() {
 
     if (!response.ok) {
       if (response.status === 409) {
-        const count = typeof payload.existingImportCount === 'number' ? payload.existingImportCount : 0
+        const existingStatus = typeof payload.existingStatus === 'string' ? payload.existingStatus : null
+        const parseSessionId = typeof payload.parseSessionId === 'string' ? payload.parseSessionId : null
+
+        if (existingStatus === 'needs_account_resolution' && parseSessionId) {
+          const recoveryResponse = await fetch(`/api/ai/statement/parse-session/${parseSessionId}`, { cache: 'no-store' })
+          const recoveryPayload = await recoveryResponse.json().catch(() => null)
+
+          if (!recoveryResponse.ok || !recoveryPayload) {
+            throw new Error(payload.error || `Failed to resume ${file.name}`)
+          }
+
+          initializeRecoveryState({
+            parseSessionId,
+            statementUploadId: typeof recoveryPayload.statementUploadId === 'string' ? recoveryPayload.statementUploadId : null,
+            fileName: typeof recoveryPayload.fileName === 'string' ? recoveryPayload.fileName : null,
+            error: 'Account matching needs your review before import can continue.',
+            unmatchedAccountDescriptors: (recoveryPayload.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
+            suggestedExistingAccounts: (recoveryPayload.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
+          })
+          toast.success(`${payload.existingFileName || file.name} is waiting for account matching. Continue below.`)
+          return
+        }
+
+        if (existingStatus === 'queued' || existingStatus === 'parsing') {
+          toast.error(`${payload.existingFileName || file.name} is already being processed.`)
+          return
+        }
+
+        if (existingStatus === 'failed') {
+          toast.error(payload.error || `${payload.existingFileName || file.name} hit a previous failed upload.`)
+          return
+        }
+
+        const existingImports: Array<Record<string, unknown>> = Array.isArray(payload.existingImports)
+          ? payload.existingImports as Array<Record<string, unknown>>
+          : []
+        const count = typeof payload.existingImportCount === 'number' ? payload.existingImportCount : existingImports.length
+        if (existingImports.length === 1) {
+          const reviewUrl = typeof existingImports[0]?.reviewUrl === 'string' ? existingImports[0].reviewUrl : null
+          if (reviewUrl) {
+            toast.success(`${payload.existingFileName || file.name} was already imported. Opening the existing review.`)
+            router.push(reviewUrl)
+            return
+          }
+        }
+
+        const recoverableImports = existingImports
+          .map((existingImport) => {
+            const importId = typeof existingImport?.importId === 'string' ? existingImport.importId : null
+            const importLabel = typeof existingImport?.importLabel === 'string' ? existingImport.importLabel : null
+            const accountLabel = typeof existingImport?.accountLabel === 'string' ? existingImport.accountLabel : null
+            const reviewUrl = typeof existingImport?.reviewUrl === 'string' ? existingImport.reviewUrl : null
+            const status = typeof existingImport?.status === 'string' ? existingImport.status : 'in_review'
+
+            if (!importId || !importLabel || !reviewUrl) {
+              return null
+            }
+
+            return {
+              importId,
+              importLabel,
+              accountLabel,
+              reviewUrl,
+              status,
+            } satisfies ExistingImportSummary
+          })
+          .filter((existingImport): existingImport is ExistingImportSummary => existingImport !== null)
+
+        if (count > 1 && recoverableImports.length > 0) {
+          const statementUploadId = typeof payload.statementUploadId === 'string'
+            ? payload.statementUploadId
+            : recoverableImports.map((existingImport) => existingImport.importId).join(':')
+
+          initializeDuplicateImportRecovery({
+            statementUploadId,
+            fileName: payload.existingFileName || file.name,
+            importCount: count,
+            imports: recoverableImports,
+          })
+          toast.success(`${payload.existingFileName || file.name} was already imported into ${count} account-specific reviews. Open one below.`)
+          void fetchData()
+          return
+        }
+
         toast.error(
           count > 1
             ? `${payload.existingFileName || file.name} was already imported into ${count} account-specific reviews.`
@@ -610,6 +738,32 @@ export default function StatementsPage() {
     }
   }
 
+  async function handleDeleteImport(importId: string, fileName: string) {
+    const confirmed = window.confirm(
+      `Delete ${fileName} and all data imported from it?\n\nThis removes its review rows, committed statement transactions, and any stale upload record that no longer has live imports.`,
+    )
+    if (!confirmed) return
+
+    setDeletingImportId(importId)
+    try {
+      const res = await fetch(`/api/ai/statement/${importId}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to delete import')
+        return
+      }
+
+      removeImportFromDuplicateRecoveries(importId)
+      toast.success(`${data.fileName || fileName} deleted`)
+      await fetchData()
+    } catch {
+      toast.error('Failed to delete import')
+    } finally {
+      setDeletingImportId(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -719,6 +873,67 @@ export default function StatementsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {Object.values(duplicateImportRecoveries).map((duplicateRecovery) => (
+        <Card key={duplicateRecovery.statementUploadId} className="border-sky-300/60 bg-sky-50/50 dark:border-sky-700/50 dark:bg-sky-950/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ExternalLink className="size-4 text-sky-600" />
+              Statement Already Imported
+            </CardTitle>
+            <CardDescription className="text-sky-900 dark:text-sky-100">
+              {duplicateRecovery.fileName} already created {duplicateRecovery.importCount} account-specific review{duplicateRecovery.importCount === 1 ? '' : 's'}.
+              Open the matching review below instead of re-uploading it.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              {duplicateRecovery.imports.map((existingImport) => (
+                <div key={existingImport.importId} className="rounded-md border bg-background p-4">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{existingImport.accountLabel || existingImport.importLabel}</p>
+                      {existingImport.accountLabel && existingImport.importLabel !== existingImport.accountLabel ? (
+                        <p className="truncate text-xs text-muted-foreground">{existingImport.importLabel}</p>
+                      ) : null}
+                    </div>
+                    {getStatementStatusBadge(existingImport.status)}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => router.push(existingImport.reviewUrl)}
+                  >
+                    <ExternalLink className="size-3" />
+                    Open {existingImport.accountLabel || existingImport.importLabel}
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            {duplicateRecovery.imports.length < duplicateRecovery.importCount ? (
+              <p className="text-xs text-sky-900/80 dark:text-sky-100/80">
+                {duplicateRecovery.imports.length} of {duplicateRecovery.importCount} review links are currently available here.
+              </p>
+            ) : null}
+
+            <div className="flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDuplicateImportRecoveries((current) => {
+                  const next = { ...current }
+                  delete next[duplicateRecovery.statementUploadId]
+                  return next
+                })}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
 
       {Object.values(parseRecoveries).map((parseRecovery) => (
         <Card key={parseRecovery.parseSessionId} className="border-amber-300/60 bg-amber-50/50 dark:border-amber-700/50 dark:bg-amber-950/20">
@@ -1121,6 +1336,16 @@ export default function StatementsPage() {
                                 Reopen
                               </Button>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1 text-xs text-destructive hover:text-destructive"
+                              onClick={() => void handleDeleteImport(importRow.id, importRow.file_name)}
+                              disabled={deletingImportId === importRow.id}
+                            >
+                              {deletingImportId === importRow.id ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                              Delete
+                            </Button>
                           </div>
                         </td>
                       </tr>

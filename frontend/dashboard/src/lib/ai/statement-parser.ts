@@ -119,6 +119,9 @@ Citibank-specific rules:
 - Citibank and Citi branded statements must use institution_code "citibank".
 - Citi Ready Credit is a loan / credit line product. Set account_type to loan, not credit_card, even if the statement resembles a card bill.
 - Product labels containing Ready Credit, credit line, or line of credit should stay tied to that loan product name.
+- On a Citi Wealth First (savings/current) account: a transaction described as "PAYMENT TO CITI READY CREDIT", "PAYMENT TO CITI CREDIT CARD", or any "PAYMENT TO CITI ..." variant is an OUTGOING transfer from the checking account to the credit/loan product. Use statement_type "transfer_out", not "credit_card_payment" or "payment". This is a debit on the sending account.
+- On a Citi Ready Credit (loan) account: a transaction described as "PAYMENT - ATM/INTERNET" or similar payment-received entry represents a payment received from the linked checking account, REDUCING the outstanding loan balance. Use statement_type "transfer_in", not "credit_card_payment" or "payment". This is a credit on the receiving loan account.
+- The two rows above are always counterparts of each other when amounts match. Classify them with opposite directions (transfer_out on sender, transfer_in on receiver) so they can be linked as a transfer pair.
 
 If you cannot confidently detect a field, use null or unknown rather than inventing data.`
 

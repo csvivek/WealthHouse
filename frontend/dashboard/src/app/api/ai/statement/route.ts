@@ -13,10 +13,12 @@ import { ensureProfile } from '@/lib/supabase/ensure-profile'
 import { computeFileHash } from '@/lib/server/statement-import'
 import { startStatementIngestionJob } from '@/lib/server/statement-ingestion-jobs'
 import {
+  listStatementUploadImportsByFileHash,
   listStatementUploadImports,
   loadStatementUploadByHash,
 } from '@/lib/server/statement-uploads'
-import { uploadOriginalStatement } from '@/lib/server/statement-storage'
+import type { StatementUploadImportSummary } from '@/lib/server/statement-uploads'
+import { deleteOriginalStatement, uploadOriginalStatement } from '@/lib/server/statement-storage'
 
 function buildStatementStorageUnavailableResponse(error: unknown) {
   const message = error instanceof Error ? error.message : 'Failed to store original statement'
@@ -33,6 +35,101 @@ function buildStatementStorageUnavailableResponse(error: unknown) {
     },
     { status: mapped.status },
   )
+}
+
+async function restartExistingUpload(params: {
+  serviceSupabase: any
+  statementUploadId: string
+  existingUpload: Record<string, unknown>
+  userId: string
+  householdId: string
+  selectedAccountId: string | null
+  file: File
+  bytes: Buffer
+  statementBucket: string
+}) {
+  await deleteOriginalStatement({
+    supabase: params.serviceSupabase,
+    storageBucket: typeof params.existingUpload.storage_bucket === 'string' ? params.existingUpload.storage_bucket : null,
+    storagePath: typeof params.existingUpload.storage_path === 'string' ? params.existingUpload.storage_path : null,
+  })
+
+  await params.serviceSupabase
+    .from('statement_parse_sessions')
+    .delete()
+    .eq('statement_upload_id', params.statementUploadId)
+
+  const { error: resetError } = await params.serviceSupabase
+    .from('statement_uploads')
+    .update({
+      uploaded_by: params.userId,
+      selected_account_id: params.selectedAccountId,
+      file_name: params.file.name,
+      mime_type: params.file.type || 'application/octet-stream',
+      file_size_bytes: params.bytes.byteLength,
+      storage_bucket: params.statementBucket,
+      storage_path: null,
+      status: 'queued',
+      duplicate_of_statement_upload_id: null,
+      parse_session_id: null,
+      result_payload: null,
+      error_code: null,
+      error_message: null,
+      parse_error: null,
+      completed_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.statementUploadId)
+
+  if (resetError) {
+    throw new Error(resetError.message || 'Failed to reset prior statement upload')
+  }
+
+  let storedOriginal: { storageBucket: string; storagePath: string }
+  try {
+    storedOriginal = await uploadOriginalStatement({
+      supabase: params.serviceSupabase,
+      householdId: params.householdId,
+      fileImportId: params.statementUploadId,
+      fileName: params.file.name,
+      mimeType: params.file.type || 'application/octet-stream',
+      bytes: params.bytes,
+    })
+  } catch (error) {
+    await params.serviceSupabase
+      .from('statement_uploads')
+      .update({
+        status: 'failed',
+        error_code: 'statement_storage_failed',
+        error_message: error instanceof Error ? error.message : 'Failed to upload statement file',
+        parse_error: error instanceof Error ? error.message : 'Failed to upload statement file',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', params.statementUploadId)
+
+    throw error
+  }
+
+  await params.serviceSupabase
+    .from('statement_uploads')
+    .update({
+      storage_bucket: storedOriginal.storageBucket,
+      storage_path: storedOriginal.storagePath,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.statementUploadId)
+
+  const job = startStatementIngestionJob({
+    statementUploadId: params.statementUploadId,
+    fileName: params.file.name,
+    userId: params.userId,
+    householdId: params.householdId,
+  })
+
+  return {
+    statementUploadId: params.statementUploadId,
+    job,
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -84,33 +181,6 @@ export async function POST(request: NextRequest) {
     const bytes = Buffer.from(await file.arrayBuffer())
     const fileSha256 = computeFileHash(bytes)
 
-    const existingUpload = await loadStatementUploadByHash({
-      supabase: db,
-      householdId: profile.household_id,
-      fileSha256,
-    })
-
-    if (existingUpload) {
-      const existingImports = await listStatementUploadImports({
-        supabase: db,
-        statementUploadId: String(existingUpload.id),
-        householdId: profile.household_id,
-      })
-
-      return NextResponse.json(
-        {
-          error: 'This file has already been processed.',
-          duplicate: true,
-          statementUploadId: String(existingUpload.id),
-          existingFileName: typeof existingUpload.file_name === 'string' ? existingUpload.file_name : file.name,
-          existingStatus: typeof existingUpload.status === 'string' ? existingUpload.status : 'completed',
-          existingImportCount: existingImports.length,
-          existingImports,
-        },
-        { status: 409 },
-      )
-    }
-
     let serviceSupabase: any
     let statementBucket = ''
     try {
@@ -133,6 +203,96 @@ export async function POST(request: NextRequest) {
       }
     } catch (error) {
       return buildStatementStorageUnavailableResponse(error)
+    }
+
+    const existingUpload = await loadStatementUploadByHash({
+      supabase: db,
+      householdId: profile.household_id,
+      fileSha256,
+    })
+
+    if (existingUpload) {
+      const existingStatus = typeof existingUpload.status === 'string' ? existingUpload.status : 'completed'
+      const existingFileName = typeof existingUpload.file_name === 'string' ? existingUpload.file_name : file.name
+      const parseSessionId = typeof existingUpload.parse_session_id === 'string'
+        ? existingUpload.parse_session_id
+        : null
+      const existingUploadId = String(existingUpload.id)
+      const existingFileSha256 = typeof existingUpload.file_sha256 === 'string' ? existingUpload.file_sha256 : fileSha256
+
+      let existingImports: StatementUploadImportSummary[] = await listStatementUploadImports({
+        supabase: db,
+        statementUploadId: existingUploadId,
+        householdId: profile.household_id,
+      })
+
+      if (existingImports.length === 0 && existingFileSha256) {
+        existingImports = await listStatementUploadImportsByFileHash({
+          supabase: db,
+          householdId: profile.household_id,
+          fileSha256: existingFileSha256,
+        })
+      }
+
+      const existingImportCount = existingImports.length
+
+      const canRestartMissingImports = (
+        existingImports.length === 0
+        && existingStatus !== 'queued'
+        && existingStatus !== 'parsing'
+        && !(existingStatus === 'needs_account_resolution' && Boolean(parseSessionId))
+      )
+
+      if (canRestartMissingImports) {
+        const restarted = await restartExistingUpload({
+          serviceSupabase,
+          statementUploadId: existingUploadId,
+          existingUpload,
+          userId: user.id,
+          householdId: profile.household_id,
+          selectedAccountId,
+          file,
+          bytes,
+          statementBucket,
+        })
+
+        return NextResponse.json(
+          {
+            duplicate: false,
+            statementUploadId: restarted.statementUploadId,
+            status: 'queued',
+            job: restarted.job,
+            retriedFailedUpload: existingStatus === 'failed',
+            restartedStaleUpload: existingStatus !== 'failed',
+          },
+          { status: 202 },
+        )
+      }
+
+      let errorMessage = 'This file has already been processed.'
+      if (existingStatus === 'needs_account_resolution') {
+        errorMessage = 'This file is already waiting for account matching.'
+      } else if (existingStatus === 'queued' || existingStatus === 'parsing') {
+        errorMessage = 'This file is already being processed.'
+      } else if (existingStatus === 'failed') {
+        errorMessage = 'A previous upload of this file failed before import completed.'
+      }
+
+      return NextResponse.json(
+        {
+          error: errorMessage,
+          duplicate: true,
+          statementUploadId: existingUploadId,
+          existingFileName,
+          existingStatus,
+          existingImportCount,
+          existingImports,
+          parseSessionId,
+          resumable: existingStatus === 'needs_account_resolution' && Boolean(parseSessionId),
+          resumeUrl: parseSessionId ? `/statements?parseSessionId=${parseSessionId}` : null,
+        },
+        { status: 409 },
+      )
     }
 
     const statementUploadId = randomUUID()

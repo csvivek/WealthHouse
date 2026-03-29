@@ -51,6 +51,8 @@ function toParsedReceipt(payload: unknown): ParsedReceiptData {
 
   return {
     merchantName: typeof data.merchantName === 'string' && data.merchantName.trim() ? data.merchantName.trim() : null,
+    merchantAddress: typeof data.merchantAddress === 'string' && data.merchantAddress.trim() ? data.merchantAddress.trim() : null,
+    merchantPhone: typeof data.merchantPhone === 'string' && data.merchantPhone.trim() ? data.merchantPhone.trim() : null,
     transactionDate: coerceDate(data.transactionDate ?? data.date),
     paymentTime: coerceTime(data.paymentTime),
     transactionTotal: parseNumeric(data.transactionTotal ?? data.totalAmount),
@@ -83,6 +85,8 @@ export async function parseReceipt(imageBase64: string, mimeType: string): Promi
 Return only valid JSON using this exact shape:
 {
   "merchantName": "string or null",
+  "merchantAddress": "full street address or null",
+  "merchantPhone": "phone number as printed or null",
   "transactionDate": "YYYY-MM-DD or null",
   "paymentTime": "HH:MM:SS or null",
   "transactionTotal": number or null,
@@ -112,6 +116,8 @@ Rules:
 - Keep numeric values as numbers.
 - Confidence can be 0-1 or 0-100.
 - If receipt has no clear line items, return an empty array.
+- Extract merchantAddress as the full address printed on the receipt (street, city, country). Use null if not present.
+- Extract merchantPhone as printed (include country code if shown). Use null if not present.
 - Return JSON only.`
 
   try {
@@ -130,6 +136,8 @@ Rules:
   } catch {
     return toParsedReceipt({
       merchantName: null,
+      merchantAddress: null,
+      merchantPhone: null,
       transactionDate: null,
       paymentTime: null,
       transactionTotal: null,

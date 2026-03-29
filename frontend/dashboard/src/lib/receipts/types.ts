@@ -27,6 +27,8 @@ export interface ParsedReceiptItem {
 
 export interface ParsedReceiptData {
   merchantName: string | null
+  merchantAddress: string | null
+  merchantPhone: string | null
   transactionDate: string | null
   paymentTime: string | null
   transactionTotal: number | null

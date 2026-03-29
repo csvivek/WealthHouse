@@ -5,6 +5,7 @@ import type { Database } from '@/types/database'
 import { resolveEffectivePaymentGroups } from '@/lib/server/category-groups'
 import { listTags } from '@/lib/server/tag-service'
 import { buildStatementSourceFileHref, resolveStatementStorageForImport } from '@/lib/server/statement-storage'
+import { deleteStatementImport, StatementDeleteProcessError } from '@/lib/server/statement-delete'
 import { isStatementLinkingSchemaNotReadyError } from '@/lib/statement-linking/config'
 
 type FileImportRow = Database['public']['Tables']['file_imports']['Row']
@@ -533,6 +534,52 @@ export async function GET(
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to load review data' },
       { status: 500 }
+    )
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ importId: string }> }
+) {
+  try {
+    const { importId } = await params
+    const supabase = await createServerSupabaseClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('household_id')
+      .eq('id', user.id)
+      .single()
+
+    if (!profile) {
+      return NextResponse.json({ error: 'No profile found' }, { status: 404 })
+    }
+
+    const serviceSupabase = createServiceSupabaseClient() as any
+    const result = await deleteStatementImport({
+      supabase: serviceSupabase,
+      importId,
+      householdId: profile.household_id,
+    })
+
+    return NextResponse.json({
+      deleted: true,
+      importId: result.deletedImportId,
+      fileName: result.deletedFileName,
+      removedStatementUpload: result.removedStatementUpload,
+      removedStoredFile: result.removedStoredFile,
+    })
+  } catch (error) {
+    console.error('Failed to delete statement import:', error)
+    return NextResponse.json(
+      { error: error instanceof StatementDeleteProcessError ? error.message : (error instanceof Error ? error.message : 'Failed to delete statement import') },
+      { status: error instanceof StatementDeleteProcessError ? error.status : 500 },
     )
   }
 }

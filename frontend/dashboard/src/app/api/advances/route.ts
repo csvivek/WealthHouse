@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
       .select(`
         *,
         counterparties(id, name, relationship, phone, counterparty_type),
-        advance_repayments(id, amount, repayment_date, event_type, method, notes)
+        advance_repayments(id, amount, repayment_date, event_type, statement_transaction_id, method, notes)
       `)
       .eq('household_id', ctx.householdId)
       .order('created_at', { ascending: false })
@@ -64,7 +64,30 @@ export async function GET(request: NextRequest) {
       writeoff_eligible_count: open.filter(a => a.days_outstanding > 365).length,
     }
 
-    return NextResponse.json({ advances, summary })
+    // ── Attach linked transaction data ────────────────────────────────────────
+    const linkedTxnIds = advances
+      .map((a) => (a as Record<string, unknown>).statement_transaction_id as string | null)
+      .filter((id): id is string => id != null)
+
+    let linkedTxnMap: Record<string, unknown> = {}
+    if (linkedTxnIds.length > 0) {
+      const { data: linkedTxns } = await supabase
+        .from('statement_transactions')
+        .select('id, txn_date, amount, txn_type, merchant_normalized, merchant_raw, description, account_id, accounts(id, nickname, product_name)')
+        .in('id', linkedTxnIds)
+
+      for (const lt of linkedTxns ?? []) {
+        linkedTxnMap[(lt as Record<string, unknown>).id as string] = lt
+      }
+    }
+
+    const advancesWithLinked = advances.map((a) => {
+      const adv = a as Record<string, unknown>
+      const txnId = adv.statement_transaction_id as string | null
+      return { ...adv, linked_transaction: txnId ? (linkedTxnMap[txnId] ?? null) : null }
+    })
+
+    return NextResponse.json({ advances: advancesWithLinked, summary })
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to list advances' },
@@ -176,6 +199,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const statementTxnId = typeof body?.statement_transaction_id === 'string'
+      ? body.statement_transaction_id
+      : null
+
     // Step 3: Create ledger entry
     const currency = typeof body?.currency === 'string' ? body.currency : 'SGD'
     const { data: ledgerEntry, error: leErr } = await supabase
@@ -187,6 +214,7 @@ export async function POST(request: NextRequest) {
         currency,
         source_priority: 'manual',
         notes: typeof body?.notes === 'string' ? body.notes : null,
+        statement_transaction_id: statementTxnId,
       })
       .select('id')
       .single()
@@ -207,7 +235,8 @@ export async function POST(request: NextRequest) {
         is_cash_advance: body?.is_cash_advance === true,
         due_date: typeof body?.due_date === 'string' ? body.due_date : null,
         notes: typeof body?.notes === 'string' ? body.notes : null,
-      })
+        statement_transaction_id: statementTxnId,
+      } as Record<string, unknown>)
       .select(`
         *,
         counterparties(id, name, relationship, phone, counterparty_type),

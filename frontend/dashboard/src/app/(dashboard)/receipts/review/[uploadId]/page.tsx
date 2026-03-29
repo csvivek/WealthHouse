@@ -27,6 +27,8 @@ interface ReceiptUpload {
 interface StagingHeader {
   id: string
   merchant_name: string | null
+  merchant_address: string | null
+  merchant_phone: string | null
   txn_date: string | null
   payment_time: string | null
   transaction_total: number | null
@@ -385,6 +387,8 @@ export default function ReceiptReviewPage() {
         body: JSON.stringify({
           header: {
             merchant_name: staging.merchant_name,
+            merchant_address: staging.merchant_address,
+            merchant_phone: staging.merchant_phone,
             txn_date: staging.txn_date,
             payment_time: staging.payment_time,
             transaction_total: staging.transaction_total,
@@ -647,6 +651,8 @@ export default function ReceiptReviewPage() {
             </CardHeader>
             <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               <Input value={staging.merchant_name ?? ''} onChange={(event) => updateHeaderField('merchant_name', event.target.value)} placeholder="Merchant" />
+              <Input value={staging.merchant_address ?? ''} onChange={(event) => updateHeaderField('merchant_address', event.target.value || null)} placeholder="Store Address (optional)" />
+              <Input value={staging.merchant_phone ?? ''} onChange={(event) => updateHeaderField('merchant_phone', event.target.value || null)} placeholder="Store Phone (optional)" />
               <Input type="date" value={staging.txn_date ?? ''} onChange={(event) => updateHeaderField('txn_date', event.target.value || null)} />
               <Input type="time" value={(staging.payment_time || '').slice(0, 5)} onChange={(event) => updateHeaderField('payment_time', event.target.value ? `${event.target.value}:00` : null)} />
               <Input type="number" step="0.01" value={staging.transaction_total ?? ''} onChange={(event) => updateHeaderField('transaction_total', Number(event.target.value))} placeholder="Total" />

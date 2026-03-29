@@ -146,24 +146,32 @@ function StatementIngestionJobTray({ jobs, dismissJob }: { jobs: StatementIngest
 }
 
 export function StatementIngestionJobsProvider({ children }: { children: React.ReactNode }) {
-  const [jobs, setJobs] = useState<StatementIngestionJob[]>(() => {
-    if (typeof window === 'undefined') return []
-
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY)
-      if (!raw) return []
-      const parsed = JSON.parse(raw) as StatementIngestionJob[]
-      return Array.isArray(parsed) ? pruneJobs(parsed) : []
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY)
-      return []
-    }
-  })
+  const [jobs, setJobs] = useState<StatementIngestionJob[]>([])
+  const [storageHydrated, setStorageHydrated] = useState(false)
   const previousStatusesRef = useRef<Record<string, StatementIngestionJobStatus>>({})
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY)
+      if (!raw) return
+
+      const parsed = JSON.parse(raw) as StatementIngestionJob[]
+      const restoredJobs = Array.isArray(parsed) ? pruneJobs(parsed) : []
+      previousStatusesRef.current = Object.fromEntries(
+        restoredJobs.map((job) => [job.id, job.status]),
+      )
+      setJobs(restoredJobs)
+    } catch {
+      window.localStorage.removeItem(STORAGE_KEY)
+    } finally {
+      setStorageHydrated(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!storageHydrated) return
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pruneJobs(jobs)))
-  }, [jobs])
+  }, [jobs, storageHydrated])
 
   useEffect(() => {
     if (jobs.length === 0) return

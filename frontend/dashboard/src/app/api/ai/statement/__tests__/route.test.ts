@@ -13,8 +13,14 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { computeFileHash } from '@/lib/server/statement-import'
 import { startStatementIngestionJob } from '@/lib/server/statement-ingestion-jobs'
-import { listStatementUploadImports, loadStatementUploadByHash } from '@/lib/server/statement-uploads'
-import { uploadOriginalStatement } from '@/lib/server/statement-storage'
+import {
+  listStatementUploadImports,
+  listStatementUploadImportsByFileHash,
+  listStatementUploadImportsFromResultPayload,
+  loadStatementUploadByHash,
+  readStatementUploadImportCount,
+} from '@/lib/server/statement-uploads'
+import { deleteOriginalStatement, uploadOriginalStatement } from '@/lib/server/statement-storage'
 
 vi.mock('@/lib/statements/config', () => ({
   assertStatementStorageConfig: vi.fn(),
@@ -45,10 +51,14 @@ vi.mock('@/lib/server/statement-ingestion-jobs', () => ({
 
 vi.mock('@/lib/server/statement-uploads', () => ({
   listStatementUploadImports: vi.fn(),
+  listStatementUploadImportsByFileHash: vi.fn(),
+  listStatementUploadImportsFromResultPayload: vi.fn(),
   loadStatementUploadByHash: vi.fn(),
+  readStatementUploadImportCount: vi.fn(),
 }))
 
 vi.mock('@/lib/server/statement-storage', () => ({
+  deleteOriginalStatement: vi.fn(),
   uploadOriginalStatement: vi.fn(),
 }))
 
@@ -62,7 +72,11 @@ const mockedCreateServiceSupabaseClient = vi.mocked(createServiceSupabaseClient)
 const mockedComputeFileHash = vi.mocked(computeFileHash)
 const mockedStartStatementIngestionJob = vi.mocked(startStatementIngestionJob)
 const mockedListStatementUploadImports = vi.mocked(listStatementUploadImports)
+const mockedListStatementUploadImportsByFileHash = vi.mocked(listStatementUploadImportsByFileHash)
+const mockedListStatementUploadImportsFromResultPayload = vi.mocked(listStatementUploadImportsFromResultPayload)
 const mockedLoadStatementUploadByHash = vi.mocked(loadStatementUploadByHash)
+const mockedReadStatementUploadImportCount = vi.mocked(readStatementUploadImportCount)
+const mockedDeleteOriginalStatement = vi.mocked(deleteOriginalStatement)
 const mockedUploadOriginalStatement = vi.mocked(uploadOriginalStatement)
 
 function createRequest(selectedAccountId?: string) {
@@ -120,14 +134,22 @@ function createServiceSupabaseMock() {
   const insert = vi.fn(async () => ({ error: null }))
   const updateEq = vi.fn(async () => ({ error: null }))
   const update = vi.fn(() => ({ eq: updateEq }))
+  const deleteEq = vi.fn(async () => ({ error: null }))
+  const deleteFn = vi.fn(() => ({ eq: deleteEq }))
 
   return {
-    __spies: { insert, update, updateEq },
+    __spies: { insert, update, updateEq, deleteFn, deleteEq },
     from(table: string) {
       if (table === 'statement_uploads') {
         return {
           insert,
           update,
+        }
+      }
+
+      if (table === 'statement_parse_sessions') {
+        return {
+          delete: deleteFn,
         }
       }
 
@@ -154,6 +176,10 @@ describe('POST /api/ai/statement', () => {
     mockedComputeFileHash.mockReturnValue('hash-1')
     mockedLoadStatementUploadByHash.mockResolvedValue(null)
     mockedListStatementUploadImports.mockResolvedValue([])
+    mockedListStatementUploadImportsByFileHash.mockResolvedValue([])
+    mockedListStatementUploadImportsFromResultPayload.mockReturnValue([])
+    mockedReadStatementUploadImportCount.mockReturnValue(null)
+    mockedDeleteOriginalStatement.mockResolvedValue(undefined)
     mockedUploadOriginalStatement.mockResolvedValue({
       storageBucket: 'statements',
       storagePath: 'households/hh-1/statements/upload-1/statement.pdf',
@@ -254,7 +280,190 @@ describe('POST /api/ai/statement', () => {
           status: 'in_review',
         },
       ],
+      parseSessionId: null,
+      resumable: false,
+      resumeUrl: null,
     })
+  })
+
+  it('falls back to file-hash imports when linked imports are missing', async () => {
+    mockedLoadStatementUploadByHash.mockResolvedValue({
+      id: 'upload-existing',
+      file_name: 'statement.pdf',
+      file_sha256: 'hash-1',
+      status: 'completed',
+    })
+    mockedListStatementUploadImports.mockResolvedValue([])
+    mockedListStatementUploadImportsByFileHash.mockResolvedValue([
+      {
+        importId: 'import-1',
+        importLabel: 'DBS — Savings',
+        accountLabel: 'DBS — Savings',
+        reviewUrl: '/statements/review/import-1',
+        status: 'committed',
+      },
+    ])
+
+    const response = await POST(createRequest())
+    const payload = await response.json()
+
+    expect(response.status).toBe(409)
+    expect(mockedListStatementUploadImports).toHaveBeenCalledWith(expect.objectContaining({
+      statementUploadId: 'upload-existing',
+    }))
+    expect(mockedListStatementUploadImportsByFileHash).toHaveBeenCalledWith(expect.objectContaining({
+      fileSha256: 'hash-1',
+      householdId: 'hh-1',
+    }))
+    expect(payload).toEqual({
+      error: 'This file has already been processed.',
+      duplicate: true,
+      statementUploadId: 'upload-existing',
+      existingFileName: 'statement.pdf',
+      existingStatus: 'completed',
+      existingImportCount: 1,
+      existingImports: [
+        {
+          importId: 'import-1',
+          importLabel: 'DBS — Savings',
+          accountLabel: 'DBS — Savings',
+          reviewUrl: '/statements/review/import-1',
+          status: 'committed',
+        },
+      ],
+      parseSessionId: null,
+      resumable: false,
+      resumeUrl: null,
+    })
+  })
+
+  it('restarts a stale completed upload when no live imports remain', async () => {
+    mockedLoadStatementUploadByHash.mockResolvedValue({
+      id: 'upload-existing',
+      file_name: 'statement.pdf',
+      file_sha256: 'hash-1',
+      status: 'completed',
+      storage_bucket: 'statements',
+      storage_path: 'households/hh-1/statements/upload-existing/statement.pdf',
+      result_payload: {
+        importCount: 2,
+        imports: [
+          { reviewUrl: '/statements/review/deleted-1' },
+          { reviewUrl: '/statements/review/deleted-2' },
+        ],
+      },
+    })
+    mockedListStatementUploadImports.mockResolvedValue([])
+    mockedListStatementUploadImportsByFileHash.mockResolvedValue([])
+    mockedUploadOriginalStatement.mockResolvedValue({
+      storageBucket: 'statements',
+      storagePath: 'households/hh-1/statements/upload-existing/statement.pdf',
+    })
+
+    const response = await POST(createRequest())
+    const payload = await response.json()
+    const serviceSupabase = mockedCreateServiceSupabaseClient.mock.results[0]?.value as ReturnType<typeof createServiceSupabaseMock>
+
+    expect(response.status).toBe(202)
+    expect(mockedDeleteOriginalStatement).toHaveBeenCalledWith(expect.objectContaining({
+      storageBucket: 'statements',
+      storagePath: 'households/hh-1/statements/upload-existing/statement.pdf',
+    }))
+    expect(serviceSupabase.__spies.deleteFn).toHaveBeenCalled()
+    expect(serviceSupabase.__spies.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'queued',
+      duplicate_of_statement_upload_id: null,
+      parse_session_id: null,
+      result_payload: null,
+    }))
+    expect(mockedStartStatementIngestionJob).toHaveBeenCalledWith(expect.objectContaining({
+      statementUploadId: 'upload-existing',
+      fileName: 'statement.pdf',
+    }))
+    expect(payload).toEqual(expect.objectContaining({
+      duplicate: false,
+      statementUploadId: 'upload-existing',
+      status: 'queued',
+      restartedStaleUpload: true,
+    }))
+  })
+
+  it('returns a resumable duplicate response when account resolution is still pending', async () => {
+    mockedLoadStatementUploadByHash.mockResolvedValue({
+      id: 'upload-existing',
+      file_name: 'statement.pdf',
+      status: 'needs_account_resolution',
+      parse_session_id: 'session-1',
+    })
+    mockedListStatementUploadImports.mockResolvedValue([])
+
+    const response = await POST(createRequest())
+    const payload = await response.json()
+
+    expect(response.status).toBe(409)
+    expect(mockedUploadOriginalStatement).not.toHaveBeenCalled()
+    expect(mockedStartStatementIngestionJob).not.toHaveBeenCalled()
+    expect(payload).toEqual({
+      error: 'This file is already waiting for account matching.',
+      duplicate: true,
+      statementUploadId: 'upload-existing',
+      existingFileName: 'statement.pdf',
+      existingStatus: 'needs_account_resolution',
+      existingImportCount: 0,
+      existingImports: [],
+      parseSessionId: 'session-1',
+      resumable: true,
+      resumeUrl: '/statements?parseSessionId=session-1',
+    })
+  })
+
+  it('retries a failed upload when no imports were created yet', async () => {
+    mockedLoadStatementUploadByHash.mockResolvedValue({
+      id: 'upload-existing',
+      file_name: 'statement.pdf',
+      status: 'failed',
+      storage_bucket: 'statements',
+      storage_path: 'households/hh-1/statements/upload-existing/statement.pdf',
+      parse_session_id: 'session-old',
+    })
+    mockedListStatementUploadImports.mockResolvedValue([])
+    mockedUploadOriginalStatement.mockResolvedValue({
+      storageBucket: 'statements',
+      storagePath: 'households/hh-1/statements/upload-existing/statement.pdf',
+    })
+
+    const response = await POST(createRequest())
+    const payload = await response.json()
+    const serviceSupabase = mockedCreateServiceSupabaseClient.mock.results[0]?.value as ReturnType<typeof createServiceSupabaseMock>
+
+    expect(response.status).toBe(202)
+    expect(mockedDeleteOriginalStatement).toHaveBeenCalledWith(expect.objectContaining({
+      storageBucket: 'statements',
+      storagePath: 'households/hh-1/statements/upload-existing/statement.pdf',
+    }))
+    expect(serviceSupabase.__spies.deleteFn).toHaveBeenCalled()
+    expect(serviceSupabase.__spies.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'queued',
+      parse_session_id: null,
+      error_code: null,
+      error_message: null,
+      parse_error: null,
+      completed_at: null,
+    }))
+    expect(mockedUploadOriginalStatement).toHaveBeenCalledWith(expect.objectContaining({
+      fileImportId: 'upload-existing',
+      fileName: 'statement.pdf',
+    }))
+    expect(mockedStartStatementIngestionJob).toHaveBeenCalledWith(expect.objectContaining({
+      statementUploadId: 'upload-existing',
+      fileName: 'statement.pdf',
+    }))
+    expect(payload).toEqual(expect.objectContaining({
+      duplicate: false,
+      statementUploadId: 'upload-existing',
+      status: 'queued',
+      retriedFailedUpload: true,
+    }))
   })
 
   it('returns a mapped storage error when the statement upload fails', async () => {

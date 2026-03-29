@@ -9,9 +9,11 @@ vi.mock('@/lib/supabase/client', () => ({
   createClient: vi.fn(),
 }))
 
+const mockedRouterPush = vi.fn()
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
-    push: vi.fn(),
+    push: mockedRouterPush,
   }),
   useSearchParams: () => new URLSearchParams(),
 }))
@@ -167,6 +169,7 @@ describe('StatementsPage', () => {
   beforeEach(() => {
     mockedCreateClient.mockReset()
     mockedCreateClient.mockReturnValue(createSupabaseClientMock() as never)
+    mockedRouterPush.mockReset()
     mockedTrackIngestionJob.mockReset()
     statementIngestionState.jobs = []
     statementIngestionState.hasActiveJobs = false
@@ -331,6 +334,186 @@ describe('StatementsPage', () => {
       status: 'queued',
       statementUploadId: 'upload-1',
     }))
+  })
+
+  it('reopens a paused import instead of showing it as already imported', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+
+      if (url === '/api/household/profiles') {
+        return createJsonResponse({ profiles: [] })
+      }
+
+      if (url === '/api/ai/statement' && init?.method === 'POST') {
+        return createJsonResponse({
+          error: 'This file is already waiting for account matching.',
+          duplicate: true,
+          statementUploadId: 'upload-1',
+          existingFileName: 'statement.pdf',
+          existingStatus: 'needs_account_resolution',
+          existingImportCount: 0,
+          existingImports: [],
+          parseSessionId: 'session-1',
+          resumable: true,
+          resumeUrl: '/statements?parseSessionId=session-1',
+        }, false, 409)
+      }
+
+      if (url === '/api/ai/statement/parse-session/session-1') {
+        return createJsonResponse({
+          parseSessionId: 'session-1',
+          statementUploadId: 'upload-1',
+          fileName: 'statement.pdf',
+          status: 'needs_account_resolution',
+          unmatchedAccountDescriptors: [
+            {
+              descriptorKey: 'dbs-1',
+              label: 'DBS Visa 1234',
+              transactionCount: 3,
+              sampleRowIndexes: [1, 2, 3],
+              institution_name: 'DBS Bank Ltd',
+              institution_code: 'dbs',
+              account_type: 'credit_card',
+              product_name: 'Visa Card',
+              identifier_hint: '1234',
+              card_name: 'Visa',
+              card_last4: '1234',
+              currency: 'SGD',
+              suggestedExistingAccountId: null,
+              suggestedExistingAccountLabel: null,
+              suggestedScore: null,
+            },
+          ],
+          suggestedExistingAccounts: [],
+        })
+      }
+
+      throw new Error(`Unexpected fetch call ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<StatementsPage />)
+
+    await screen.findByText('Drop one or more statements here or click to browse')
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    if (!input) throw new Error('File input not found')
+
+    await userEvent.upload(input, new File(['statement bytes'], 'statement.pdf', { type: 'application/pdf' }))
+
+    expect(await screen.findByText('Account Matching Needs Review')).toBeInTheDocument()
+    expect(toast.success).toHaveBeenCalledWith('statement.pdf is waiting for account matching. Continue below.')
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(mockedTrackIngestionJob).not.toHaveBeenCalled()
+  })
+
+  it('opens the existing review when the same statement was already imported once', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+
+      if (url === '/api/household/profiles') {
+        return createJsonResponse({ profiles: [] })
+      }
+
+      if (url === '/api/ai/statement' && init?.method === 'POST') {
+        return createJsonResponse({
+          error: 'This file has already been processed.',
+          duplicate: true,
+          statementUploadId: 'upload-1',
+          existingFileName: 'statement.pdf',
+          existingStatus: 'completed',
+          existingImportCount: 1,
+          existingImports: [
+            {
+              importId: 'import-1',
+              importLabel: 'DBS - Visa',
+              accountLabel: 'DBS - Visa',
+              reviewUrl: '/statements/review/import-1',
+              status: 'in_review',
+            },
+          ],
+          parseSessionId: null,
+          resumable: false,
+          resumeUrl: null,
+        }, false, 409)
+      }
+
+      throw new Error(`Unexpected fetch call ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<StatementsPage />)
+
+    await screen.findByText('Drop one or more statements here or click to browse')
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    if (!input) throw new Error('File input not found')
+
+    await userEvent.upload(input, new File(['statement bytes'], 'statement.pdf', { type: 'application/pdf' }))
+
+    await waitFor(() => {
+      expect(mockedRouterPush).toHaveBeenCalledWith('/statements/review/import-1')
+    })
+    expect(toast.success).toHaveBeenCalledWith('statement.pdf was already imported. Opening the existing review.')
+  })
+
+  it('shows existing review choices when the same statement was already split into multiple account-specific imports', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+
+      if (url === '/api/household/profiles') {
+        return createJsonResponse({ profiles: [] })
+      }
+
+      if (url === '/api/ai/statement' && init?.method === 'POST') {
+        return createJsonResponse({
+          error: 'This file has already been processed.',
+          duplicate: true,
+          statementUploadId: 'upload-1',
+          existingFileName: 'statement.pdf',
+          existingStatus: 'completed',
+          existingImportCount: 2,
+          existingImports: [
+            {
+              importId: 'import-1',
+              importLabel: 'DBS - Visa',
+              accountLabel: 'DBS - Visa',
+              reviewUrl: '/statements/review/import-1',
+              status: 'in_review',
+            },
+            {
+              importId: 'import-2',
+              importLabel: 'POSB - Savings',
+              accountLabel: 'POSB - Savings',
+              reviewUrl: '/statements/review/import-2',
+              status: 'committed',
+            },
+          ],
+          parseSessionId: null,
+          resumable: false,
+          resumeUrl: null,
+        }, false, 409)
+      }
+
+      throw new Error(`Unexpected fetch call ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<StatementsPage />)
+
+    await screen.findByText('Drop one or more statements here or click to browse')
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
+    expect(input).not.toBeNull()
+    if (!input) throw new Error('File input not found')
+
+    await userEvent.upload(input, new File(['statement bytes'], 'statement.pdf', { type: 'application/pdf' }))
+
+    expect(await screen.findByText('Statement Already Imported')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open DBS - Visa' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open POSB - Savings' })).toBeInTheDocument()
+    expect(toast.success).toHaveBeenCalledWith('statement.pdf was already imported into 2 account-specific reviews. Open one below.')
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(mockedRouterPush).not.toHaveBeenCalled()
   })
 
   it('submits one background import request per selected file with concurrency capped at two', async () => {

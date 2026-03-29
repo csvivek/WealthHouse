@@ -68,6 +68,9 @@ export async function PATCH(
     }
     if (body?.writeoff_date !== undefined) updates.writeoff_date = body.writeoff_date
     if (body?.writeoff_reason !== undefined) updates.writeoff_reason = body.writeoff_reason
+    if (body?.statement_transaction_id !== undefined) {
+      updates.statement_transaction_id = body.statement_transaction_id || null
+    }
 
     const { data, error } = await supabase
       .from('advances')
@@ -76,7 +79,7 @@ export async function PATCH(
       .select(`
         *,
         counterparties(id, name, relationship, phone, counterparty_type),
-        advance_repayments(id, amount, repayment_date, event_type, method, notes)
+        advance_repayments(id, amount, repayment_date, event_type, statement_transaction_id, method, notes)
       `)
       .single()
 

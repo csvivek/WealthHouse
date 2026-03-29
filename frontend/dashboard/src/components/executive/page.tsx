@@ -33,7 +33,7 @@ export function ExecutivePageHeader({
   eyebrow?: ReactNode
 }) {
   return (
-    <section className="rounded-[1.75rem] border border-border/80 bg-[linear-gradient(180deg,rgba(17,24,39,0.92),rgba(12,18,31,0.98))] px-5 py-5 shadow-[0_24px_80px_rgba(3,7,18,0.35)] sm:px-6 sm:py-6">
+    <section className="rounded-[1.75rem] border border-border/80 bg-[linear-gradient(180deg,var(--card-gradient-start),var(--card-gradient-end))] px-5 py-5 shadow-[0_24px_80px_rgba(3,7,18,0.35)] sm:px-6 sm:py-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 space-y-3">
           {eyebrow ? (
@@ -115,7 +115,7 @@ export function ExecutiveAuthShell({
 }) {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(201,168,76,0.14),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(96,165,250,0.12),transparent_28%),linear-gradient(180deg,rgba(11,15,26,0.92),rgba(8,12,22,1))]" />
+      <div className="absolute inset-0 auth-shell-bg" />
       <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(201,168,76,0.9),transparent)]" />
 
       <div className="relative z-10 grid w-full max-w-5xl gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">

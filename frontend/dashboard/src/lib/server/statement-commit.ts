@@ -152,12 +152,35 @@ function resolveCommittedTxnType(row: {
   const description = (row.description || '').toLowerCase()
   const haystack = `${merchant} ${description}`
 
+  // Outgoing payments to a credit card, credit line, or loan: description starts with
+  // "payment to <bank/card/credit>" — this is an OUTFLOW from the sending account.
+  // Must be classified as 'transfer' (debit direction) so transfer linking can find the
+  // opposite-direction counterpart on the receiving credit account.
+  // Without this, both sides resolve to 'payment' (credit direction) and the filter
+  // incorrectly treats them as the same direction, breaking counterpart matching.
+  if (
+    description.startsWith('payment to ')
+    && (
+      description.includes('credit')
+      || description.includes('card')
+      || description.includes('citi')
+      || description.includes('dbs')
+      || description.includes('ocbc')
+      || description.includes('uob')
+      || description.includes('ready credit')
+      || description.includes('loan')
+    )
+  ) {
+    return 'transfer' as Database['public']['Enums']['txn_type']
+  }
+
   if (statementType) {
     if (statementType.includes('refund') || statementType.includes('reversal')) return 'refund' as Database['public']['Enums']['txn_type']
     if (statementType.includes('payment') || statementType.includes('deposit') || statementType.includes('salary') || statementType.includes('interest')) {
       return 'payment' as Database['public']['Enums']['txn_type']
     }
-    if (statementType.includes('transfer')) return 'transfer' as Database['public']['Enums']['txn_type']
+    if (statementType === 'transfer_in') return 'payment' as Database['public']['Enums']['txn_type']
+    if (statementType === 'transfer_out' || statementType.includes('transfer')) return 'transfer' as Database['public']['Enums']['txn_type']
     if (statementType.includes('purchase') || statementType.includes('fee') || statementType.includes('withdrawal') || statementType.includes('giro')) {
       return 'purchase' as Database['public']['Enums']['txn_type']
     }

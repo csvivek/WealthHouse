@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
 import type { AccountCandidate } from '@/lib/server/statement-import'
-import { resolveAccountCandidate } from '@/lib/server/statement-import'
+import { findSuggestedExistingAccount, resolveAccountCandidate } from '@/lib/server/statement-import'
 
 vi.mock('@/lib/knowledge/merchant-intelligence', () => ({
   resolveMerchantCategory: vi.fn(),
@@ -120,5 +120,44 @@ describe('resolveAccountCandidate', () => {
     expect(result).toEqual(expect.objectContaining({
       error: expect.stringMatching(/more than one account|No confident account match found\./),
     }))
+  })
+
+  it('does not preselect a suggested DBS deposit account when multiple accounts are plausible', () => {
+    const dbsSavings = createCandidate({
+      id: 'acct-dbs-savings',
+      product_name: 'DBS Savings Plus',
+      nickname: 'Operations',
+      identifier_hint: '0256041461',
+      account_type: 'savings',
+      institutions: { name: 'DBS Bank Ltd' },
+    })
+    const dbsMultiplier = createCandidate({
+      id: 'acct-dbs-multi',
+      product_name: 'Multiplier Account',
+      nickname: 'MultiCurrency',
+      identifier_hint: '1202417290',
+      account_type: 'savings',
+      institutions: { name: 'DBS Bank Ltd' },
+    })
+    const dbsMySavings = createCandidate({
+      id: 'acct-dbs-my-savings',
+      product_name: 'My Savings Account',
+      nickname: '',
+      identifier_hint: null,
+      account_type: 'savings',
+      institutions: { name: 'DBS Bank Ltd' },
+    })
+
+    const suggestion = findSuggestedExistingAccount({
+      candidates: [dbsSavings, dbsMultiplier, dbsMySavings],
+      institutionName: 'DBS Bank Ltd',
+      descriptor: {
+        account_type: 'savings',
+        product_name: 'DBS Savings Account',
+        identifier_hint: '0461',
+      },
+    })
+
+    expect(suggestion).toBeNull()
   })
 })

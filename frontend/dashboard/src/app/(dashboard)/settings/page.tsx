@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useTheme } from 'next-themes'
 import { MailPlus, Save, Shield, Trash2, Download, Moon, Sun } from 'lucide-react'
 import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -84,7 +85,7 @@ export default function SettingsPage() {
   const [email, setEmail] = useState('')
   const [avatarUrl, setAvatarUrl] = useState('')
   const [currency, setCurrency] = useState('SGD')
-  const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const { theme, setTheme } = useTheme()
   const [emailAlerts, setEmailAlerts] = useState(true)
   const [budgetAlerts, setBudgetAlerts] = useState(true)
   const [twoFaEnabled, setTwoFaEnabled] = useState(false)

@@ -44,7 +44,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${dmSans.variable} ${dmMono.variable} dark bg-background font-sans text-foreground antialiased`}>
+      <body className={`${inter.variable} ${dmSans.variable} ${dmMono.variable} bg-background font-sans text-foreground antialiased`}>
         <Providers>{children}</Providers>
       </body>
     </html>

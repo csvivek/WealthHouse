@@ -299,6 +299,26 @@ function isDepositLikeAccountType(accountType?: string | null) {
   return normalized === 'savings' || normalized === 'current' || normalized === 'fixed_deposit'
 }
 
+function hasAmbiguousDepositLikeMatch(params: {
+  scored: Array<{ account: AccountCandidate; breakdown: AccountCandidateScore }>
+  parsedAccountType: string | null
+}) {
+  if (!isDepositLikeAccountType(params.parsedAccountType)) {
+    return false
+  }
+
+  const similarlyTypedCandidates = params.scored.filter(({ account, breakdown }) => {
+    if (!breakdown.hasInstitutionMatch) return false
+    return normalizeAccountType(account.account_type, [
+      account.product_name,
+      account.nickname,
+      ...getAccountCards(account).map((card) => card.card_name),
+    ]) === params.parsedAccountType
+  })
+
+  return similarlyTypedCandidates.length > 1
+}
+
 export function resolveAccountCandidate(params: {
   candidates: AccountCandidate[]
   institutionName: string
@@ -332,19 +352,8 @@ export function resolveAccountCandidate(params: {
     params.descriptor?.product_name,
     params.descriptor?.card_name,
   ])
-  if (isDepositLikeAccountType(parsedAccountType) && !top.breakdown.hasStrongSignal) {
-    const similarlyTypedCandidates = scored.filter(({ account, breakdown }) => {
-      if (!breakdown.hasInstitutionMatch) return false
-      return normalizeAccountType(account.account_type, [
-        account.product_name,
-        account.nickname,
-        ...getAccountCards(account).map((card) => card.card_name),
-      ]) === parsedAccountType
-    })
-
-    if (similarlyTypedCandidates.length > 1) {
-      return { error: 'This transaction could match more than one account.' as const, scored }
-    }
+  if (!top.breakdown.hasStrongSignal && hasAmbiguousDepositLikeMatch({ scored, parsedAccountType })) {
+    return { error: 'This transaction could match more than one account.' as const, scored }
   }
 
   if (second && top.breakdown.score - second.breakdown.score < 15) {
@@ -366,15 +375,15 @@ export function resolveAccountCandidate(params: {
   }
 }
 
-function findSuggestedExistingAccount(params: {
+export function findSuggestedExistingAccount(params: {
   candidates: AccountCandidate[]
   descriptor: ParsedStatementAccount | null
   institutionName: string
 }) {
   const scored = params.candidates
-    .map((candidate) => ({
-      candidate,
-      breakdown: scoreAccountCandidate(candidate, params.institutionName, params.descriptor),
+    .map((account) => ({
+      account,
+      breakdown: scoreAccountCandidate(account, params.institutionName, params.descriptor),
     }))
     .sort((left, right) => right.breakdown.score - left.breakdown.score)
 
@@ -382,9 +391,22 @@ function findSuggestedExistingAccount(params: {
   if (!top || top.breakdown.score < 40) return null
   if (top.breakdown.requiresStrongSignal && !top.breakdown.hasStrongSignal) return null
 
+  const parsedAccountType = normalizeAccountType(params.descriptor?.account_type, [
+    params.descriptor?.product_name,
+    params.descriptor?.card_name,
+  ])
+  if (!top.breakdown.hasStrongSignal && hasAmbiguousDepositLikeMatch({ scored, parsedAccountType })) {
+    return null
+  }
+
+  const second = scored[1]
+  if (second && top.breakdown.score - second.breakdown.score < 15) {
+    return null
+  }
+
   return {
-    accountId: top.candidate.id,
-    label: getAccountLabel(top.candidate),
+    accountId: top.account.id,
+    label: getAccountLabel(top.account),
     score: top.breakdown.score,
   }
 }
@@ -896,7 +918,6 @@ export async function stageSplitRoutedTransactions(params: {
   storagePath?: string | null
 }) {
   const accountGroups = groupRoutedTransactionsByAccount(params.routedTransactions)
-  const includeStatementSummary = accountGroups.length === 1
   const imports: StagedStatementImport[] = []
   try {
     for (const group of accountGroups) {
@@ -915,9 +936,6 @@ export async function stageSplitRoutedTransactions(params: {
         statementUploadId: params.statementUploadId ?? null,
         storageBucket: params.storageBucket ?? null,
         storagePath: params.storagePath ?? null,
-        summaryJsonOverride: includeStatementSummary
-          ? null
-          : { summary: params.parsed.summary || null },
         cardInfoJsonOverride: {
           statementAccount: scopedParsed.account || null,
           matchedAccounts: [{
