@@ -47,8 +47,83 @@
   --radius-4xl: calc(var(--radius) + 16px);
 }
 
+/* ── Light theme (default) ── */
 :root {
   --radius: 1rem;
+
+  /* Core palette */
+  --background: #f8fafc;
+  --foreground: #0d1526;
+  --card: rgba(255, 255, 255, 0.96);
+  --card-foreground: #0d1526;
+  --popover: rgba(255, 255, 255, 0.98);
+  --popover-foreground: #0d1526;
+  --primary: #c9a84c;
+  --primary-foreground: #0b0f1a;
+  --secondary: rgba(226, 232, 240, 0.9);
+  --secondary-foreground: #1e3a5f;
+  --muted: rgba(241, 245, 249, 0.9);
+  --muted-foreground: #64748b;
+  --accent: rgba(201, 168, 76, 0.12);
+  --accent-foreground: #0d1526;
+  --destructive: #dc2626;
+  --border: rgba(148, 163, 184, 0.45);
+  --input: rgba(248, 250, 252, 0.94);
+  --ring: rgba(201, 168, 76, 0.4);
+
+  /* Charts */
+  --chart-1: 0.72 0.13 78;
+  --chart-2: 0.73 0.14 184;
+  --chart-3: 0.73 0.13 245;
+  --chart-4: 0.72 0.17 28;
+  --chart-5: 0.72 0.15 310;
+
+  /* Sidebar */
+  --sidebar: rgba(248, 250, 252, 0.98);
+  --sidebar-foreground: #0d1526;
+  --sidebar-primary: #c9a84c;
+  --sidebar-primary-foreground: #0b0f1a;
+  --sidebar-accent: rgba(201, 168, 76, 0.12);
+  --sidebar-accent-foreground: #0d1526;
+  --sidebar-border: rgba(148, 163, 184, 0.35);
+  --sidebar-ring: rgba(201, 168, 76, 0.4);
+
+  /* Gradient tokens — referenced in @layer base and utilities */
+  --gradient-gold-opacity: 0.07;
+  --gradient-blue-opacity: 0.07;
+  --gradient-base-start: rgba(248, 250, 252, 0.98);
+  --gradient-base-end: rgba(241, 245, 249, 1);
+  --card-gradient-start: rgba(255, 255, 255, 0.96);
+  --card-gradient-end: rgba(248, 250, 252, 0.98);
+  --overlay-gradient-start: rgba(248, 250, 252, 0.96);
+  --overlay-gradient-end: rgba(241, 245, 249, 1);
+
+  /* Dashboard semantic tokens (light) */
+  --dashboard-bg: #f8fafc;
+  --dashboard-surface: #ffffff;
+  --dashboard-surface-2: #f1f5f9;
+  --dashboard-border: rgba(148, 163, 184, 0.4);
+  --dashboard-border-strong: rgba(100, 116, 139, 0.7);
+  --dashboard-accent: #c9a84c;
+  --dashboard-accent-dim: rgba(201, 168, 76, 0.12);
+  --dashboard-accent-glow: rgba(201, 168, 76, 0.38);
+  --dashboard-success: #0d9488;
+  --dashboard-danger: #dc2626;
+  --dashboard-info: #2563eb;
+  --dashboard-text: #0d1526;
+  --dashboard-text-dim: #64748b;
+  --dashboard-chart-1: #c9a84c;
+  --dashboard-chart-2: #0d9488;
+  --dashboard-chart-3: #2563eb;
+  --dashboard-chart-4: #d97706;
+  --dashboard-chart-5: #7c3aed;
+}
+
+/* ── Dark theme ── */
+.dark {
+  color-scheme: dark;
+
+  /* Core palette */
   --background: #0b0f1a;
   --foreground: #e2eaf4;
   --card: rgba(17, 24, 39, 0.92);
@@ -67,11 +142,15 @@
   --border: rgba(61, 76, 103, 0.58);
   --input: rgba(26, 34, 53, 0.94);
   --ring: rgba(201, 168, 76, 0.42);
+
+  /* Charts */
   --chart-1: 0.72 0.13 78;
   --chart-2: 0.73 0.14 184;
   --chart-3: 0.73 0.13 245;
   --chart-4: 0.72 0.17 28;
   --chart-5: 0.72 0.15 310;
+
+  /* Sidebar */
   --sidebar: rgba(13, 20, 33, 0.96);
   --sidebar-foreground: #e2eaf4;
   --sidebar-primary: #c9a84c;
@@ -80,10 +159,36 @@
   --sidebar-accent-foreground: #e2eaf4;
   --sidebar-border: rgba(61, 76, 103, 0.58);
   --sidebar-ring: rgba(201, 168, 76, 0.42);
-}
 
-.dark {
-  color-scheme: dark;
+  /* Gradient tokens */
+  --gradient-gold-opacity: 0.12;
+  --gradient-blue-opacity: 0.12;
+  --gradient-base-start: rgba(11, 15, 26, 0.98);
+  --gradient-base-end: rgba(8, 12, 22, 1);
+  --card-gradient-start: rgba(17, 24, 39, 0.94);
+  --card-gradient-end: rgba(12, 18, 31, 0.98);
+  --overlay-gradient-start: rgba(17, 24, 39, 0.98);
+  --overlay-gradient-end: rgba(10, 15, 27, 1);
+
+  /* Dashboard semantic tokens (dark) */
+  --dashboard-bg: #0B0F1A;
+  --dashboard-surface: #111827;
+  --dashboard-surface-2: #172033;
+  --dashboard-border: rgba(59, 74, 99, 0.46);
+  --dashboard-border-strong: rgba(78, 95, 122, 0.78);
+  --dashboard-accent: #C9A84C;
+  --dashboard-accent-dim: rgba(201, 168, 76, 0.16);
+  --dashboard-accent-glow: rgba(201, 168, 76, 0.44);
+  --dashboard-success: #2DD4BF;
+  --dashboard-danger: #F87171;
+  --dashboard-info: #60A5FA;
+  --dashboard-text: #E2EAF4;
+  --dashboard-text-dim: #8896AA;
+  --dashboard-chart-1: #C9A84C;
+  --dashboard-chart-2: #2DD4BF;
+  --dashboard-chart-3: #60A5FA;
+  --dashboard-chart-4: #F59E0B;
+  --dashboard-chart-5: #A78BFA;
 }
 
 @layer base {
@@ -94,17 +199,17 @@
   html {
     font-family: var(--font-sans);
     background:
-      radial-gradient(circle at top, rgba(201, 168, 76, 0.12), transparent 28%),
-      radial-gradient(circle at bottom right, rgba(96, 165, 250, 0.12), transparent 24%),
+      radial-gradient(circle at top, rgba(201, 168, 76, var(--gradient-gold-opacity)), transparent 28%),
+      radial-gradient(circle at bottom right, rgba(96, 165, 250, var(--gradient-blue-opacity)), transparent 24%),
       var(--background);
   }
 
   body {
     @apply bg-background font-sans text-foreground antialiased;
     background:
-      radial-gradient(circle at top, rgba(201, 168, 76, 0.12), transparent 28%),
-      radial-gradient(circle at bottom right, rgba(96, 165, 250, 0.1), transparent 24%),
-      linear-gradient(180deg, rgba(11, 15, 26, 0.98), rgba(8, 12, 22, 1));
+      radial-gradient(circle at top, rgba(201, 168, 76, var(--gradient-gold-opacity)), transparent 28%),
+      radial-gradient(circle at bottom right, rgba(96, 165, 250, var(--gradient-blue-opacity)), transparent 24%),
+      linear-gradient(180deg, var(--gradient-base-start), var(--gradient-base-end));
   }
 }
 
@@ -119,8 +224,15 @@
     inset: 0;
     z-index: -1;
     background:
-      radial-gradient(circle at top, rgba(201, 168, 76, 0.11), transparent 26%),
-      radial-gradient(circle at bottom right, rgba(96, 165, 250, 0.08), transparent 22%);
+      radial-gradient(circle at top, rgba(201, 168, 76, var(--gradient-gold-opacity)), transparent 26%),
+      radial-gradient(circle at bottom right, rgba(96, 165, 250, var(--gradient-blue-opacity)), transparent 22%);
     pointer-events: none;
+  }
+
+  .auth-shell-bg {
+    background:
+      radial-gradient(circle at top, rgba(201, 168, 76, var(--gradient-gold-opacity)), transparent 34%),
+      radial-gradient(circle at bottom right, rgba(96, 165, 250, var(--gradient-blue-opacity)), transparent 28%),
+      linear-gradient(180deg, var(--gradient-base-start), var(--gradient-base-end));
   }
 }

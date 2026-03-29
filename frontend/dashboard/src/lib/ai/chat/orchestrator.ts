@@ -442,12 +442,13 @@ export function createChatEventStream(params: ChatTurnParams) {
           return
         }
 
+        const MAX_HISTORY_FOR_PLANNER = 10
         const planningMessages: ChatCompletionMessageParam[] = [
           {
             role: 'developer',
             content: buildPlannerPrompt(params.session),
           },
-          ...toConversationMessages(params.history),
+          ...toConversationMessages(params.history.slice(-MAX_HISTORY_FOR_PLANNER)),
           {
             role: 'user',
             content: params.message,
@@ -488,8 +489,15 @@ export function createChatEventStream(params: ChatTurnParams) {
 
           planningMessages.push(toolCallToAssistantMessage(plannerToolCalls))
 
+          const VALID_DATA_TOOL_NAMES = new Set(['get_account_summary', 'get_net_worth', 'get_spending_summary', 'get_cash_flow', 'get_advances', 'get_transactions'])
+
           for (const toolCall of plannerToolCalls) {
             if (dbToolCalls >= MAX_DB_TOOL_CALLS) break
+
+            if (!VALID_DATA_TOOL_NAMES.has(toolCall.function.name)) {
+              console.warn(`Planner requested unknown tool: ${toolCall.function.name} — skipping`)
+              continue
+            }
 
             const args = parseToolArguments(toolCall.function.arguments)
             writeEvent(controller, encoder, 'status', {
@@ -531,15 +539,13 @@ export function createChatEventStream(params: ChatTurnParams) {
           ...planningMessages,
         ]
 
-        const availability = toolOutputs.some((item) => item.result.availability === 'available')
-          ? 'available'
-          : toolOutputs.some((item) => item.result.availability === 'no_match')
-            ? 'no_match'
-            : toolOutputs.length > 0
-              ? 'unavailable'
-              : params.session.accounts.length > 0
-                ? 'available'
-                : 'unavailable'
+        const availability = toolOutputs.length === 0
+          ? 'unavailable'
+          : toolOutputs.some((item) => item.result.availability === 'available')
+            ? 'available'
+            : toolOutputs.some((item) => item.result.availability === 'no_match')
+              ? 'no_match'
+              : 'unavailable'
 
         const assistantContext = buildAssistantContext({
           routeDecision,

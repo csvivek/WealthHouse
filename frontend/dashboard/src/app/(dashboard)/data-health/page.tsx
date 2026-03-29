@@ -135,7 +135,7 @@ export default function DataHealthPage() {
       const res = await fetch('/api/integrity/quarantine?status=pending')
       if (res.ok) {
         const data = await res.json()
-        setQuarantineItems(data)
+        setQuarantineItems(data.items ?? [])
       }
     } catch {
       // silently handle
@@ -150,7 +150,7 @@ export default function DataHealthPage() {
       const res = await fetch('/api/integrity/audit-log?limit=20')
       if (res.ok) {
         const data = await res.json()
-        setAuditLog(data)
+        setAuditLog(data.entries ?? [])
       }
     } catch {
       // silently handle

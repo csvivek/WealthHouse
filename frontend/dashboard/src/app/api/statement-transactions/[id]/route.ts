@@ -468,10 +468,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         throw new RouteError(400, 'Transfer counterpart is already linked to another transfer link.')
       }
 
-      const amountDelta = Math.abs(Math.abs(Number(transaction.amount ?? 0)) - Math.abs(Number(targetTransaction.amount ?? 0)))
+      if (transaction.amount == null || targetTransaction.amount == null) {
+        throw new RouteError(400, 'Both transactions must have valid amounts to link as transfers.')
+      }
+      const txnAbs = Math.abs(Number(transaction.amount))
+      const targetAbs = Math.abs(Number(targetTransaction.amount))
+      const amountDelta = Math.abs(txnAbs - targetAbs)
       nextAllocatedAmount = amountDelta <= 0.01
         ? null
-        : Number(Math.min(Math.abs(Number(transaction.amount ?? 0)), Math.abs(Number(targetTransaction.amount ?? 0))).toFixed(2))
+        : Number(Math.min(txnAbs, targetAbs).toFixed(2))
     }
 
     const { error: updateError } = await db

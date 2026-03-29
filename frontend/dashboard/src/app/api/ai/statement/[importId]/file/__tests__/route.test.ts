@@ -20,9 +20,13 @@ vi.mock('@/lib/supabase/service', () => ({
   createServiceSupabaseClient: vi.fn(),
 }))
 
-vi.mock('@/lib/server/statement-storage', () => ({
-  createStatementSignedUrl: vi.fn(),
-}))
+vi.mock('@/lib/server/statement-storage', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/server/statement-storage')>('@/lib/server/statement-storage')
+  return {
+    ...actual,
+    createStatementSignedUrl: vi.fn(),
+  }
+})
 
 const mockedAssertStatementStorageConfig = vi.mocked(assertStatementStorageConfig)
 const mockedMapStatementStorageErrorMessage = vi.mocked(mapStatementStorageErrorMessage)
@@ -32,6 +36,12 @@ const mockedCreateStatementSignedUrl = vi.mocked(createStatementSignedUrl)
 
 function createServerSupabaseMock(options?: {
   fileImport?: {
+    id: string
+    statement_upload_id?: string | null
+    storage_bucket: string | null
+    storage_path: string | null
+  } | null
+  statementUpload?: {
     id: string
     storage_bucket: string | null
     storage_path: string | null
@@ -64,6 +74,18 @@ function createServerSupabaseMock(options?: {
         }
       }
 
+      if (table === 'statement_uploads') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: options?.statementUpload ?? null, error: null }),
+              }),
+            }),
+          }),
+        }
+      }
+
       throw new Error(`Unexpected table ${table}`)
     },
   }
@@ -86,6 +108,7 @@ describe('GET /api/ai/statement/[importId]/file', () => {
     mockedCreateServerSupabaseClient.mockResolvedValue(createServerSupabaseMock({
       fileImport: {
         id: 'import-1',
+        statement_upload_id: null,
         storage_bucket: 'statements',
         storage_path: 'households/hh-1/statements/import-1/statement.pdf',
       },
@@ -113,6 +136,7 @@ describe('GET /api/ai/statement/[importId]/file', () => {
     mockedCreateServerSupabaseClient.mockResolvedValueOnce(createServerSupabaseMock({
       fileImport: {
         id: 'import-1',
+        statement_upload_id: null,
         storage_bucket: null,
         storage_path: null,
       },
@@ -127,6 +151,35 @@ describe('GET /api/ai/statement/[importId]/file', () => {
     expect(response.status).toBe(404)
     expect(payload).toEqual({ error: 'Stored statement file not found' })
     expect(mockedCreateStatementSignedUrl).not.toHaveBeenCalled()
+  })
+
+  it('resolves stored files from statement_uploads for split imports', async () => {
+    mockedCreateServerSupabaseClient.mockResolvedValueOnce(createServerSupabaseMock({
+      fileImport: {
+        id: 'import-1',
+        statement_upload_id: 'upload-1',
+        storage_bucket: null,
+        storage_path: null,
+      },
+      statementUpload: {
+        id: 'upload-1',
+        storage_bucket: 'statements',
+        storage_path: 'households/hh-1/statements/upload-1/statement.pdf',
+      },
+    }) as never)
+
+    const response = await GET(
+      new NextRequest('http://localhost/api/ai/statement/import-1/file'),
+      { params: Promise.resolve({ importId: 'import-1' }) },
+    )
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toBe('https://signed.example.com/statement.pdf')
+    expect(mockedCreateStatementSignedUrl).toHaveBeenCalledWith({
+      supabase: { storage: {} },
+      storageBucket: 'statements',
+      storagePath: 'households/hh-1/statements/upload-1/statement.pdf',
+    })
   })
 
   it('rejects access when the import is outside the current household', async () => {

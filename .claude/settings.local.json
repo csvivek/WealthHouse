@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx supabase:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://dcpzqitlamrjjwimvnhp.supabase.co/rest/v1/counterparties?select=id,counterparty_type&limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcHpxaXRsYW1yamp3aW12bmhwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTMwNjg5NCwiZXhwIjoyMDg2ODgyODk0fQ.MZzNuNLN1voWNbUnPmF3mqc4VHoxtyTuGZzokIyV7_w\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcHpxaXRsYW1yamp3aW12bmhwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTMwNjg5NCwiZXhwIjoyMDg2ODgyODk0fQ.MZzNuNLN1voWNbUnPmF3mqc4VHoxtyTuGZzokIyV7_w\")",
+      "Bash(curl -s \"https://dcpzqitlamrjjwimvnhp.supabase.co/rest/v1/advances?select=id,household_id&limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcHpxaXRsYW1yamp3aW12bmhwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTMwNjg5NCwiZXhwIjoyMDg2ODgyODk0fQ.MZzNuNLN1voWNbUnPmF3mqc4VHoxtyTuGZzokIyV7_w\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcHpxaXRsYW1yamp3aW12bmhwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTMwNjg5NCwiZXhwIjoyMDg2ODgyODk0fQ.MZzNuNLN1voWNbUnPmF3mqc4VHoxtyTuGZzokIyV7_w\")",
+      "Bash(curl -s \"https://dcpzqitlamrjjwimvnhp.supabase.co/rest/v1/advances?select=id&limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcHpxaXRsYW1yamp3aW12bmhwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTMwNjg5NCwiZXhwIjoyMDg2ODgyODk0fQ.MZzNuNLN1voWNbUnPmF3mqc4VHoxtyTuGZzokIyV7_w\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcHpxaXRsYW1yamp3aW12bmhwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTMwNjg5NCwiZXhwIjoyMDg2ODgyODk0fQ.MZzNuNLN1voWNbUnPmF3mqc4VHoxtyTuGZzokIyV7_w\")",
+      "Bash(curl -s \"https://dcpzqitlamrjjwimvnhp.supabase.co/rest/v1/counterparties?select=id&limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcHpxaXRsYW1yamp3aW12bmhwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTMwNjg5NCwiZXhwIjoyMDg2ODgyODk0fQ.MZzNuNLN1voWNbUnPmF3mqc4VHoxtyTuGZzokIyV7_w\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjcHpxaXRsYW1yamp3aW12bmhwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTMwNjg5NCwiZXhwIjoyMDg2ODgyODk0fQ.MZzNuNLN1voWNbUnPmF3mqc4VHoxtyTuGZzokIyV7_w\")",
+      "Read(//Users/vpalanisamy/.supabase/**)",
+      "Read(//Users/vpalanisamy/**)",
+      "Bash(ls -la /Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/\\\\\\(dashboard\\\\\\)/receipts/)",
+      "Bash(cat \"/Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/\\(dashboard\\)/receipts/page.tsx\")",
+      "Bash(grep -n \"CREATE TABLE.*receipts\" /Users/vpalanisamy/Projects/WealthHouse/supabase/migrations/*.sql)",
+      "Bash(grep \"CREATE TABLE.*receipts\\\\|CREATE TABLE.*receipt\" /Users/vpalanisamy/Projects/WealthHouse/supabase/migrations/*.sql)",
+      "Bash(for file:*)",
+      "Bash(do if:*)",
+      "Bash(then basename:*)",
+      "Bash(grep -h \"CREATE TABLE.*receipts\\\\|CREATE TABLE.*items\\\\|CREATE TABLE.*mappings\" /Users/vpalanisamy/Projects/WealthHouse/supabase/migrations/*.sql)",
+      "Bash(wc -l /Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/\\\\\\(dashboard\\\\\\)/receipts/review/[uploadId]/page.tsx)",
+      "Bash(ls /Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/api/receipts/review/[uploadId]/)",
+      "Bash(ls /Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/\\\\\\(dashboard\\\\\\)/receipts/)",
+      "Bash(ls /Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/\\\\\\(dashboard\\\\\\)/receipts/review/)",
+      "Bash(ls /Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/\\\\\\(dashboard\\\\\\)/receipts/review/[uploadId]/)",
+      "Bash(ls -la /Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/\\\\\\(dashboard\\\\\\)/settings/)",
+      "Bash(xargs cat:*)",
+      "Bash(wc -l /Users/vpalanisamy/Projects/WealthHouse/frontend/dashboard/src/app/\\\\\\(dashboard\\\\\\)/statements/page.tsx)",
+      "Bash(find /Users/vpalanisamy/Projects/WealthHouse -name overview* -type f)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")"
+    ]
+  }
+}

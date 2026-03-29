@@ -1,8 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { parseStatement } from '@/lib/ai/statement-parser'
-import type { ParsedStatementResult } from '@/lib/statements/helpers'
 import {
   assertStatementStorageConfig,
   ensureStatementsBucket,
@@ -12,39 +10,15 @@ import {
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { ensureProfile } from '@/lib/supabase/ensure-profile'
+import { computeFileHash } from '@/lib/server/statement-import'
+import { startStatementIngestionJob } from '@/lib/server/statement-ingestion-jobs'
 import {
-  buildParsedAccountLabel,
-  computeFileHash,
-  loadAccountCandidates,
-  resolveAccountCandidate,
-  resolvedAccountFromCandidate,
-  routeParsedTransactions,
-  stageRoutedTransactions,
-} from '@/lib/server/statement-import'
-import {
-  createStatementParseSession,
-  isStatementParseSessionSchemaError,
-} from '@/lib/server/statement-parse-sessions'
-import {
-  cleanupExpiredStatementSessionStorage,
-  deleteOriginalStatement,
-  uploadOriginalStatement,
-} from '@/lib/server/statement-storage'
-
-const PARSE_SESSION_MIGRATION_HINT = 'Apply supabase migration 006_statement_parse_sessions.sql to enable continue-without-reupload recovery.'
-
-function buildRoutingFailureMessage(unmatchedLabels: string[]) {
-  const uniqueLabels = Array.from(new Set(unmatchedLabels.filter(Boolean)))
-  const preview = uniqueLabels.slice(0, 3).join('; ')
-  const moreCount = Math.max(uniqueLabels.length - 3, 0)
-  const details = moreCount > 0 ? `${preview}; and ${moreCount} more.` : preview
-
-  return `This statement contains transactions for accounts that could not be matched automatically. ${details} Review or create the missing account(s), then continue without re-uploading.`
-}
-
-function buildSchemaMissingRecoveryMessage(baseMessage: string) {
-  return `${baseMessage} Continue-without-reupload is temporarily unavailable because statement parse session storage is not deployed. ${PARSE_SESSION_MIGRATION_HINT}`
-}
+  listStatementUploadImportsByFileHash,
+  listStatementUploadImports,
+  loadStatementUploadByHash,
+} from '@/lib/server/statement-uploads'
+import type { StatementUploadImportSummary } from '@/lib/server/statement-uploads'
+import { deleteOriginalStatement, uploadOriginalStatement } from '@/lib/server/statement-storage'
 
 function buildStatementStorageUnavailableResponse(error: unknown) {
   const message = error instanceof Error ? error.message : 'Failed to store original statement'
@@ -61,6 +35,101 @@ function buildStatementStorageUnavailableResponse(error: unknown) {
     },
     { status: mapped.status },
   )
+}
+
+async function restartExistingUpload(params: {
+  serviceSupabase: any
+  statementUploadId: string
+  existingUpload: Record<string, unknown>
+  userId: string
+  householdId: string
+  selectedAccountId: string | null
+  file: File
+  bytes: Buffer
+  statementBucket: string
+}) {
+  await deleteOriginalStatement({
+    supabase: params.serviceSupabase,
+    storageBucket: typeof params.existingUpload.storage_bucket === 'string' ? params.existingUpload.storage_bucket : null,
+    storagePath: typeof params.existingUpload.storage_path === 'string' ? params.existingUpload.storage_path : null,
+  })
+
+  await params.serviceSupabase
+    .from('statement_parse_sessions')
+    .delete()
+    .eq('statement_upload_id', params.statementUploadId)
+
+  const { error: resetError } = await params.serviceSupabase
+    .from('statement_uploads')
+    .update({
+      uploaded_by: params.userId,
+      selected_account_id: params.selectedAccountId,
+      file_name: params.file.name,
+      mime_type: params.file.type || 'application/octet-stream',
+      file_size_bytes: params.bytes.byteLength,
+      storage_bucket: params.statementBucket,
+      storage_path: null,
+      status: 'queued',
+      duplicate_of_statement_upload_id: null,
+      parse_session_id: null,
+      result_payload: null,
+      error_code: null,
+      error_message: null,
+      parse_error: null,
+      completed_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.statementUploadId)
+
+  if (resetError) {
+    throw new Error(resetError.message || 'Failed to reset prior statement upload')
+  }
+
+  let storedOriginal: { storageBucket: string; storagePath: string }
+  try {
+    storedOriginal = await uploadOriginalStatement({
+      supabase: params.serviceSupabase,
+      householdId: params.householdId,
+      fileImportId: params.statementUploadId,
+      fileName: params.file.name,
+      mimeType: params.file.type || 'application/octet-stream',
+      bytes: params.bytes,
+    })
+  } catch (error) {
+    await params.serviceSupabase
+      .from('statement_uploads')
+      .update({
+        status: 'failed',
+        error_code: 'statement_storage_failed',
+        error_message: error instanceof Error ? error.message : 'Failed to upload statement file',
+        parse_error: error instanceof Error ? error.message : 'Failed to upload statement file',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', params.statementUploadId)
+
+    throw error
+  }
+
+  await params.serviceSupabase
+    .from('statement_uploads')
+    .update({
+      storage_bucket: storedOriginal.storageBucket,
+      storage_path: storedOriginal.storagePath,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.statementUploadId)
+
+  const job = startStatementIngestionJob({
+    statementUploadId: params.statementUploadId,
+    fileName: params.file.name,
+    userId: params.userId,
+    householdId: params.householdId,
+  })
+
+  return {
+    statementUploadId: params.statementUploadId,
+    job,
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -96,91 +165,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Statement file is required' }, { status: 400 })
     }
 
+    if (selectedAccountId) {
+      const { data: existingAccount } = await supabase
+        .from('accounts')
+        .select('id')
+        .eq('id', selectedAccountId)
+        .eq('household_id', profile.household_id)
+        .maybeSingle()
+
+      if (!existingAccount) {
+        return NextResponse.json({ error: 'Selected account was not found.' }, { status: 404 })
+      }
+    }
+
     const bytes = Buffer.from(await file.arrayBuffer())
     const fileSha256 = computeFileHash(bytes)
 
-    const { data: existingImport } = await supabase
-      .from('file_imports')
-      .select('id, status, file_name')
-      .eq('household_id', profile.household_id)
-      .eq('file_sha256', fileSha256)
-      .not('status', 'eq', 'failed')
-      .limit(1)
-      .maybeSingle()
-
-    if (existingImport) {
-      return NextResponse.json(
-        {
-          error: 'This file has already been processed.',
-          existingImportId: existingImport.id,
-          existingFileName: existingImport.file_name,
-          existingStatus: existingImport.status,
-        },
-        { status: 409 },
-      )
-    }
-
-    let parsed: ParsedStatementResult
-    try {
-      parsed = await parseStatement(bytes, file.type || 'application/pdf', file.name)
-    } catch (parseError) {
-      return NextResponse.json(
-        { error: parseError instanceof Error ? parseError.message : 'Failed to parse statement' },
-        { status: 500 },
-      )
-    }
-
-    const candidateAccounts = await loadAccountCandidates(db, profile.household_id)
-    if (candidateAccounts.length === 0) {
-      return NextResponse.json(
-        {
-          error: `No active accounts found. Add this account first: ${buildParsedAccountLabel(parsed.account, parsed.institution_name || parsed.institution_code)}`,
-          code: 'account_required',
-        },
-        { status: 422 },
-      )
-    }
-
-    let manualAccount = null
-    if (selectedAccountId) {
-      const selectedCandidate = candidateAccounts.find((account) => account.id === selectedAccountId)
-      if (!selectedCandidate) {
-        return NextResponse.json({ error: 'Selected account was not found.' }, { status: 404 })
-      }
-      manualAccount = resolvedAccountFromCandidate(selectedCandidate, 'manual')
-    }
-
-    let parseSessionStorageAvailable = true
-    try {
-      await cleanupExpiredStatementSessionStorage({
-        supabase: db,
-        householdId: profile.household_id,
-        userId: user.id,
-      })
-    } catch (error) {
-      if (isStatementParseSessionSchemaError(error)) {
-        parseSessionStorageAvailable = false
-      } else {
-        throw error
-      }
-    }
-
-    const routed = await routeParsedTransactions({
-      supabase: db,
-      householdId: profile.household_id,
-      parsed,
-      candidateAccounts,
-      manualAccount,
-    })
-
-    let serviceSupabase: any = null
+    let serviceSupabase: any
     let statementBucket = ''
-    let storageReady = false
-    const ensureStatementStorageReady = async () => {
-      if (storageReady) {
-        return { serviceSupabase, statementBucket }
-      }
-
+    try {
       assertStatementStorageConfig()
 
       serviceSupabase = createServiceSupabaseClient() as any
@@ -188,192 +191,188 @@ export async function POST(request: NextRequest) {
       const bucketReady = await ensureStatementsBucket(serviceSupabase, statementBucket)
       if (!bucketReady.ok) {
         const mapped = mapStatementStorageErrorMessage(bucketReady.error?.message ?? 'Bucket not accessible')
-        throw Object.assign(new Error(bucketReady.error?.message ?? 'Bucket not accessible'), {
-          response: NextResponse.json(
-            {
-              error: 'Statement storage bucket is missing or inaccessible.',
-              code: mapped.code,
-              action: 'Create the `statements` bucket in Supabase storage and apply storage policies.',
-              details: bucketReady.error?.message ?? null,
-            },
-            { status: mapped.status === 500 ? 503 : mapped.status },
-          ),
-        })
-      }
-
-      storageReady = true
-      return { serviceSupabase, statementBucket }
-    }
-
-    if (routed.unmatchedAccountDescriptors.length > 0) {
-      const baseMessage = buildRoutingFailureMessage(routed.unmatchedAccountDescriptors.map((row) => row.label))
-
-      if (!parseSessionStorageAvailable) {
         return NextResponse.json(
           {
-            error: buildSchemaMissingRecoveryMessage(baseMessage),
-            code: 'transaction_account_match_required',
-            parseSessionId: null,
-            recoveryMode: 'reupload_required',
-            parsedStatement: buildParsedAccountLabel(parsed.account, parsed.institution_name || parsed.institution_code),
-            unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors,
-            suggestedExistingAccounts: routed.suggestedExistingAccounts,
-            action: PARSE_SESSION_MIGRATION_HINT,
+            error: 'Statement storage bucket is missing or inaccessible.',
+            code: mapped.code,
+            action: 'Create the `statements` bucket in Supabase storage and apply storage policies.',
+            details: bucketReady.error?.message ?? null,
           },
-          { status: 422 },
+          { status: mapped.status === 500 ? 503 : mapped.status },
         )
       }
-
-      try {
-        await ensureStatementStorageReady()
-      } catch (error) {
-        if (error && typeof error === 'object' && 'response' in error) {
-          return (error as { response: NextResponse }).response
-        }
-
-        return buildStatementStorageUnavailableResponse(error)
-      }
-
-      const parseSessionStorageId = randomUUID()
-      let storedOriginal = null as { storageBucket: string; storagePath: string } | null
-      try {
-        storedOriginal = await uploadOriginalStatement({
-          supabase: serviceSupabase,
-          householdId: profile.household_id,
-          fileImportId: parseSessionStorageId,
-          fileName: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          bytes,
-        })
-      } catch (storageError) {
-        return buildStatementStorageUnavailableResponse(storageError)
-      }
-
-      try {
-        const parseSessionId = await createStatementParseSession({
-          supabase: db,
-          householdId: profile.household_id,
-          userId: user.id,
-          fileName: file.name,
-          fileSha256,
-          mimeType: file.type || 'application/octet-stream',
-          fileSizeBytes: bytes.byteLength,
-          selectedAccountId,
-          parsedPayload: parsed as unknown as Record<string, unknown>,
-          unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors as unknown as Array<Record<string, unknown>>,
-          suggestedExistingAccounts: routed.suggestedExistingAccounts as unknown as Array<Record<string, unknown>>,
-          storageBucket: storedOriginal.storageBucket,
-          storagePath: storedOriginal.storagePath,
-        })
-
-        return NextResponse.json(
-          {
-            error: baseMessage,
-            code: 'transaction_account_match_required',
-            parseSessionId,
-            recoveryMode: 'resume_supported',
-            parsedStatement: buildParsedAccountLabel(parsed.account, parsed.institution_name || parsed.institution_code),
-            unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors,
-            suggestedExistingAccounts: routed.suggestedExistingAccounts,
-          },
-          { status: 422 },
-        )
-      } catch (error) {
-        await deleteOriginalStatement({
-          supabase: serviceSupabase,
-          storageBucket: storedOriginal.storageBucket,
-          storagePath: storedOriginal.storagePath,
-        })
-
-        if (!isStatementParseSessionSchemaError(error)) {
-          throw error
-        }
-
-        return NextResponse.json(
-          {
-            error: buildSchemaMissingRecoveryMessage(baseMessage),
-            code: 'transaction_account_match_required',
-            parseSessionId: null,
-            recoveryMode: 'reupload_required',
-            parsedStatement: buildParsedAccountLabel(parsed.account, parsed.institution_name || parsed.institution_code),
-            unmatchedAccountDescriptors: routed.unmatchedAccountDescriptors,
-            suggestedExistingAccounts: routed.suggestedExistingAccounts,
-            action: PARSE_SESSION_MIGRATION_HINT,
-          },
-          { status: 422 },
-        )
-      }
-    }
-
-    const primaryAccount =
-      routed.routedTransactions[0]?.account
-      || manualAccount
-      || resolveAccountCandidate({
-        candidates: candidateAccounts,
-        institutionName: parsed.institution_name || parsed.institution_code || '',
-        descriptor: parsed.account ?? null,
-      }).account
-
-    if (!primaryAccount) {
-      return NextResponse.json({ error: 'Could not determine which account this statement belongs to.' }, { status: 422 })
-    }
-
-    try {
-      await ensureStatementStorageReady()
     } catch (error) {
-      if (error && typeof error === 'object' && 'response' in error) {
-        return (error as { response: NextResponse }).response
-      }
-
       return buildStatementStorageUnavailableResponse(error)
     }
 
-    const fileImportId = randomUUID()
-    let storedOriginal = null as { storageBucket: string; storagePath: string } | null
+    const existingUpload = await loadStatementUploadByHash({
+      supabase: db,
+      householdId: profile.household_id,
+      fileSha256,
+    })
+
+    if (existingUpload) {
+      const existingStatus = typeof existingUpload.status === 'string' ? existingUpload.status : 'completed'
+      const existingFileName = typeof existingUpload.file_name === 'string' ? existingUpload.file_name : file.name
+      const parseSessionId = typeof existingUpload.parse_session_id === 'string'
+        ? existingUpload.parse_session_id
+        : null
+      const existingUploadId = String(existingUpload.id)
+      const existingFileSha256 = typeof existingUpload.file_sha256 === 'string' ? existingUpload.file_sha256 : fileSha256
+
+      let existingImports: StatementUploadImportSummary[] = await listStatementUploadImports({
+        supabase: db,
+        statementUploadId: existingUploadId,
+        householdId: profile.household_id,
+      })
+
+      if (existingImports.length === 0 && existingFileSha256) {
+        existingImports = await listStatementUploadImportsByFileHash({
+          supabase: db,
+          householdId: profile.household_id,
+          fileSha256: existingFileSha256,
+        })
+      }
+
+      const existingImportCount = existingImports.length
+
+      const canRestartMissingImports = (
+        existingImports.length === 0
+        && existingStatus !== 'queued'
+        && existingStatus !== 'parsing'
+        && !(existingStatus === 'needs_account_resolution' && Boolean(parseSessionId))
+      )
+
+      if (canRestartMissingImports) {
+        const restarted = await restartExistingUpload({
+          serviceSupabase,
+          statementUploadId: existingUploadId,
+          existingUpload,
+          userId: user.id,
+          householdId: profile.household_id,
+          selectedAccountId,
+          file,
+          bytes,
+          statementBucket,
+        })
+
+        return NextResponse.json(
+          {
+            duplicate: false,
+            statementUploadId: restarted.statementUploadId,
+            status: 'queued',
+            job: restarted.job,
+            retriedFailedUpload: existingStatus === 'failed',
+            restartedStaleUpload: existingStatus !== 'failed',
+          },
+          { status: 202 },
+        )
+      }
+
+      let errorMessage = 'This file has already been processed.'
+      if (existingStatus === 'needs_account_resolution') {
+        errorMessage = 'This file is already waiting for account matching.'
+      } else if (existingStatus === 'queued' || existingStatus === 'parsing') {
+        errorMessage = 'This file is already being processed.'
+      } else if (existingStatus === 'failed') {
+        errorMessage = 'A previous upload of this file failed before import completed.'
+      }
+
+      return NextResponse.json(
+        {
+          error: errorMessage,
+          duplicate: true,
+          statementUploadId: existingUploadId,
+          existingFileName,
+          existingStatus,
+          existingImportCount,
+          existingImports,
+          parseSessionId,
+          resumable: existingStatus === 'needs_account_resolution' && Boolean(parseSessionId),
+          resumeUrl: parseSessionId ? `/statements?parseSessionId=${parseSessionId}` : null,
+        },
+        { status: 409 },
+      )
+    }
+
+    const statementUploadId = randomUUID()
+
+    const { error: insertError } = await serviceSupabase
+      .from('statement_uploads')
+      .insert({
+        id: statementUploadId,
+        household_id: profile.household_id,
+        uploaded_by: user.id,
+        selected_account_id: selectedAccountId,
+        file_name: file.name,
+        file_sha256: fileSha256,
+        mime_type: file.type || 'application/octet-stream',
+        file_size_bytes: bytes.byteLength,
+        storage_bucket: statementBucket,
+        status: 'queued',
+      })
+
+    if (insertError) {
+      return NextResponse.json(
+        { error: insertError.message || 'Failed to register statement upload' },
+        { status: 500 },
+      )
+    }
+
+    let storedOriginal: { storageBucket: string; storagePath: string } | null = null
     try {
       storedOriginal = await uploadOriginalStatement({
         supabase: serviceSupabase,
         householdId: profile.household_id,
-        fileImportId,
+        fileImportId: statementUploadId,
         fileName: file.name,
         mimeType: file.type || 'application/octet-stream',
         bytes,
       })
-    } catch (storageError) {
-      return buildStatementStorageUnavailableResponse(storageError)
+    } catch (error) {
+      await serviceSupabase
+        .from('statement_uploads')
+        .update({
+          status: 'failed',
+          error_code: 'statement_storage_failed',
+          error_message: error instanceof Error ? error.message : 'Failed to upload statement file',
+          parse_error: error instanceof Error ? error.message : 'Failed to upload statement file',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', statementUploadId)
+
+      return buildStatementStorageUnavailableResponse(error)
     }
 
-    let result
-    try {
-      result = await stageRoutedTransactions({
-        supabase: db,
-        householdId: profile.household_id,
-        userId: user.id,
-        parsed,
-        routedTransactions: routed.routedTransactions,
-        fileImportId,
-        fileName: file.name,
-        fileSha256,
-        mimeType: file.type || 'application/octet-stream',
-        fileSizeBytes: bytes.byteLength,
-        primaryAccount,
-        storageBucket: storedOriginal.storageBucket,
-        storagePath: storedOriginal.storagePath,
+    await serviceSupabase
+      .from('statement_uploads')
+      .update({
+        storage_bucket: storedOriginal.storageBucket,
+        storage_path: storedOriginal.storagePath,
+        updated_at: new Date().toISOString(),
       })
-    } catch (stageError) {
-      await deleteOriginalStatement({
-        supabase: serviceSupabase,
-        storageBucket: storedOriginal.storageBucket,
-        storagePath: storedOriginal.storagePath,
-      })
-      throw stageError
-    }
+      .eq('id', statementUploadId)
 
-    return NextResponse.json(result)
-  } catch (error) {
-    console.error('Statement parse error:', error)
+    const job = startStatementIngestionJob({
+      statementUploadId,
+      fileName: file.name,
+      userId: user.id,
+      householdId: profile.household_id,
+    })
+
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to parse statement' },
+      {
+        duplicate: false,
+        statementUploadId,
+        status: 'queued',
+        job,
+      },
+      { status: 202 },
+    )
+  } catch (error) {
+    console.error('Statement upload error:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to queue statement import' },
       { status: 500 },
     )
   }

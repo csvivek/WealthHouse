@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock,
   HandCoins,
+  Link2,
   Loader2,
   Plus,
   TriangleAlert,
@@ -61,8 +62,21 @@ interface Repayment {
   repayment_date: string
   amount: number
   event_type: string
+  statement_transaction_id: string | null
   method: string | null
   notes: string | null
+}
+
+interface LinkedTransaction {
+  id: string
+  txn_date: string
+  amount: number
+  txn_type: string
+  merchant_normalized: string | null
+  merchant_raw: string | null
+  description: string | null
+  account_id: string
+  accounts: { id: string; nickname: string | null; product_name: string } | null
 }
 
 interface Advance {
@@ -77,6 +91,8 @@ interface Advance {
   writeoff_date: string | null
   writeoff_reason: string | null
   notes: string | null
+  statement_transaction_id: string | null
+  linked_transaction: LinkedTransaction | null
   created_at: string
   updated_at: string
   counterparties: Counterparty | null
@@ -92,6 +108,20 @@ interface Summary {
   open_taken: number
   overdue_count: number
   writeoff_eligible_count: number
+}
+
+interface StmtTxn {
+  id: string
+  txn_date: string
+  amount: number
+  txn_type: string
+  merchant_normalized: string | null
+  merchant_raw: string | null
+  description: string | null
+  account_id: string
+  category_id: number | null
+  category: { id: number; name: string } | null
+  account: { id: string; nickname: string | null; product_name: string } | null
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -130,6 +160,14 @@ const paymentModeOptions = [
   { value: 'other', label: 'Other' },
 ]
 
+function txnMerchantLabel(txn: Pick<StmtTxn | LinkedTransaction, 'merchant_normalized' | 'merchant_raw' | 'description'>) {
+  return txn.merchant_normalized ?? txn.merchant_raw ?? txn.description ?? 'Unknown'
+}
+
+function txnAccountLabel(txn: StmtTxn) {
+  return txn.account?.nickname ?? txn.account?.product_name ?? '—'
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AdvancesPage() {
@@ -145,9 +183,14 @@ export default function AdvancesPage() {
   const [activeTab, setActiveTab] = useState('open')
   const [directionFilter, setDirectionFilter] = useState('all')
 
+  // Statement transactions (unlinked)
+  const [stmtTxns, setStmtTxns] = useState<{ given: StmtTxn[]; recovered: StmtTxn[] }>({ given: [], recovered: [] })
+  const [stmtLoading, setStmtLoading] = useState(false)
+
   // Create advance dialog
   const [createOpen, setCreateOpen] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [createFromTxn, setCreateFromTxn] = useState<StmtTxn | null>(null)
   const [createForm, setCreateForm] = useState({
     direction: 'given' as 'given' | 'taken',
     counterparty_id: '',
@@ -176,10 +219,25 @@ export default function AdvancesPage() {
     notes: '',
   })
 
+  // Link-as-repayment dialog (from statement transactions tab)
+  const [linkRepaymentOpen, setLinkRepaymentOpen] = useState(false)
+  const [linkRepaymentTxn, setLinkRepaymentTxn] = useState<StmtTxn | null>(null)
+  const [linkRepaymentAdvanceId, setLinkRepaymentAdvanceId] = useState('')
+  const [linkingRepayment, setLinkingRepayment] = useState(false)
+  const [linkRepaymentForm, setLinkRepaymentForm] = useState({
+    amount: '',
+    repayment_date: new Date().toISOString().split('T')[0],
+    event_type: 'recovery',
+    method: '',
+    notes: '',
+  })
+
   // Write-off dialog
   const [writeoffOpen, setWriteoffOpen] = useState(false)
   const [writingOff, setWritingOff] = useState(false)
   const [writeoffReason, setWriteoffReason] = useState('')
+
+  const today = new Date().toISOString().split('T')[0]
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -202,13 +260,31 @@ export default function AdvancesPage() {
     }
   }, [])
 
+  const fetchStmtTxns = useCallback(async () => {
+    setStmtLoading(true)
+    try {
+      const res = await fetch('/api/advances/statement-transactions')
+      if (res.ok) {
+        const json = await res.json()
+        setStmtTxns({ given: json.given ?? [], recovered: json.recovered ?? [] })
+      }
+    } finally {
+      setStmtLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchData()
   }, [fetchData])
 
-  // ── Filtered lists by tab ───────────────────────────────────────────────────
+  // Load statement transactions when that tab is first activated
+  useEffect(() => {
+    if (activeTab === 'statement_txns') {
+      fetchStmtTxns()
+    }
+  }, [activeTab, fetchStmtTxns])
 
-  const today = new Date().toISOString().split('T')[0]
+  // ── Filtered lists by tab ───────────────────────────────────────────────────
 
   function applyFilters(list: Advance[]) {
     let filtered = list
@@ -232,6 +308,58 @@ export default function AdvancesPage() {
   )
   const settledAdvances = applyFilters(advances.filter(a => a.status === 'settled'))
   const writtenOffAdvances = applyFilters(advances.filter(a => a.status === 'written_off'))
+
+  // Open advances available for linking as repayment targets
+  const openAdvancesForLink = advances.filter(a => ['pending', 'partial'].includes(a.status))
+
+  // ── Helpers to open create dialog ─────────────────────────────────────────
+
+  function openCreateBlank() {
+    setCreateFromTxn(null)
+    setCreateForm({
+      direction: 'given',
+      counterparty_id: '',
+      counterparty_name: '',
+      counterparty_relationship: '',
+      amount: '',
+      advance_date: today,
+      due_date: '',
+      payment_mode: '',
+      is_cash_advance: false,
+      notes: '',
+    })
+    setCreateOpen(true)
+  }
+
+  function openCreateFromTxn(txn: StmtTxn) {
+    setCreateFromTxn(txn)
+    setCreateForm({
+      direction: 'given',
+      counterparty_id: '',
+      counterparty_name: '',
+      counterparty_relationship: '',
+      amount: String(Math.abs(txn.amount)),
+      advance_date: txn.txn_date,
+      due_date: '',
+      payment_mode: '',
+      is_cash_advance: false,
+      notes: '',
+    })
+    setCreateOpen(true)
+  }
+
+  function openLinkAsRepayment(txn: StmtTxn) {
+    setLinkRepaymentTxn(txn)
+    setLinkRepaymentAdvanceId('')
+    setLinkRepaymentForm({
+      amount: String(Math.abs(txn.amount)),
+      repayment_date: txn.txn_date,
+      event_type: 'recovery',
+      method: '',
+      notes: '',
+    })
+    setLinkRepaymentOpen(true)
+  }
 
   // ── Create advance ──────────────────────────────────────────────────────────
 
@@ -257,6 +385,11 @@ export default function AdvancesPage() {
         body.counterparty_relationship = createForm.counterparty_relationship || null
       }
 
+      // Link originating statement transaction if opened from one
+      if (createFromTxn) {
+        body.statement_transaction_id = createFromTxn.id
+      }
+
       const res = await fetch('/api/advances', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -268,19 +401,10 @@ export default function AdvancesPage() {
 
       toast.success('Advance recorded successfully')
       setCreateOpen(false)
-      setCreateForm({
-        direction: 'given',
-        counterparty_id: '',
-        counterparty_name: '',
-        counterparty_relationship: '',
-        amount: '',
-        advance_date: new Date().toISOString().split('T')[0],
-        due_date: '',
-        payment_mode: '',
-        is_cash_advance: false,
-        notes: '',
-      })
+      setCreateFromTxn(null)
       await fetchData()
+      // Refresh statement transactions tab if active
+      if (activeTab === 'statement_txns') await fetchStmtTxns()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create advance')
     } finally {
@@ -288,7 +412,7 @@ export default function AdvancesPage() {
     }
   }
 
-  // ── Record repayment ────────────────────────────────────────────────────────
+  // ── Record repayment (from detail sheet) ──────────────────────────────────
 
   async function handleAddRepayment(e: FormEvent) {
     e.preventDefault()
@@ -313,13 +437,12 @@ export default function AdvancesPage() {
       setRepaymentOpen(false)
       setRepaymentForm({
         amount: '',
-        repayment_date: new Date().toISOString().split('T')[0],
+        repayment_date: today,
         event_type: 'repayment',
         method: '',
         notes: '',
       })
       await fetchData()
-      // Refresh selected advance from updated data
       const updatedList = await fetch('/api/advances').then(r => r.json())
       const updated = (updatedList.advances ?? []).find((a: Advance) => a.id === selectedAdvance.id)
       if (updated) setSelectedAdvance(updated)
@@ -327,6 +450,41 @@ export default function AdvancesPage() {
       toast.error(err instanceof Error ? err.message : 'Failed to record repayment')
     } finally {
       setAddingRepayment(false)
+    }
+  }
+
+  // ── Link statement transaction as repayment ────────────────────────────────
+
+  async function handleLinkAsRepayment(e: FormEvent) {
+    e.preventDefault()
+    if (!linkRepaymentTxn || !linkRepaymentAdvanceId || linkingRepayment) return
+    setLinkingRepayment(true)
+    try {
+      const res = await fetch(`/api/advances/${linkRepaymentAdvanceId}/repayments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: parseFloat(linkRepaymentForm.amount),
+          repayment_date: linkRepaymentForm.repayment_date,
+          event_type: linkRepaymentForm.event_type,
+          method: linkRepaymentForm.method || null,
+          notes: linkRepaymentForm.notes || null,
+          statement_transaction_id: linkRepaymentTxn.id,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed to link repayment')
+
+      toast.success('Repayment linked to advance')
+      setLinkRepaymentOpen(false)
+      setLinkRepaymentTxn(null)
+      setLinkRepaymentAdvanceId('')
+      await fetchData()
+      await fetchStmtTxns()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to link repayment')
+    } finally {
+      setLinkingRepayment(false)
     }
   }
 
@@ -391,6 +549,21 @@ export default function AdvancesPage() {
     )
   }
 
+  function LinkedTxnBanner({ lt }: { lt: LinkedTransaction }) {
+    const accountLabel = lt.accounts?.nickname ?? lt.accounts?.product_name ?? '—'
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-300">
+        <Link2 className="size-3.5 shrink-0" />
+        <span>
+          <span className="font-medium">{txnMerchantLabel(lt)}</span>
+          {' · '}{formatDate(lt.txn_date)}
+          {' · '}{formatCurrency(Math.abs(lt.amount))}
+          {' · '}{accountLabel}
+        </span>
+      </div>
+    )
+  }
+
   function AdvanceTable({ items }: { items: Advance[] }) {
     if (items.length === 0) {
       return (
@@ -428,7 +601,12 @@ export default function AdvancesPage() {
                   onClick={() => openDetail(adv)}
                 >
                   <td className="py-3 pr-4">
-                    <p className="font-medium">{adv.counterparties?.name ?? '—'}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-medium">{adv.counterparties?.name ?? '—'}</p>
+                      {adv.statement_transaction_id && (
+                        <Link2 className="size-3 shrink-0 text-amber-400" />
+                      )}
+                    </div>
                     {adv.counterparties?.relationship && (
                       <p className="text-xs text-muted-foreground">{adv.counterparties.relationship}</p>
                     )}
@@ -473,7 +651,89 @@ export default function AdvancesPage() {
     )
   }
 
+  function StmtTxnSection({
+    title,
+    items,
+    type,
+  }: {
+    title: string
+    items: StmtTxn[]
+    type: 'given' | 'recovered'
+  }) {
+    if (items.length === 0) return null
+    return (
+      <div className="space-y-2">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
+        <div className="overflow-x-auto rounded-lg border border-border/60">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/30 text-left text-xs text-muted-foreground">
+                <th className="px-3 py-2 font-medium">Date</th>
+                <th className="px-3 py-2 font-medium">Merchant</th>
+                <th className="px-3 py-2 font-medium text-right">Amount</th>
+                <th className="px-3 py-2 font-medium">Account</th>
+                <th className="px-3 py-2 font-medium">Category</th>
+                <th className="px-3 py-2 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(txn => (
+                <tr key={txn.id} className="border-b last:border-0 hover:bg-muted/20">
+                  <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
+                    {formatDate(txn.txn_date)}
+                  </td>
+                  <td className="px-3 py-2.5 font-medium">
+                    {txnMerchantLabel(txn)}
+                  </td>
+                  <td className={cn(
+                    'px-3 py-2.5 text-right font-mono font-semibold tabular-nums',
+                    txn.amount < 0 ? 'text-rose-400' : 'text-emerald-400',
+                  )}>
+                    {txn.amount < 0 ? '-' : '+'}{formatCurrency(Math.abs(txn.amount))}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {txnAccountLabel(txn)}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                    {txn.category?.name ?? '—'}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {type === 'given' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => openCreateFromTxn(txn)}
+                        >
+                          <Plus className="mr-1 size-3" />
+                          Create Advance
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => openLinkAsRepayment(txn)}
+                        >
+                          <Link2 className="mr-1 size-3" />
+                          Link as Repayment
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
   // ─── Main render ──────────────────────────────────────────────────────────────
+
+  const totalUnlinked = stmtTxns.given.length + stmtTxns.recovered.length
 
   if (loading) {
     return (
@@ -490,7 +750,7 @@ export default function AdvancesPage() {
         title="Advances"
         description="Track money lent to or borrowed from others — from advance to settlement or write-off."
         actions={
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
+          <Button size="sm" onClick={openCreateBlank}>
             <Plus className="mr-1.5 size-4" />
             New Advance
           </Button>
@@ -586,6 +846,14 @@ export default function AdvancesPage() {
           </TabsTrigger>
           <TabsTrigger value="settled">Settled</TabsTrigger>
           <TabsTrigger value="written_off">Written Off</TabsTrigger>
+          <TabsTrigger value="statement_txns">
+            Statement Txns
+            {totalUnlinked > 0 && (
+              <span className="ml-1.5 rounded-full bg-amber-200 px-1.5 py-0.5 text-xs text-amber-800 dark:bg-amber-900/60 dark:text-amber-400">
+                {totalUnlinked}
+              </span>
+            )}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="open">
@@ -616,46 +884,117 @@ export default function AdvancesPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* ── Statement Transactions tab ─────────────────────────────────────── */}
+        <TabsContent value="statement_txns">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Link2 className="size-4 text-amber-500" />
+                Unlinked Statement Transactions
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Bank statement transactions categorised as advances that are not yet linked to an
+                advance record. Create an advance or link as a repayment.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {stmtLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="size-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : stmtTxns.given.length === 0 && stmtTxns.recovered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                  <CheckCircle2 className="mb-3 size-10 opacity-30 text-emerald-500" />
+                  <p className="text-sm font-medium">All caught up</p>
+                  <p className="mt-1 text-xs">
+                    No unlinked advance transactions found. Categorise transactions as
+                    &ldquo;Advances Given&rdquo; or &ldquo;Advances Recovered&rdquo; in
+                    the Transactions view to see them here.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <StmtTxnSection
+                    title={`Advances Given — money lent out (${stmtTxns.given.length})`}
+                    items={stmtTxns.given}
+                    type="given"
+                  />
+                  <StmtTxnSection
+                    title={`Advances Recovered — money returned (${stmtTxns.recovered.length})`}
+                    items={stmtTxns.recovered}
+                    type="recovered"
+                  />
+                </>
+              )}
+              <div className="flex justify-end">
+                <Button variant="ghost" size="sm" onClick={fetchStmtTxns} disabled={stmtLoading}>
+                  {stmtLoading ? <Loader2 className="size-3.5 animate-spin" /> : 'Refresh'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* ─── Create Advance Dialog ─────────────────────────────────────────────── */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setCreateFromTxn(null) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>New Advance</DialogTitle>
+            <DialogTitle>
+              {createFromTxn ? 'Create Advance from Transaction' : 'New Advance'}
+            </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
+            {/* Linked transaction banner */}
+            {createFromTxn && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-300">
+                <Link2 className="mt-0.5 size-3.5 shrink-0" />
+                <div>
+                  <p className="font-medium">Linked to statement transaction</p>
+                  <p className="text-amber-300/70">
+                    {txnMerchantLabel(createFromTxn)}
+                    {' · '}{formatDate(createFromTxn.txn_date)}
+                    {' · '}{formatCurrency(Math.abs(createFromTxn.amount))}
+                    {' · '}{txnAccountLabel(createFromTxn)}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Direction */}
-            <div className="space-y-1.5">
-              <Label>Direction</Label>
-              <Select
-                value={createForm.direction}
-                onValueChange={v =>
-                  setCreateForm(f => ({ ...f, direction: v as 'given' | 'taken' }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="given">Given — money lent out</SelectItem>
-                  <SelectItem value="taken">Taken — money borrowed</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {!createFromTxn && (
+              <div className="space-y-1.5">
+                <Label>Direction</Label>
+                <Select
+                  value={createForm.direction}
+                  onValueChange={v =>
+                    setCreateForm(f => ({ ...f, direction: v as 'given' | 'taken' }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="given">Given — money lent out</SelectItem>
+                    <SelectItem value="taken">Taken — money borrowed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {/* Counterparty */}
             <div className="space-y-1.5">
               <Label>Counterparty</Label>
               <Select
-                value={createForm.counterparty_id}
-                onValueChange={v => setCreateForm(f => ({ ...f, counterparty_id: v }))}
+                value={createForm.counterparty_id || '__new__'}
+                onValueChange={v => setCreateForm(f => ({ ...f, counterparty_id: v === '__new__' ? '' : v }))}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select existing or type new name below" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">— Create new —</SelectItem>
+                  <SelectItem value="__new__">— Create new —</SelectItem>
                   {counterparties.map(cp => (
                     <SelectItem key={cp.id} value={cp.id}>
                       {cp.name}
@@ -767,7 +1106,7 @@ export default function AdvancesPage() {
             </div>
 
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
+              <Button type="button" variant="ghost" onClick={() => { setCreateOpen(false); setCreateFromTxn(null) }}>
                 Cancel
               </Button>
               <Button type="submit" disabled={creating}>
@@ -791,6 +1130,16 @@ export default function AdvancesPage() {
                   <StatusBadge status={selectedAdvance.status} />
                 </SheetTitle>
               </SheetHeader>
+
+              {/* Linked bank transaction */}
+              {selectedAdvance.linked_transaction && (
+                <div className="mb-4">
+                  <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Linked Bank Transaction
+                  </p>
+                  <LinkedTxnBanner lt={selectedAdvance.linked_transaction} />
+                </div>
+              )}
 
               {/* Summary grid */}
               <div className="grid grid-cols-2 gap-4 rounded-lg bg-muted/40 p-4">
@@ -902,7 +1251,7 @@ export default function AdvancesPage() {
                         key={rep.id}
                         className="flex items-start justify-between rounded-md bg-muted/40 px-3 py-2 text-sm"
                       >
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             {rep.event_type === 'writeoff' ? (
                               <XCircle className="size-3.5 text-gray-500" />
@@ -917,6 +1266,12 @@ export default function AdvancesPage() {
                                 via {rep.method.replace(/_/g, ' ')}
                               </span>
                             )}
+                            {rep.statement_transaction_id && (
+                              <span className="inline-flex items-center gap-0.5 text-xs text-amber-400">
+                                <Link2 className="size-3" />
+                                Bank txn
+                              </span>
+                            )}
                           </div>
                           {rep.notes && (
                             <p className="mt-0.5 pl-5 text-xs text-muted-foreground">{rep.notes}</p>
@@ -925,7 +1280,7 @@ export default function AdvancesPage() {
                             {formatDate(rep.repayment_date)}
                           </p>
                         </div>
-                        <span className="font-semibold tabular-nums">
+                        <span className="ml-3 font-semibold tabular-nums">
                           {formatCurrency(rep.amount)}
                         </span>
                       </div>
@@ -955,7 +1310,7 @@ export default function AdvancesPage() {
         </SheetContent>
       </Sheet>
 
-      {/* ─── Repayment Dialog ─────────────────────────────────────────────────── */}
+      {/* ─── Repayment Dialog (from detail sheet) ─────────────────────────────── */}
       <Dialog open={repaymentOpen} onOpenChange={setRepaymentOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
@@ -1038,6 +1393,137 @@ export default function AdvancesPage() {
               <Button type="submit" disabled={addingRepayment}>
                 {addingRepayment && <Loader2 className="mr-2 size-4 animate-spin" />}
                 Record
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Link as Repayment Dialog (from statement txns tab) ───────────────── */}
+      <Dialog open={linkRepaymentOpen} onOpenChange={(open) => { setLinkRepaymentOpen(open); if (!open) setLinkRepaymentTxn(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Link as Repayment</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleLinkAsRepayment} className="space-y-4">
+            {/* Transaction banner */}
+            {linkRepaymentTxn && (
+              <div className="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-300">
+                <Link2 className="mt-0.5 size-3.5 shrink-0" />
+                <div>
+                  <p className="font-medium">Statement transaction</p>
+                  <p className="text-emerald-300/70">
+                    {txnMerchantLabel(linkRepaymentTxn)}
+                    {' · '}{formatDate(linkRepaymentTxn.txn_date)}
+                    {' · '}{formatCurrency(Math.abs(linkRepaymentTxn.amount))}
+                    {' · '}{txnAccountLabel(linkRepaymentTxn)}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Advance selector */}
+            <div className="space-y-1.5">
+              <Label>Link to Advance *</Label>
+              <Select value={linkRepaymentAdvanceId} onValueChange={setLinkRepaymentAdvanceId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select an open advance" />
+                </SelectTrigger>
+                <SelectContent>
+                  {openAdvancesForLink.length === 0 ? (
+                    <SelectItem value="__none__" disabled>No open advances</SelectItem>
+                  ) : (
+                    openAdvancesForLink.map(adv => (
+                      <SelectItem key={adv.id} value={adv.id}>
+                        {adv.counterparties?.name ?? 'Unknown'}
+                        {' — '}
+                        {adv.direction === 'given' ? 'Given' : 'Taken'}
+                        {' — '}
+                        {formatCurrency(adv.outstanding_amount)} outstanding
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Amount</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="0.00"
+                  value={linkRepaymentForm.amount}
+                  onChange={e => setLinkRepaymentForm(f => ({ ...f, amount: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Date</Label>
+                <Input
+                  type="date"
+                  value={linkRepaymentForm.repayment_date}
+                  onChange={e => setLinkRepaymentForm(f => ({ ...f, repayment_date: e.target.value }))}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Event Type</Label>
+                <Select
+                  value={linkRepaymentForm.event_type}
+                  onValueChange={v => setLinkRepaymentForm(f => ({ ...f, event_type: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="recovery">Recovery</SelectItem>
+                    <SelectItem value="repayment">Repayment</SelectItem>
+                    <SelectItem value="adjustment">Adjustment</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Method (optional)</Label>
+                <Select
+                  value={linkRepaymentForm.method}
+                  onValueChange={v => setLinkRepaymentForm(f => ({ ...f, method: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="—" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentModeOptions.map(o => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Notes (optional)</Label>
+              <Input
+                placeholder="Reference, context, etc."
+                value={linkRepaymentForm.notes}
+                onChange={e => setLinkRepaymentForm(f => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => { setLinkRepaymentOpen(false); setLinkRepaymentTxn(null) }}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={linkingRepayment || !linkRepaymentAdvanceId}>
+                {linkingRepayment && <Loader2 className="mr-2 size-4 animate-spin" />}
+                Link Repayment
               </Button>
             </DialogFooter>
           </form>

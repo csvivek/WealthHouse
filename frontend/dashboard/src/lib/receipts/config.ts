@@ -107,11 +107,65 @@ export function isReceiptSchemaNotReadyError(error: SupabaseLikeError, requiredT
   return false
 }
 
+export function isReceiptCsvImportSchemaNotReadyError(error: SupabaseLikeError, requiredTable = 'receipt_uploads') {
+  if (!error) return false
+
+  const message = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase()
+  const missingImportSource =
+    message.includes(`column ${requiredTable}.import_source does not exist`)
+    || message.includes(`column public.${requiredTable}.import_source does not exist`)
+  const missingCsvBatchId =
+    message.includes(`column ${requiredTable}.csv_batch_id does not exist`)
+    || message.includes(`column public.${requiredTable}.csv_batch_id does not exist`)
+
+  if (requiredTable === 'receipt_uploads') {
+    return missingImportSource || missingCsvBatchId
+  }
+
+  if (requiredTable === 'receipts') {
+    return missingImportSource
+  }
+
+  if (requiredTable === 'receipt_csv_batches') {
+    return isReceiptSchemaNotReadyError(error, requiredTable)
+  }
+
+  return false
+}
+
+export function isReceiptMerchantContactSchemaNotReadyError(
+  error: SupabaseLikeError,
+  requiredTable = 'receipt_staging_transactions',
+) {
+  if (!error) return false
+
+  const message = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase()
+  return ['merchant_address', 'merchant_phone'].some((column) =>
+    message.includes(`column ${requiredTable}.${column} does not exist`)
+    || message.includes(`column public.${requiredTable}.${column} does not exist`)
+    || message.includes(`could not find the '${column}' column of '${requiredTable}'`))
+}
+
+export function stripReceiptMerchantContactFields(payload: Record<string, unknown>) {
+  const next = { ...payload }
+  delete next.merchant_address
+  delete next.merchant_phone
+  return next
+}
+
 export function receiptSchemaNotReadyResponse(requiredTable = 'receipt_uploads') {
   return {
     error: 'Receipt ingestion schema is not deployed in this Supabase environment.',
     code: RECEIPT_ERROR_CODES.SCHEMA_NOT_READY,
     action: `Run migration \`005_receipt_ingestion_and_intelligence.sql\` (or \`frontend/dashboard/supabase/migrations/004_receipt_ingestion_and_intelligence.sql\`) so table \`public.${requiredTable}\` exists.`,
+  }
+}
+
+export function receiptCsvImportSchemaNotReadyResponse(requiredTable = 'receipt_uploads') {
+  return {
+    error: 'Receipt CSV import schema is not deployed in this Supabase environment.',
+    code: RECEIPT_ERROR_CODES.SCHEMA_NOT_READY,
+    action: `Run migration \`028_receipt_csv_import.sql\` so the CSV import columns for \`public.${requiredTable}\` exist.`,
   }
 }
 

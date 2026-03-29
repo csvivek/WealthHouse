@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration: 025_transaction_link_chains_and_ledger_views.sql
+-- Migration: 027_transaction_link_chains_and_ledger_views.sql
 -- Purpose:   Add transfer-chain metadata for multi-hop transaction linking and
 --            introduce category ledger views for spending vs cash-flow reports.
 -- ============================================================================

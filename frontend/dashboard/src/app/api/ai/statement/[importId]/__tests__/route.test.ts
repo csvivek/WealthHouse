@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
-import { GET } from '@/app/api/ai/statement/[importId]/route'
+import { DELETE, GET } from '@/app/api/ai/statement/[importId]/route'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { resolveEffectivePaymentGroups } from '@/lib/server/category-groups'
@@ -261,6 +261,244 @@ function createServiceSupabaseMock(options?: {
   }
 }
 
+function createDeleteServerSupabaseMock() {
+  return {
+    auth: {
+      getUser: async () => ({ data: { user: { id: 'user-1' } } }),
+    },
+    from: (table: string) => {
+      if (table === 'user_profiles') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: async () => ({ data: { household_id: 'hh-1' }, error: null }),
+            }),
+          }),
+        }
+      }
+
+      throw new Error(`Unexpected delete server table ${table}`)
+    },
+  }
+}
+
+function createDeleteServiceSupabaseMock() {
+  const spies = {
+    fileImportsUpdate: vi.fn(),
+    fileImportsDelete: vi.fn(),
+    mappingsDelete: vi.fn(),
+    transactionLinksDelete: vi.fn(),
+    ledgerEntriesUpdate: vi.fn(),
+    investmentTransactionsUpdate: vi.fn(),
+    advanceRepaymentsUpdate: vi.fn(),
+    importStagingUpdate: vi.fn(),
+    statementTransactionsDelete: vi.fn(),
+    statementSummariesDelete: vi.fn(),
+    statementImportsDelete: vi.fn(),
+    statementUploadsUpdate: vi.fn(),
+    statementUploadsDelete: vi.fn(),
+    storageRemove: vi.fn(),
+  }
+
+  const fileImport = {
+    id: 'import-1',
+    household_id: 'hh-1',
+    file_name: 'statement.pdf',
+    statement_upload_id: 'upload-1',
+    storage_bucket: 'statements',
+    storage_path: 'households/hh-1/statements/upload-1/statement.pdf',
+  }
+
+  return {
+    __spies: spies,
+    from: (table: string) => {
+      if (table === 'file_imports') {
+        return {
+          select: (_columns?: string, options?: { count?: string; head?: boolean }) => {
+            if (options?.head) {
+              return {
+                eq: () => ({
+                  eq: async () => ({ count: 0, error: null }),
+                }),
+              }
+            }
+
+            return {
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: fileImport, error: null }),
+                }),
+              }),
+            }
+          },
+          update: (payload?: unknown) => ({
+            eq: async () => {
+              spies.fileImportsUpdate(payload)
+              return { error: null }
+            },
+          }),
+          delete: () => ({
+            eq: () => ({
+              eq: async () => {
+                spies.fileImportsDelete()
+                return { error: null }
+              },
+            }),
+          }),
+        }
+      }
+
+      if (table === 'statement_imports') {
+        return {
+          select: () => ({
+            eq: async () => ({ data: [{ id: 'stmt-1' }], error: null }),
+          }),
+          delete: () => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.statementImportsDelete(ids)
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'statement_transactions') {
+        return {
+          select: () => ({
+            in: async () => ({ data: [{ id: 'txn-1' }], error: null }),
+          }),
+          delete: () => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.statementTransactionsDelete(ids)
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'mappings') {
+        return {
+          delete: () => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.mappingsDelete(ids)
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'transaction_links') {
+        return {
+          delete: () => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.transactionLinksDelete(ids)
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'ledger_entries') {
+        return {
+          update: (payload?: unknown) => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.ledgerEntriesUpdate({ payload, ids })
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'investment_transactions') {
+        return {
+          update: (payload?: unknown) => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.investmentTransactionsUpdate({ payload, ids })
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'advance_repayments') {
+        return {
+          update: (payload?: unknown) => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.advanceRepaymentsUpdate({ payload, ids })
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'import_staging') {
+        return {
+          update: (payload?: unknown) => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.importStagingUpdate({ payload, ids })
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'statement_summaries') {
+        return {
+          delete: () => ({
+            in: async (_column: string, ids: string[]) => {
+              spies.statementSummariesDelete(ids)
+              return { error: null }
+            },
+          }),
+        }
+      }
+
+      if (table === 'statement_uploads') {
+        return {
+          update: (payload?: unknown) => ({
+            eq: async () => {
+              spies.statementUploadsUpdate(payload)
+              return { error: null }
+            },
+          }),
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: 'upload-1',
+                    storage_bucket: 'statements',
+                    storage_path: 'households/hh-1/statements/upload-1/statement.pdf',
+                  },
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+          delete: () => ({
+            eq: () => ({
+              eq: async () => {
+                spies.statementUploadsDelete()
+                return { error: null }
+              },
+            }),
+          }),
+        }
+      }
+
+      throw new Error(`Unexpected delete service table ${table}`)
+    },
+    storage: {
+      from: () => ({
+        remove: async (paths: string[]) => {
+          spies.storageRemove(paths)
+          return { error: null }
+        },
+      }),
+    },
+  }
+}
+
 describe('GET /api/ai/statement/[importId]', () => {
   beforeEach(() => {
     mockedCreateServerSupabaseClient.mockReset()
@@ -360,5 +598,42 @@ describe('GET /api/ai/statement/[importId]', () => {
     expect(warnMessages.some((message) => message.includes('Statement review links unavailable'))).toBe(false)
     expect(warnMessages.some((message) => message.includes('Statement review committed import metadata unavailable'))).toBe(true)
     expect(warnMessages.some((message) => message.includes('Statement review uploader metadata unavailable'))).toBe(true)
+  })
+})
+
+describe('DELETE /api/ai/statement/[importId]', () => {
+  beforeEach(() => {
+    mockedCreateServerSupabaseClient.mockReset()
+    mockedCreateServiceSupabaseClient.mockReset()
+  })
+
+  it('cleanly deletes the import, committed transactions, and orphaned upload', async () => {
+    mockedCreateServerSupabaseClient.mockResolvedValue(createDeleteServerSupabaseMock() as never)
+    mockedCreateServiceSupabaseClient.mockReturnValue(createDeleteServiceSupabaseMock() as never)
+
+    const response = await DELETE(
+      new NextRequest('http://localhost/api/ai/statement/import-1', { method: 'DELETE' }),
+      { params: Promise.resolve({ importId: 'import-1' }) },
+    )
+    const payload = await response.json()
+    const serviceSupabase = mockedCreateServiceSupabaseClient.mock.results[0]?.value as ReturnType<typeof createDeleteServiceSupabaseMock>
+
+    expect(response.status).toBe(200)
+    expect(serviceSupabase.__spies.fileImportsDelete).toHaveBeenCalled()
+    expect(serviceSupabase.__spies.statementImportsDelete).toHaveBeenCalledWith(['stmt-1'])
+    expect(serviceSupabase.__spies.statementTransactionsDelete).toHaveBeenCalledWith(['txn-1'])
+    expect(serviceSupabase.__spies.mappingsDelete).toHaveBeenCalledWith(['txn-1'])
+    expect(serviceSupabase.__spies.transactionLinksDelete).toHaveBeenCalledTimes(2)
+    expect(serviceSupabase.__spies.statementUploadsDelete).toHaveBeenCalled()
+    expect(serviceSupabase.__spies.storageRemove).toHaveBeenCalledWith([
+      'households/hh-1/statements/upload-1/statement.pdf',
+    ])
+    expect(payload).toEqual({
+      deleted: true,
+      importId: 'import-1',
+      fileName: 'statement.pdf',
+      removedStatementUpload: true,
+      removedStoredFile: true,
+    })
   })
 })

@@ -57,7 +57,9 @@ import { isApprovedMappingStatus } from '@/lib/statement-linking/config'
 import {
   buildInternalTransferLinkSummary,
   compareInternalTransferCandidates,
+  hasExactTransferCandidateAmount,
   getTransferLinkLabel,
+  isTransferCandidateWithinPastDays,
   resolveTransferCategoryLinkType,
   type InternalTransferLinkRecord,
   type InternalTransferLinkSummary,
@@ -713,6 +715,7 @@ export default function TransactionsExplorer() {
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null)
   const [editingTagIds, setEditingTagIds] = useState<string[]>([])
   const [editingTransferTargetId, setEditingTransferTargetId] = useState<string | null>(null)
+  const [selectedCounterpartAccountId, setSelectedCounterpartAccountId] = useState<string | null>(null)
   const [transferSearch, setTransferSearch] = useState('')
   const [editorFocusTarget, setEditorFocusTarget] = useState<EditorFocusTarget | null>(null)
   const [savingEditor, setSavingEditor] = useState(false)
@@ -839,6 +842,7 @@ export default function TransactionsExplorer() {
     if (!editorOpen) {
       setEditorFocusTarget(null)
       setEditingTransferTargetId(null)
+      setSelectedCounterpartAccountId(null)
       setTransferSearch('')
     }
   }, [editorOpen])
@@ -950,18 +954,31 @@ export default function TransactionsExplorer() {
     const classified = classifyLinkType(buildLinkCandidate(editingTxn, counterpart, accountMap)).type
     return classified ?? categoryDerivedType ?? 'internal_transfer'
   }, [accountMap, currentEditorCategory?.name, editingTransferTargetId, editingTxn, transactions])
-  const internalTransferCandidates = useMemo(() => {
+  const counterpartAccountOptions = useMemo(() => {
     if (!editingTxn) return []
-    const normalizedSearch = deferredTransferSearch.trim().toLowerCase()
 
-    return [...transactions]
+    return accounts
+      .filter((account) => account.id !== editingTxn.account_id)
+      .sort((left, right) => (getAccountName(left) ?? '').localeCompare(getAccountName(right) ?? ''))
+  }, [accounts, editingTxn])
+  const internalTransferCandidates = useMemo(() => {
+    if (!editingTxn || !selectedCounterpartAccountId) {
+      return { suggested: [], remaining: [] }
+    }
+
+    const normalizedSearch = deferredTransferSearch.trim().toLowerCase()
+    const sourceDirection = normalizeTxnDirection(editingTxn.txn_type)
+
+    const filteredCandidates = transactions
       .filter((candidate) => candidate.id !== editingTxn.id)
-      .filter((candidate) => candidate.account_id !== editingTxn.account_id)
+      .filter((candidate) => candidate.account_id === selectedCounterpartAccountId)
+      .filter((candidate) => normalizeTxnDirection(candidate.txn_type) !== sourceDirection)
       .filter((candidate) => {
         const linkedCounterpartIds = linkedCounterpartsByTransactionId.get(candidate.id)
         if (!linkedCounterpartIds || linkedCounterpartIds.size === 0) return true
         return linkedCounterpartIds.size === 1 && linkedCounterpartIds.has(editingTxn.id)
       })
+      .filter((candidate) => isTransferCandidateWithinPastDays(editingTxn.txn_date, candidate.txn_date, 2))
       .filter((candidate) => {
         if (!normalizedSearch) return true
         const searchableValues = [
@@ -975,19 +992,52 @@ export default function TransactionsExplorer() {
 
         return searchableValues.some((value) => String(value ?? '').toLowerCase().includes(normalizedSearch))
       })
-      .sort((left, right) => compareInternalTransferCandidates(
-        toInternalTransferTransaction(editingTxn),
-        toInternalTransferTransaction(left),
-        toInternalTransferTransaction(right),
-      ))
-  }, [accountMap, deferredTransferSearch, editingTxn, linkedCounterpartsByTransactionId, transactions])
+    const sortCandidates = (left: StatementTxn, right: StatementTxn) => compareInternalTransferCandidates(
+      toInternalTransferTransaction(editingTxn),
+      toInternalTransferTransaction(left),
+      toInternalTransferTransaction(right),
+    )
+
+    return {
+      suggested: filteredCandidates
+        .filter((candidate) => hasExactTransferCandidateAmount(editingTxn.amount, candidate.amount))
+        .sort(sortCandidates),
+      remaining: filteredCandidates
+        .filter((candidate) => !hasExactTransferCandidateAmount(editingTxn.amount, candidate.amount))
+        .sort(sortCandidates),
+    }
+  }, [
+    accountMap,
+    deferredTransferSearch,
+    editingTxn,
+    linkedCounterpartsByTransactionId,
+    selectedCounterpartAccountId,
+    transactions,
+  ])
 
   useEffect(() => {
     if (!isEditingTransferCategory) {
       setEditingTransferTargetId(null)
+      setSelectedCounterpartAccountId(null)
       setTransferSearch('')
     }
   }, [isEditingTransferCategory])
+
+  useEffect(() => {
+    if (!selectedCounterpartAccountId) return
+
+    const isValidAccount = counterpartAccountOptions.some((account) => account.id === selectedCounterpartAccountId)
+    if (!isValidAccount) setSelectedCounterpartAccountId(null)
+  }, [counterpartAccountOptions, selectedCounterpartAccountId])
+
+  useEffect(() => {
+    if (!editingTransferTargetId || !selectedCounterpartAccountId) return
+
+    const target = transactions.find((txn) => txn.id === editingTransferTargetId)
+    if (target && target.account_id !== selectedCounterpartAccountId) {
+      setEditingTransferTargetId(null)
+    }
+  }, [editingTransferTargetId, selectedCounterpartAccountId, transactions])
 
   const baseFilteredTransactions = useMemo(() => {
     const rangeStart = getDateRangeStart(dateRange, customDateStart)
@@ -1114,6 +1164,7 @@ export default function TransactionsExplorer() {
     setEditingCategoryId(txn.category?.id ?? txn.category_id ?? null)
     setEditingTagIds(txn.tags.flatMap((tag) => (tag.id ? [tag.id] : [])))
     setEditingTransferTargetId(txn.internalTransferLink?.counterpartTransactionId ?? null)
+    setSelectedCounterpartAccountId(txn.internalTransferLink?.counterpartAccountId ?? null)
     setTransferSearch('')
     setEditorFocusTarget(focusTarget)
     setEditorOpen(true)
@@ -1687,7 +1738,9 @@ export default function TransactionsExplorer() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-1">
                         <p className="text-sm font-medium">Transfer counterpart</p>
-                        <p className="text-xs text-muted-foreground">Pick the matching committed transaction from another account.</p>
+                        <p className="text-xs text-muted-foreground">
+                          Choose a counterpart account first. Then we will look for opposite-direction transactions from the same day or previous 2 days, with exact amount matches shown first.
+                        </p>
                       </div>
                       <Button type="button" variant="outline" size="sm" onClick={() => setEditingTransferTargetId(null)} disabled={!editingTransferTargetId}>
                         Clear
@@ -1709,49 +1762,125 @@ export default function TransactionsExplorer() {
                       )}
                     </div>
 
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input value={transferSearch} onChange={(event) => setTransferSearch(event.target.value)} placeholder="Search transfer counterpart" className="pl-9" />
+                    <div className="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)]">
+                      <Select
+                        value={selectedCounterpartAccountId ?? '__empty__'}
+                        onValueChange={(value) => {
+                          const nextAccountId = value === '__empty__' ? null : value
+                          setSelectedCounterpartAccountId(nextAccountId)
+                          setTransferSearch('')
+                        }}
+                      >
+                        <SelectTrigger className="w-full" aria-label="Counterpart account">
+                          <SelectValue placeholder="Choose counterpart account" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="__empty__">Choose counterpart account</SelectItem>
+                          </SelectGroup>
+                          {counterpartAccountOptions.length > 0 ? <SelectSeparator /> : null}
+                          <SelectGroup>
+                            <SelectLabel>Available Accounts</SelectLabel>
+                            {counterpartAccountOptions.map((account) => (
+                              <SelectItem key={account.id} value={account.id}>
+                                <span className="flex items-center gap-2">
+                                  <InstitutionIcon
+                                    iconUrl={getAccountInstitution(account)?.icon_url}
+                                    alt={`${getAccountInstitution(account)?.name ?? getAccountName(account) ?? 'Account'} icon`}
+                                    className="size-4 rounded-full bg-background"
+                                    fallbackClassName="size-3 text-muted-foreground"
+                                  />
+                                  <span>{getAccountName(account) ?? 'Unknown account'}</span>
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={transferSearch}
+                          onChange={(event) => setTransferSearch(event.target.value)}
+                          placeholder="Search transfer counterpart"
+                          className="pl-9"
+                          disabled={!selectedCounterpartAccountId}
+                        />
+                      </div>
                     </div>
 
                     <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                      {internalTransferCandidates.map((candidate) => {
-                        const candidateAccountName = getAccountName(accountMap[candidate.account_id])
-                        const candidateMerchantName = candidate.merchant_normalized ?? candidate.merchant_raw ?? candidate.description ?? 'Unknown'
-                        const isSelected = candidate.id === editingTransferTargetId
-                        const hasOppositeDirection = normalizeTxnDirection(candidate.txn_type) !== normalizeTxnDirection(editingTxn.txn_type)
-                        const predictedType = classifyLinkType(buildLinkCandidate(editingTxn, candidate, accountMap)).type
+                      {!selectedCounterpartAccountId ? (
+                        <div className="rounded-xl border border-dashed border-border/70 px-3 py-5 text-sm text-muted-foreground">
+                          Select a counterpart account to review matching transactions.
+                        </div>
+                      ) : null}
+                      {selectedCounterpartAccountId
+                        && internalTransferCandidates.suggested.length === 0
+                        && internalTransferCandidates.remaining.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-border/70 px-3 py-5 text-sm text-muted-foreground">
+                            No opposite-direction transactions were found in the selected account within the previous 2 days.
+                          </div>
+                        ) : null}
+
+                      {[
+                        {
+                          key: 'suggested',
+                          label: 'Suggested matches',
+                          description: 'Exact amount + opposite direction',
+                          candidates: internalTransferCandidates.suggested,
+                        },
+                        {
+                          key: 'remaining',
+                          label: 'Other eligible transactions',
+                          description: 'Other opposite-direction transactions in 2 days',
+                          candidates: internalTransferCandidates.remaining,
+                        },
+                      ].map((group) => {
+                        if (!selectedCounterpartAccountId || group.candidates.length === 0) return null
 
                         return (
-                          <button
-                            key={candidate.id}
-                            type="button"
-                            className={cn(
-                              'flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left',
-                              isSelected && 'border-primary bg-primary/5',
-                              !hasOppositeDirection && 'opacity-60',
-                            )}
-                            onClick={() => hasOppositeDirection && setEditingTransferTargetId(candidate.id)}
-                            disabled={!hasOppositeDirection}
-                          >
-                            <div className="space-y-1">
-                              <p className="font-medium">{candidateMerchantName}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {candidateAccountName ?? 'Unknown account'} • {formatDate(candidate.txn_date)} • {formatCurrency(Math.abs(candidate.amount))}
-                              </p>
+                          <div key={group.key} className="space-y-2">
+                            <div className="flex items-center justify-between gap-2 px-1">
+                              <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{group.label}</p>
+                              <span className="text-[11px] text-muted-foreground">{group.description}</span>
                             </div>
-                            <div className="flex flex-col items-end gap-1">
-                              <Badge variant={isSelected ? 'default' : 'outline'}>
-                                {normalizeTxnDirection(candidate.txn_type) === 'credit' ? 'Credit' : 'Debit'}
-                              </Badge>
-                              {predictedType ? (
-                                <span className="text-[11px] text-muted-foreground">{getTransferLinkLabel(predictedType)}</span>
-                              ) : null}
-                              {!hasOppositeDirection ? (
-                                <span className="text-[11px] text-muted-foreground">Same direction</span>
-                              ) : null}
-                            </div>
-                          </button>
+
+                            {group.candidates.map((candidate) => {
+                              const candidateAccountName = getAccountName(accountMap[candidate.account_id])
+                              const candidateMerchantName = candidate.merchant_normalized ?? candidate.merchant_raw ?? candidate.description ?? 'Unknown'
+                              const isSelected = candidate.id === editingTransferTargetId
+                              const predictedType = classifyLinkType(buildLinkCandidate(editingTxn, candidate, accountMap)).type
+
+                              return (
+                                <button
+                                  key={candidate.id}
+                                  type="button"
+                                  className={cn(
+                                    'flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left',
+                                    isSelected && 'border-primary bg-primary/5',
+                                  )}
+                                  onClick={() => setEditingTransferTargetId(candidate.id)}
+                                >
+                                  <div className="space-y-1">
+                                    <p className="font-medium">{candidateMerchantName}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {candidateAccountName ?? 'Unknown account'} • {formatDate(candidate.txn_date)} • {formatCurrency(Math.abs(candidate.amount))}
+                                    </p>
+                                  </div>
+                                  <div className="flex flex-col items-end gap-1">
+                                    <Badge variant={isSelected ? 'default' : 'outline'}>
+                                      {normalizeTxnDirection(candidate.txn_type) === 'credit' ? 'Credit' : 'Debit'}
+                                    </Badge>
+                                    {predictedType ? (
+                                      <span className="text-[11px] text-muted-foreground">{getTransferLinkLabel(predictedType)}</span>
+                                    ) : null}
+                                  </div>
+                                </button>
+                              )
+                            })}
+                          </div>
                         )
                       })}
                     </div>

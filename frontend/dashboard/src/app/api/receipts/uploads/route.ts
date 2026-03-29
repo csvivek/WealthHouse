@@ -3,7 +3,11 @@ import { NextResponse } from 'next/server'
 import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
-import { isReceiptSchemaNotReadyError, receiptSchemaNotReadyResponse } from '@/lib/receipts/config'
+import {
+  isReceiptCsvImportSchemaNotReadyError,
+  isReceiptSchemaNotReadyError,
+  receiptSchemaNotReadyResponse,
+} from '@/lib/receipts/config'
 
 export async function GET() {
   try {
@@ -40,13 +44,36 @@ export async function GET() {
         .order('created_at', { ascending: false })
         .limit(100)
 
-    const [uploadsResult, receiptTagsResult] = await Promise.all([
+    const buildUploadsQuery = (includeCsvMetadata: boolean) =>
       serviceSupabase
         .from('receipt_uploads')
-        .select('id, status, original_filename, file_size_bytes, mime_type, created_at, parse_error, committed_receipt_id, updated_at')
+        .select(
+          includeCsvMetadata
+            ? 'id, status, original_filename, file_size_bytes, mime_type, created_at, parse_error, committed_receipt_id, import_source, csv_batch_id, updated_at'
+            : 'id, status, original_filename, file_size_bytes, mime_type, created_at, parse_error, committed_receipt_id, updated_at',
+        )
         .eq('household_id', profile.household_id)
         .order('created_at', { ascending: false })
-        .limit(200),
+        .limit(200)
+
+    let uploadsResult = await buildUploadsQuery(true)
+    if (isReceiptCsvImportSchemaNotReadyError(uploadsResult.error, 'receipt_uploads')) {
+      const fallback = await buildUploadsQuery(false)
+      if (!fallback.error && Array.isArray(fallback.data)) {
+        uploadsResult = {
+          ...fallback,
+          data: fallback.data.map((upload: Record<string, unknown>) => ({
+            ...upload,
+            import_source: 'image_upload',
+            csv_batch_id: null,
+          })),
+        }
+      } else {
+        uploadsResult = fallback
+      }
+    }
+
+    const [receiptTagsResult] = await Promise.all([
       serviceSupabase
         .from('receipt_tags')
         .select('receipt_id, tag:tags(id, name, color_token, color_hex, icon_key, source, is_active)')

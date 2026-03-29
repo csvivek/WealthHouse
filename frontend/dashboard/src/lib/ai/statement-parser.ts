@@ -104,6 +104,7 @@ General rules:
 
 DBS-specific rules:
 - DBS consolidated bank statements contain multiple account blocks. Extract transactions only from the transaction details section.
+- When a DBS bank statement contains multiple savings/current account blocks, every transaction must include the originating account block in transactions[].account.
 - DBS credit-card statements may contain multiple card sections. Each transaction must include the card/account block it belongs to in transactions[].account.
 - For DBS bank lines with FAST Payment / Receipt, inspect continuation lines and classify as paynow, transfer_in, transfer_out, or internal_transfer instead of a generic payment.
 - TOP-UP TO PAYLAH! is wallet_topup and category Other.
@@ -118,6 +119,9 @@ Citibank-specific rules:
 - Citibank and Citi branded statements must use institution_code "citibank".
 - Citi Ready Credit is a loan / credit line product. Set account_type to loan, not credit_card, even if the statement resembles a card bill.
 - Product labels containing Ready Credit, credit line, or line of credit should stay tied to that loan product name.
+- On a Citi Wealth First (savings/current) account: a transaction described as "PAYMENT TO CITI READY CREDIT", "PAYMENT TO CITI CREDIT CARD", or any "PAYMENT TO CITI ..." variant is an OUTGOING transfer from the checking account to the credit/loan product. Use statement_type "transfer_out", not "credit_card_payment" or "payment". This is a debit on the sending account.
+- On a Citi Ready Credit (loan) account: a transaction described as "PAYMENT - ATM/INTERNET" or similar payment-received entry represents a payment received from the linked checking account, REDUCING the outstanding loan balance. Use statement_type "transfer_in", not "credit_card_payment" or "payment". This is a credit on the receiving loan account.
+- The two rows above are always counterparts of each other when amounts match. Classify them with opposite directions (transfer_out on sender, transfer_in on receiver) so they can be linked as a transfer pair.
 
 If you cannot confidently detect a field, use null or unknown rather than inventing data.`
 
@@ -152,15 +156,13 @@ If you cannot confidently detect a field, use null or unknown rather than invent
     })
   }
 
-  const result = await geminiProVision.generateContent(promptParts)
-
-  const text = result.response.text()
-  const payload = extractJson(text)
-
   try {
+    const result = await geminiProVision.generateContent(promptParts)
+    const text = result.response.text()
+    const payload = extractJson(text)
     return normalizeParsedStatement(JSON.parse(payload) as ParsedStatementResult)
   } catch (error) {
-    console.error('Failed to parse statement JSON from AI response:', payload, error)
+    console.error('Failed to parse statement JSON from AI response:', error)
     return {
       institution_code: 'unknown',
       institution_name: null,

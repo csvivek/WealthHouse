@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Upload,
   FileUp,
@@ -9,6 +9,7 @@ import {
   FileText,
   ExternalLink,
   Pencil,
+  Trash2,
   AlertTriangle,
 } from 'lucide-react'
 import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
@@ -27,7 +28,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createClient } from '@/lib/supabase/client'
 import { useStatementCommitJobs } from '@/lib/statement-commit-jobs'
-import { getKnownInstitutionMetadataByCode } from '@/lib/accounts/normalization'
+import { useStatementIngestionJobs } from '@/lib/statement-ingestion-jobs'
 import { formatDate } from '@/lib/format'
 import { isStatementStorageSchemaNotReadyError } from '@/lib/statements/config'
 import { cn } from '@/lib/utils'
@@ -39,6 +40,7 @@ interface AccountOption {
   id: string
   product_name: string
   nickname: string | null
+  identifier_hint: string | null
   account_type: string
   institutions: { name: string } | null
 }
@@ -47,6 +49,7 @@ interface FileImportRow {
   id: string
   file_name: string
   uploaded_by: string
+  statement_upload_id?: string | null
   storage_bucket: string | null
   storage_path: string | null
   uploadedByDisplayName: string | null
@@ -73,8 +76,8 @@ interface FileImportRow {
   hasStoredFile: boolean
 }
 
-const FILE_IMPORTS_SELECT_WITH_STORAGE = 'id, file_name, uploaded_by, storage_bucket, storage_path, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
-const FILE_IMPORTS_SELECT_FALLBACK = 'id, file_name, uploaded_by, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
+const FILE_IMPORTS_SELECT_WITH_STORAGE = 'id, file_name, uploaded_by, statement_upload_id, storage_bucket, storage_path, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
+const FILE_IMPORTS_SELECT_FALLBACK = 'id, file_name, uploaded_by, statement_upload_id, institution_code, raw_parse_result, status, total_rows, approved_rows, rejected_rows, duplicate_rows, committed_rows, statement_period_start, statement_period_end, created_at'
 
 interface HouseholdUploaderProfile {
   id: string
@@ -107,9 +110,26 @@ interface UnmatchedAccountDescriptor {
 
 interface ParseRecoveryState {
   parseSessionId: string
+  statementUploadId: string | null
+  fileName: string | null
   error: string
   unmatchedAccountDescriptors: UnmatchedAccountDescriptor[]
   suggestedExistingAccounts: SuggestedExistingAccount[]
+}
+
+interface ExistingImportSummary {
+  importId: string
+  importLabel: string
+  accountLabel: string | null
+  reviewUrl: string
+  status: string
+}
+
+interface DuplicateImportRecoveryState {
+  statementUploadId: string
+  fileName: string
+  importCount: number
+  imports: ExistingImportSummary[]
 }
 
 type ResolutionMode = 'existing' | 'create'
@@ -160,6 +180,7 @@ function getStatementStatusBadge(status: string) {
 
 export default function StatementsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [imports, setImports] = useState<FileImportRow[]>([])
   const [householdUsers, setHouseholdUsers] = useState<HouseholdUploaderProfile[]>([])
@@ -168,12 +189,19 @@ export default function StatementsPage() {
   const [uploaderFilter, setUploaderFilter] = useState<string>('all')
 
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
-  const [uploading, setUploading] = useState(false)
-  const [resolvingRecovery, setResolvingRecovery] = useState(false)
-  const [parseRecovery, setParseRecovery] = useState<ParseRecoveryState | null>(null)
-  const [descriptorResolutions, setDescriptorResolutions] = useState<Record<string, DescriptorResolutionState>>({})
+  const [uploadingCount, setUploadingCount] = useState(0)
+  const [deletingImportId, setDeletingImportId] = useState<string | null>(null)
+  const [resolvingRecoveryId, setResolvingRecoveryId] = useState<string | null>(null)
+  const [parseRecoveries, setParseRecoveries] = useState<Record<string, ParseRecoveryState>>({})
+  const [duplicateImportRecoveries, setDuplicateImportRecoveries] = useState<Record<string, DuplicateImportRecoveryState>>({})
+  const [descriptorResolutions, setDescriptorResolutions] = useState<Record<string, Record<string, DescriptorResolutionState>>>({})
 
-  const { hasActiveJobs } = useStatementCommitJobs()
+  const { hasActiveJobs: hasActiveCommitJobs } = useStatementCommitJobs()
+  const {
+    jobs: ingestionJobs,
+    hasActiveJobs: hasActiveIngestionJobs,
+    trackJob,
+  } = useStatementIngestionJobs()
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -202,7 +230,7 @@ export default function StatementsPage() {
     const [acctRes, importRes, householdProfilesResponse] = await Promise.all([
       supabase
         .from('accounts')
-        .select('id, product_name, nickname, account_type, institutions(name)')
+        .select('id, product_name, nickname, identifier_hint, account_type, institutions(name)')
         .eq('household_id', profile.household_id)
         .eq('is_active', true)
         .order('created_at', { ascending: false }),
@@ -253,7 +281,7 @@ export default function StatementsPage() {
         const uploader = uploadersById.get(importRow.uploaded_by)
         return {
           ...importRow,
-          hasStoredFile: Boolean(importRow.storage_bucket && importRow.storage_path),
+          hasStoredFile: Boolean(importRow.statement_upload_id || (importRow.storage_bucket && importRow.storage_path)),
           uploadedByDisplayName: uploader?.display_name ?? null,
           uploadedByEmail: uploader?.email ?? null,
         }
@@ -270,7 +298,7 @@ export default function StatementsPage() {
   }, [fetchData])
 
   useEffect(() => {
-    if (!hasActiveJobs) return
+    if (!hasActiveCommitJobs && !hasActiveIngestionJobs) return
 
     void fetchData()
     const interval = window.setInterval(() => {
@@ -278,10 +306,55 @@ export default function StatementsPage() {
     }, 3000)
 
     return () => window.clearInterval(interval)
-  }, [hasActiveJobs, fetchData])
+  }, [hasActiveCommitJobs, hasActiveIngestionJobs, fetchData])
+
+  useEffect(() => {
+    const pausedJobs = ingestionJobs.filter((job) => job.status === 'needs_action' && job.result?.status === 'needs_account_resolution')
+
+    for (const job of pausedJobs) {
+      const parseSessionId = job.result?.status === 'needs_account_resolution' ? job.result.parseSessionId : null
+      if (!parseSessionId || parseRecoveries[parseSessionId]) continue
+
+      void (async () => {
+        const response = await fetch(`/api/ai/statement/parse-session/${parseSessionId}`, { cache: 'no-store' })
+        const payload = await response.json().catch(() => null)
+        if (!response.ok || !payload) return
+
+        initializeRecoveryState({
+          parseSessionId,
+          statementUploadId: typeof payload.statementUploadId === 'string' ? payload.statementUploadId : null,
+          fileName: typeof payload.fileName === 'string' ? payload.fileName : null,
+          error: 'Account matching needs your review before import can continue.',
+          unmatchedAccountDescriptors: (payload.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
+          suggestedExistingAccounts: (payload.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
+        })
+      })()
+    }
+  }, [ingestionJobs, parseRecoveries])
+
+  useEffect(() => {
+    const resumeParseSessionId = searchParams.get('parseSessionId')
+    if (!resumeParseSessionId || parseRecoveries[resumeParseSessionId]) return
+
+    void (async () => {
+      const response = await fetch(`/api/ai/statement/parse-session/${resumeParseSessionId}`, { cache: 'no-store' })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || !payload) return
+
+      initializeRecoveryState({
+        parseSessionId: resumeParseSessionId,
+        statementUploadId: typeof payload.statementUploadId === 'string' ? payload.statementUploadId : null,
+        fileName: typeof payload.fileName === 'string' ? payload.fileName : null,
+        error: 'Account matching needs your review before import can continue.',
+        unmatchedAccountDescriptors: (payload.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
+        suggestedExistingAccounts: (payload.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
+      })
+    })()
+  }, [parseRecoveries, searchParams])
 
   function getAccountLabel(option: AccountOption) {
-    return `${option.institutions?.name ? `${option.institutions.name} — ` : ''}${option.nickname ?? option.product_name}`
+    const label = `${option.institutions?.name ? `${option.institutions.name} — ` : ''}${option.nickname ?? option.product_name}`
+    return option.identifier_hint ? `${label} (${option.identifier_hint})` : label
   }
 
   const uploaderOptions = useMemo(
@@ -315,7 +388,10 @@ export default function StatementsPage() {
   }
 
   function initializeRecoveryState(payload: ParseRecoveryState) {
-    setParseRecovery(payload)
+    setParseRecoveries((current) => ({
+      ...current,
+      [payload.parseSessionId]: payload,
+    }))
 
     const next: Record<string, DescriptorResolutionState> = {}
     for (const descriptor of payload.unmatchedAccountDescriptors ?? []) {
@@ -326,7 +402,7 @@ export default function StatementsPage() {
         createAccount: {
           institution_name: descriptor.institution_name || '',
           institution_code: descriptor.institution_code || '',
-          institution_brand_code: getKnownInstitutionMetadataByCode(descriptor.institution_code)?.code || '',
+          institution_brand_code: '',
           institution_brand_decision: null,
           institution_brand_preview: null,
           product_name: descriptor.card_name || descriptor.product_name || '',
@@ -340,85 +416,207 @@ export default function StatementsPage() {
       }
     }
 
-    setDescriptorResolutions(next)
+    setDescriptorResolutions((current) => ({
+      ...current,
+      [payload.parseSessionId]: next,
+    }))
   }
 
-  function updateDescriptorResolution(descriptorKey: string, updater: (current: DescriptorResolutionState) => DescriptorResolutionState) {
+  function updateDescriptorResolution(
+    parseSessionId: string,
+    descriptorKey: string,
+    updater: (current: DescriptorResolutionState) => DescriptorResolutionState,
+  ) {
     setDescriptorResolutions((current) => {
-      const existing = current[descriptorKey]
+      const sessionState = current[parseSessionId]
+      if (!sessionState) return current
+      const existing = sessionState[descriptorKey]
       if (!existing) return current
       return {
         ...current,
-        [descriptorKey]: updater(existing),
+        [parseSessionId]: {
+          ...sessionState,
+          [descriptorKey]: updater(existing),
+        },
       }
     })
   }
 
-  async function handleUpload(file: File) {
-    if (!file) return
+  function initializeDuplicateImportRecovery(payload: DuplicateImportRecoveryState) {
+    setDuplicateImportRecoveries((current) => ({
+      ...current,
+      [payload.statementUploadId]: payload,
+    }))
+  }
 
-    setUploading(true)
-    try {
-      const formData = new FormData()
-      formData.append('statement', file)
-      if (selectedAccountId) {
-        formData.append('account_id', selectedAccountId)
+  function removeImportFromDuplicateRecoveries(importId: string) {
+    setDuplicateImportRecoveries((current) => {
+      const next: Record<string, DuplicateImportRecoveryState> = {}
+
+      for (const [statementUploadId, recovery] of Object.entries(current)) {
+        const remainingImports = recovery.imports.filter((existingImport) => existingImport.importId !== importId)
+        if (remainingImports.length === 0) continue
+
+        next[statementUploadId] = {
+          ...recovery,
+          importCount: Math.max(remainingImports.length, recovery.importCount - 1),
+          imports: remainingImports,
+        }
       }
 
-      const res = await fetch('/api/ai/statement', {
-        method: 'POST',
-        body: formData,
-      })
+      return next
+    })
+  }
 
-      const data = await res.json().catch(() => ({}))
+  async function uploadSingleFile(file: File) {
+    const formData = new FormData()
+    formData.append('statement', file)
+    if (selectedAccountId) {
+      formData.append('account_id', selectedAccountId)
+    }
 
-      if (!res.ok) {
-        if (res.status === 409) {
-          toast.error(`This file has already been processed: ${data.existingFileName}`)
-          if (data.existingStatus === 'in_review') {
-            router.push(`/statements/review/${data.existingImportId}`)
+    const response = await fetch('/api/ai/statement', {
+      method: 'POST',
+      body: formData,
+    })
+
+    const payload = await response.json().catch(() => ({}))
+
+    if (!response.ok) {
+      if (response.status === 409) {
+        const existingStatus = typeof payload.existingStatus === 'string' ? payload.existingStatus : null
+        const parseSessionId = typeof payload.parseSessionId === 'string' ? payload.parseSessionId : null
+
+        if (existingStatus === 'needs_account_resolution' && parseSessionId) {
+          const recoveryResponse = await fetch(`/api/ai/statement/parse-session/${parseSessionId}`, { cache: 'no-store' })
+          const recoveryPayload = await recoveryResponse.json().catch(() => null)
+
+          if (!recoveryResponse.ok || !recoveryPayload) {
+            throw new Error(payload.error || `Failed to resume ${file.name}`)
           }
-          return
-        }
 
-        if (res.status === 422 && data?.code === 'transaction_account_match_required' && data?.parseSessionId) {
           initializeRecoveryState({
-            parseSessionId: data.parseSessionId,
-            error: data.error || 'Account matching needs your review before import can continue.',
-            unmatchedAccountDescriptors: (data.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
-            suggestedExistingAccounts: (data.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
+            parseSessionId,
+            statementUploadId: typeof recoveryPayload.statementUploadId === 'string' ? recoveryPayload.statementUploadId : null,
+            fileName: typeof recoveryPayload.fileName === 'string' ? recoveryPayload.fileName : null,
+            error: 'Account matching needs your review before import can continue.',
+            unmatchedAccountDescriptors: (recoveryPayload.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
+            suggestedExistingAccounts: (recoveryPayload.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
           })
-          toast.error('Account matching needs your review. Continue import below without re-uploading.')
+          toast.success(`${payload.existingFileName || file.name} is waiting for account matching. Continue below.`)
           return
         }
 
-        toast.error(data.error || 'Failed to parse statement')
+        if (existingStatus === 'queued' || existingStatus === 'parsing') {
+          toast.error(`${payload.existingFileName || file.name} is already being processed.`)
+          return
+        }
+
+        if (existingStatus === 'failed') {
+          toast.error(payload.error || `${payload.existingFileName || file.name} hit a previous failed upload.`)
+          return
+        }
+
+        const existingImports: Array<Record<string, unknown>> = Array.isArray(payload.existingImports)
+          ? payload.existingImports as Array<Record<string, unknown>>
+          : []
+        const count = typeof payload.existingImportCount === 'number' ? payload.existingImportCount : existingImports.length
+        if (existingImports.length === 1) {
+          const reviewUrl = typeof existingImports[0]?.reviewUrl === 'string' ? existingImports[0].reviewUrl : null
+          if (reviewUrl) {
+            toast.success(`${payload.existingFileName || file.name} was already imported. Opening the existing review.`)
+            router.push(reviewUrl)
+            return
+          }
+        }
+
+        const recoverableImports = existingImports
+          .map((existingImport) => {
+            const importId = typeof existingImport?.importId === 'string' ? existingImport.importId : null
+            const importLabel = typeof existingImport?.importLabel === 'string' ? existingImport.importLabel : null
+            const accountLabel = typeof existingImport?.accountLabel === 'string' ? existingImport.accountLabel : null
+            const reviewUrl = typeof existingImport?.reviewUrl === 'string' ? existingImport.reviewUrl : null
+            const status = typeof existingImport?.status === 'string' ? existingImport.status : 'in_review'
+
+            if (!importId || !importLabel || !reviewUrl) {
+              return null
+            }
+
+            return {
+              importId,
+              importLabel,
+              accountLabel,
+              reviewUrl,
+              status,
+            } satisfies ExistingImportSummary
+          })
+          .filter((existingImport): existingImport is ExistingImportSummary => existingImport !== null)
+
+        if (count > 1 && recoverableImports.length > 0) {
+          const statementUploadId = typeof payload.statementUploadId === 'string'
+            ? payload.statementUploadId
+            : recoverableImports.map((existingImport) => existingImport.importId).join(':')
+
+          initializeDuplicateImportRecovery({
+            statementUploadId,
+            fileName: payload.existingFileName || file.name,
+            importCount: count,
+            imports: recoverableImports,
+          })
+          toast.success(`${payload.existingFileName || file.name} was already imported into ${count} account-specific reviews. Open one below.`)
+          void fetchData()
+          return
+        }
+
+        toast.error(
+          count > 1
+            ? `${payload.existingFileName || file.name} was already imported into ${count} account-specific reviews.`
+            : `${payload.existingFileName || file.name} was already imported.`,
+        )
         return
       }
 
-      setParseRecovery(null)
-      setDescriptorResolutions({})
+      throw new Error(payload.error || `Failed to queue ${file.name}`)
+    }
 
-      const importMessage = data.importLabel
-        ? `Parsed ${data.transactionsCount} transactions and linked to ${data.importLabel}. Imported successfully.`
-        : `Parsed ${data.transactionsCount} transactions. Imported successfully.`
-
-      toast.success(importMessage)
-      router.push(data.reviewUrl)
-    } catch {
-      toast.error('Failed to upload statement')
-    } finally {
-      setUploading(false)
+    if (payload?.job) {
+      trackJob(payload.job)
     }
   }
 
-  async function handleContinueRecoveryImport() {
+  async function handleUpload(files: File[]) {
+    if (files.length === 0) return
+
+    setUploadingCount((current) => current + files.length)
+
+    const queue = [...files]
+    const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const file = queue.shift()
+        if (!file) return
+
+        try {
+          await uploadSingleFile(file)
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : `Failed to queue ${file.name}`)
+        } finally {
+          setUploadingCount((current) => Math.max(0, current - 1))
+        }
+      }
+    })
+
+    await Promise.all(workers)
+    await fetchData()
+  }
+
+  async function handleContinueRecoveryImport(parseSessionId: string) {
+    const parseRecovery = parseRecoveries[parseSessionId]
     if (!parseRecovery) return
 
     const resolutions = [] as Array<Record<string, unknown>>
 
     for (const descriptor of parseRecovery.unmatchedAccountDescriptors) {
-      const state = descriptorResolutions[descriptor.descriptorKey]
+      const state = descriptorResolutions[parseSessionId]?.[descriptor.descriptorKey]
       if (!state) {
         toast.error('Missing resolution state for one or more unmatched descriptors.')
         return
@@ -470,7 +668,7 @@ export default function StatementsPage() {
       })
     }
 
-    setResolvingRecovery(true)
+    setResolvingRecoveryId(parseSessionId)
     try {
       const res = await fetch('/api/ai/statement/resolve-account', {
         method: 'POST',
@@ -484,43 +682,43 @@ export default function StatementsPage() {
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        if (res.status === 422 && data?.code === 'transaction_account_match_required' && data?.parseSessionId) {
-          initializeRecoveryState({
-            parseSessionId: data.parseSessionId,
-            error: data.error || 'Some transactions still need account resolution.',
-            unmatchedAccountDescriptors: (data.unmatchedAccountDescriptors ?? []) as UnmatchedAccountDescriptor[],
-            suggestedExistingAccounts: (data.suggestedExistingAccounts ?? []) as SuggestedExistingAccount[],
-          })
-          toast.error('Some transactions still need account resolution. Please review and continue.')
-          return
-        }
-
         toast.error(data.error || 'Failed to continue import')
         return
       }
 
-      setParseRecovery(null)
-      setDescriptorResolutions({})
-      toast.success(`Import continued. Parsed ${data.transactionsCount} transactions.`)
-      router.push(data.reviewUrl)
+      if (data?.job) {
+        trackJob(data.job)
+      }
+
+      setParseRecoveries((current) => {
+        const next = { ...current }
+        delete next[parseSessionId]
+        return next
+      })
+      setDescriptorResolutions((current) => {
+        const next = { ...current }
+        delete next[parseSessionId]
+        return next
+      })
+      toast.success('Import resumed in the background.')
     } catch {
       toast.error('Failed to continue import')
     } finally {
-      setResolvingRecovery(false)
+      setResolvingRecoveryId(null)
     }
   }
 
   function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (file) void handleUpload(file)
+    const files = Array.from(event.target.files ?? [])
+    if (files.length > 0) void handleUpload(files)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   function handleDrop(event: React.DragEvent) {
     event.preventDefault()
     setDragOver(false)
-    const file = event.dataTransfer.files[0]
-    if (file) void handleUpload(file)
+    const files = Array.from(event.dataTransfer.files ?? [])
+    if (files.length > 0) void handleUpload(files)
   }
 
   async function handleReopenImport(importId: string) {
@@ -537,6 +735,32 @@ export default function StatementsPage() {
       router.push(`/statements/review/${importId}`)
     } catch {
       toast.error('Failed to reopen import')
+    }
+  }
+
+  async function handleDeleteImport(importId: string, fileName: string) {
+    const confirmed = window.confirm(
+      `Delete ${fileName} and all data imported from it?\n\nThis removes its review rows, committed statement transactions, and any stale upload record that no longer has live imports.`,
+    )
+    if (!confirmed) return
+
+    setDeletingImportId(importId)
+    try {
+      const res = await fetch(`/api/ai/statement/${importId}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to delete import')
+        return
+      }
+
+      removeImportFromDuplicateRecoveries(importId)
+      toast.success(`${data.fileName || fileName} deleted`)
+      await fetchData()
+    } catch {
+      toast.error('Failed to delete import')
+    } finally {
+      setDeletingImportId(null)
     }
   }
 
@@ -562,7 +786,8 @@ export default function StatementsPage() {
         badges={(
           <>
             <Badge variant="outline">{imports.length} recent imports</Badge>
-            {hasActiveJobs ? <Badge variant="outline">Commit jobs active</Badge> : null}
+            {hasActiveIngestionJobs ? <Badge variant="outline">Import jobs active</Badge> : null}
+            {hasActiveCommitJobs ? <Badge variant="outline">Commit jobs active</Badge> : null}
           </>
         )}
       />
@@ -574,7 +799,7 @@ export default function StatementsPage() {
             Import Statement
           </CardTitle>
           <CardDescription>
-            Account selection is optional. If you leave it blank, the parser will try to match the statement to one of your existing accounts automatically.
+            Account selection is optional. It is treated as a hint during background processing, but multi-account statements can still split into separate account-specific imports.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -595,7 +820,7 @@ export default function StatementsPage() {
               </Select>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span>
-                  Leave blank to auto-match after parsing. Choose an account only if you want to override the detected match.
+                  Leave blank to auto-match after parsing. If you choose an account, it will be used as a hint for single-account statements only.
                 </span>
                 {selectedAccountId && (
                   <Button variant="ghost" size="sm" className="h-auto px-0 py-0 text-xs" onClick={() => setSelectedAccountId('')}>
@@ -610,7 +835,7 @@ export default function StatementsPage() {
             className={cn(
               'flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-10 transition-colors',
               dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-muted-foreground/50',
-              uploading && 'pointer-events-none opacity-60',
+              uploadingCount > 0 && 'pointer-events-none opacity-60',
             )}
             onDragOver={(event) => {
               event.preventDefault()
@@ -624,23 +849,24 @@ export default function StatementsPage() {
               ref={fileInputRef}
               type="file"
               accept=".pdf,.jpg,.jpeg,.png,.zip,.txt"
+              multiple
               className="hidden"
               onChange={handleFileSelect}
             />
-            {uploading ? (
+            {uploadingCount > 0 ? (
               <>
                 <Loader2 className="mb-3 size-10 animate-spin text-muted-foreground" />
-                <p className="text-sm font-medium">Parsing statement…</p>
-                <p className="text-xs text-muted-foreground">This may take 10–30 seconds</p>
+                <p className="text-sm font-medium">Queueing statement imports…</p>
+                <p className="text-xs text-muted-foreground">{uploadingCount} file(s) still being submitted</p>
               </>
             ) : (
               <>
                 <FileUp className="mb-3 size-10 text-muted-foreground" />
                 <p className="text-sm font-medium">
-                  Drop your statement here or click to browse
+                  Drop one or more statements here or click to browse
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Supports PDF, JPEG, PNG, ZIP, TXT
+                  Supports PDF, JPEG, PNG, ZIP, TXT. Files process independently in the background.
                 </p>
               </>
             )}
@@ -648,8 +874,69 @@ export default function StatementsPage() {
         </CardContent>
       </Card>
 
-      {parseRecovery && (
-        <Card className="border-amber-300/60 bg-amber-50/50 dark:border-amber-700/50 dark:bg-amber-950/20">
+      {Object.values(duplicateImportRecoveries).map((duplicateRecovery) => (
+        <Card key={duplicateRecovery.statementUploadId} className="border-sky-300/60 bg-sky-50/50 dark:border-sky-700/50 dark:bg-sky-950/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ExternalLink className="size-4 text-sky-600" />
+              Statement Already Imported
+            </CardTitle>
+            <CardDescription className="text-sky-900 dark:text-sky-100">
+              {duplicateRecovery.fileName} already created {duplicateRecovery.importCount} account-specific review{duplicateRecovery.importCount === 1 ? '' : 's'}.
+              Open the matching review below instead of re-uploading it.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              {duplicateRecovery.imports.map((existingImport) => (
+                <div key={existingImport.importId} className="rounded-md border bg-background p-4">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{existingImport.accountLabel || existingImport.importLabel}</p>
+                      {existingImport.accountLabel && existingImport.importLabel !== existingImport.accountLabel ? (
+                        <p className="truncate text-xs text-muted-foreground">{existingImport.importLabel}</p>
+                      ) : null}
+                    </div>
+                    {getStatementStatusBadge(existingImport.status)}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => router.push(existingImport.reviewUrl)}
+                  >
+                    <ExternalLink className="size-3" />
+                    Open {existingImport.accountLabel || existingImport.importLabel}
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            {duplicateRecovery.imports.length < duplicateRecovery.importCount ? (
+              <p className="text-xs text-sky-900/80 dark:text-sky-100/80">
+                {duplicateRecovery.imports.length} of {duplicateRecovery.importCount} review links are currently available here.
+              </p>
+            ) : null}
+
+            <div className="flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDuplicateImportRecoveries((current) => {
+                  const next = { ...current }
+                  delete next[duplicateRecovery.statementUploadId]
+                  return next
+                })}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+
+      {Object.values(parseRecoveries).map((parseRecovery) => (
+        <Card key={parseRecovery.parseSessionId} className="border-amber-300/60 bg-amber-50/50 dark:border-amber-700/50 dark:bg-amber-950/20">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <AlertTriangle className="size-4 text-amber-600" />
@@ -661,12 +948,12 @@ export default function StatementsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-amber-900/80 dark:text-amber-100/80">
-              Continue import from this parsed session without re-uploading the statement.
+              Continue import for {parseRecovery.fileName || 'this statement'} without re-uploading it.
             </p>
 
             <div className="space-y-4">
               {parseRecovery.unmatchedAccountDescriptors.map((descriptor) => {
-                const resolution = descriptorResolutions[descriptor.descriptorKey]
+                const resolution = descriptorResolutions[parseRecovery.parseSessionId]?.[descriptor.descriptorKey]
                 if (!resolution) return null
 
                 return (
@@ -688,7 +975,7 @@ export default function StatementsPage() {
                       <Select
                         value={resolution.mode}
                         onValueChange={(value) => {
-                          updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                          updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                             ...current,
                             mode: value as ResolutionMode,
                           }))
@@ -710,7 +997,7 @@ export default function StatementsPage() {
                         <Select
                           value={resolution.existingAccountId}
                           onValueChange={(value) => {
-                            updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               existingAccountId: value,
                             }))
@@ -734,7 +1021,7 @@ export default function StatementsPage() {
                           <Label>Institution Name</Label>
                           <Input
                             value={resolution.createAccount.institution_name}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -751,14 +1038,14 @@ export default function StatementsPage() {
                             institutionName={resolution.createAccount.institution_name}
                             institutionCode={resolution.createAccount.institution_code}
                             selection={resolution.createAccount.institution_brand_decision}
-                            onSelectionChange={(selection) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onSelectionChange={(selection) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
                                 institution_brand_decision: selection,
                               },
                             }))}
-                            onPreviewChange={(preview) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onPreviewChange={(preview) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -772,7 +1059,7 @@ export default function StatementsPage() {
                           <Label>Product Name</Label>
                           <Input
                             value={resolution.createAccount.product_name}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -785,7 +1072,7 @@ export default function StatementsPage() {
                           <Label>Account Type</Label>
                           <Select
                             value={resolution.createAccount.account_type}
-                            onValueChange={(value) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onValueChange={(value) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -811,7 +1098,7 @@ export default function StatementsPage() {
                           <Label>Currency</Label>
                           <Input
                             value={resolution.createAccount.currency}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -824,7 +1111,7 @@ export default function StatementsPage() {
                           <Label>Identifier Hint</Label>
                           <Input
                             value={resolution.createAccount.identifier_hint}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -837,7 +1124,7 @@ export default function StatementsPage() {
                           <Label>Nickname (Optional)</Label>
                           <Input
                             value={resolution.createAccount.nickname}
-                            onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                            onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                               ...current,
                               createAccount: {
                                 ...current.createAccount,
@@ -853,7 +1140,7 @@ export default function StatementsPage() {
                               <Label>Card Name</Label>
                               <Input
                                 value={resolution.createAccount.card_name}
-                                onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                                onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                                   ...current,
                                   createAccount: {
                                     ...current.createAccount,
@@ -866,7 +1153,7 @@ export default function StatementsPage() {
                               <Label>Card Last 4</Label>
                               <Input
                                 value={resolution.createAccount.card_last4}
-                                onChange={(event) => updateDescriptorResolution(descriptor.descriptorKey, (current) => ({
+                                onChange={(event) => updateDescriptorResolution(parseRecovery.parseSessionId, descriptor.descriptorKey, (current) => ({
                                   ...current,
                                   createAccount: {
                                     ...current.createAccount,
@@ -885,17 +1172,27 @@ export default function StatementsPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void handleContinueRecoveryImport()} disabled={resolvingRecovery} className="gap-2">
-                {resolvingRecovery ? <Loader2 className="size-4 animate-spin" /> : null}
+              <Button onClick={() => void handleContinueRecoveryImport(parseRecovery.parseSessionId)} disabled={resolvingRecoveryId === parseRecovery.parseSessionId} className="gap-2">
+                {resolvingRecoveryId === parseRecovery.parseSessionId ? <Loader2 className="size-4 animate-spin" /> : null}
                 Continue Import
               </Button>
-              <Button variant="outline" onClick={() => setParseRecovery(null)} disabled={resolvingRecovery}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setParseRecoveries((current) => {
+                    const next = { ...current }
+                    delete next[parseRecovery.parseSessionId]
+                    return next
+                  })
+                }}
+                disabled={resolvingRecoveryId === parseRecovery.parseSessionId}
+              >
                 Dismiss
               </Button>
             </div>
           </CardContent>
         </Card>
-      )}
+      ))}
 
       <Separator />
 
@@ -1039,6 +1336,16 @@ export default function StatementsPage() {
                                 Reopen
                               </Button>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1 text-xs text-destructive hover:text-destructive"
+                              onClick={() => void handleDeleteImport(importRow.id, importRow.file_name)}
+                              disabled={deletingImportId === importRow.id}
+                            >
+                              {deletingImportId === importRow.id ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                              Delete
+                            </Button>
                           </div>
                         </td>
                       </tr>

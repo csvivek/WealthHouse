@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { type CSSProperties, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Wallet } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -36,26 +36,6 @@ import {
 import { resolveDatePeriodRange, type DatePeriod } from '@/lib/date-periods'
 import { normalizeTxnDirection } from '@/lib/transactions/txn-direction'
 
-const EXECUTIVE_THEME_STYLE: CSSProperties = {
-  '--dashboard-bg': '#0B0F1A',
-  '--dashboard-surface': '#111827',
-  '--dashboard-surface-2': '#172033',
-  '--dashboard-border': 'rgba(59, 74, 99, 0.46)',
-  '--dashboard-border-strong': 'rgba(78, 95, 122, 0.78)',
-  '--dashboard-accent': '#C9A84C',
-  '--dashboard-accent-dim': 'rgba(201, 168, 76, 0.16)',
-  '--dashboard-accent-glow': 'rgba(201, 168, 76, 0.44)',
-  '--dashboard-success': '#2DD4BF',
-  '--dashboard-danger': '#F87171',
-  '--dashboard-info': '#60A5FA',
-  '--dashboard-text': '#E2EAF4',
-  '--dashboard-text-dim': '#8896AA',
-  '--dashboard-chart-1': '#C9A84C',
-  '--dashboard-chart-2': '#2DD4BF',
-  '--dashboard-chart-3': '#60A5FA',
-  '--dashboard-chart-4': '#F59E0B',
-  '--dashboard-chart-5': '#A78BFA',
-} as CSSProperties
 
 interface Account {
   id: string
@@ -191,7 +171,7 @@ function EmptyDashboardCard({
   action: { label: string; href: string }
 }) {
   return (
-    <Card className="border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,rgba(17,24,39,0.94),rgba(12,18,31,0.98))] shadow-none">
+    <Card className="border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,var(--card-gradient-start),var(--card-gradient-end))] shadow-none">
       <CardContent className="flex flex-col items-center justify-center gap-4 px-6 py-16 text-center">
         <div className="rounded-full border border-[color:var(--dashboard-border)] bg-[color:var(--dashboard-surface-2)] p-4">
           <Wallet className="size-8 text-[color:var(--dashboard-text-dim)]" />
@@ -210,13 +190,13 @@ function EmptyDashboardCard({
 
 function MetricSkeleton() {
   return (
-    <Card className="border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,rgba(17,24,39,0.94),rgba(12,18,31,0.98))] shadow-none">
+    <Card className="border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,var(--card-gradient-start),var(--card-gradient-end))] shadow-none">
       <CardHeader className="space-y-3">
-        <Skeleton className="h-4 w-28 bg-white/8" />
-        <Skeleton className="h-8 w-40 bg-white/8" />
+        <Skeleton className="h-4 w-28 bg-foreground/8" />
+        <Skeleton className="h-8 w-40 bg-foreground/8" />
       </CardHeader>
       <CardContent>
-        <Skeleton className="h-4 w-44 bg-white/8" />
+        <Skeleton className="h-4 w-44 bg-foreground/8" />
       </CardContent>
     </Card>
   )
@@ -224,13 +204,13 @@ function MetricSkeleton() {
 
 function SurfaceSkeleton({ className }: { className?: string }) {
   return (
-    <Card className={cn('border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,rgba(17,24,39,0.94),rgba(12,18,31,0.98))] shadow-none', className)}>
+    <Card className={cn('border-[color:var(--dashboard-border)] bg-[linear-gradient(180deg,var(--card-gradient-start),var(--card-gradient-end))] shadow-none', className)}>
       <CardHeader className="space-y-3">
-        <Skeleton className="h-4 w-28 bg-white/8" />
-        <Skeleton className="h-7 w-48 bg-white/8" />
+        <Skeleton className="h-4 w-28 bg-foreground/8" />
+        <Skeleton className="h-7 w-48 bg-foreground/8" />
       </CardHeader>
       <CardContent>
-        <Skeleton className="h-40 w-full bg-white/8" />
+        <Skeleton className="h-40 w-full bg-foreground/8" />
       </CardContent>
     </Card>
   )
@@ -662,7 +642,6 @@ export default function DashboardPage() {
   return (
     <div
       className="space-y-6"
-      style={EXECUTIVE_THEME_STYLE}
     >
       <div
         className="space-y-6 text-[color:var(--dashboard-text)]"

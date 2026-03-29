@@ -92,7 +92,7 @@ export function InstitutionBrandPicker({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [emitPreviewChange, queryKey, trimmedCode, trimmedName])
+  }, [queryKey])
 
   if (!trimmedName && !trimmedCode) {
     return null

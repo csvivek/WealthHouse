@@ -27,10 +27,11 @@ function createJsonResponse(payload: unknown, ok = true, status = 200): Response
 }
 
 function createSupabaseClientMock(params?: {
+  accounts?: Array<Record<string, unknown>>
   transactions?: Array<Record<string, unknown>>
   transactionLinks?: Array<Record<string, unknown>>
 }) {
-  const accounts = [
+  const accounts = params?.accounts ?? [
     {
       id: 'acct-1',
       product_name: 'Main Card',
@@ -340,7 +341,210 @@ describe('TransactionsPage', () => {
 
     await waitFor(() => {
       expect(within(sheet).getByText('Transfer counterpart')).toBeInTheDocument()
-      expect(within(sheet).getByRole('button', { name: /Transfer In/i })).toBeInTheDocument()
+      expect(within(sheet).getByRole('combobox', { name: 'Counterpart account' })).toBeInTheDocument()
+      expect(within(sheet).getByText('Select a counterpart account to review matching transactions.')).toBeInTheDocument()
+      expect(within(sheet).getByPlaceholderText('Search transfer counterpart')).toBeDisabled()
+    })
+  })
+
+  it('shows all available counterpart accounts, then finds opposite-direction matches in the selected account', async () => {
+    mockedCreateClient.mockReturnValue(createSupabaseClientMock({
+      accounts: [
+        {
+          id: 'acct-1',
+          product_name: 'Main Card',
+          nickname: 'Main Card',
+          account_type: 'credit_card',
+          institutions: { name: 'DBS Bank Ltd', website_url: 'https://www.dbs.com/', icon_url: 'https://www.dbs.com/favicon.ico' },
+        },
+        {
+          id: 'acct-2',
+          product_name: 'Savings',
+          nickname: 'Savings',
+          account_type: 'savings',
+          institutions: { name: 'OCBC Bank', website_url: 'https://www.ocbc.com/', icon_url: null },
+        },
+        {
+          id: 'acct-3',
+          product_name: 'Reserve',
+          nickname: 'Reserve',
+          account_type: 'savings',
+          institutions: { name: 'UOB', website_url: 'https://www.uob.com.sg/', icon_url: null },
+        },
+      ],
+      transactions: [
+        {
+          id: 'txn-1',
+          txn_date: '2026-03-10',
+          amount: 42.5,
+          txn_type: 'purchase',
+          merchant_normalized: 'Cafe Example',
+          merchant_raw: 'Cafe Example',
+          description: 'Lunch',
+          category_id: null,
+          account_id: 'acct-1',
+          confidence: 1,
+          category: null,
+          statement_transaction_tags: [],
+        },
+        {
+          id: 'txn-2',
+          txn_date: '2026-03-10',
+          amount: 42.5,
+          txn_type: 'payment',
+          merchant_normalized: 'Exact Match',
+          merchant_raw: 'Exact Match',
+          description: 'Matching transfer',
+          category_id: null,
+          account_id: 'acct-2',
+          confidence: 1,
+          category: null,
+          statement_transaction_tags: [],
+        },
+        {
+          id: 'txn-3',
+          txn_date: '2026-03-09',
+          amount: 40,
+          txn_type: 'payment',
+          merchant_normalized: 'Near Match',
+          merchant_raw: 'Near Match',
+          description: 'Different amount',
+          category_id: null,
+          account_id: 'acct-2',
+          confidence: 1,
+          category: null,
+          statement_transaction_tags: [],
+        },
+        {
+          id: 'txn-4',
+          txn_date: '2026-03-10',
+          amount: 42.5,
+          txn_type: 'purchase',
+          merchant_normalized: 'Same Direction Match',
+          merchant_raw: 'Same Direction Match',
+          description: 'Wrong direction',
+          category_id: null,
+          account_id: 'acct-2',
+          confidence: 1,
+          category: null,
+          statement_transaction_tags: [],
+        },
+        {
+          id: 'txn-5',
+          txn_date: '2026-03-07',
+          amount: 42.5,
+          txn_type: 'payment',
+          merchant_normalized: 'Reserve Old Match',
+          merchant_raw: 'Reserve Old Match',
+          description: 'Older than two days',
+          category_id: null,
+          account_id: 'acct-3',
+          confidence: 1,
+          category: null,
+          statement_transaction_tags: [],
+        },
+      ],
+    }) as never)
+    vi.stubGlobal('fetch', vi.fn(async () => createJsonResponse({ tags: [] })))
+
+    render(<TransactionsPage />)
+
+    const [categoryButton] = await screen.findAllByRole('button', { name: 'Edit category' })
+    await userEvent.click(categoryButton)
+
+    const sheet = await screen.findByRole('dialog')
+    const categoryTrigger = within(sheet).getByRole('combobox', { name: 'Transaction category' })
+    await userEvent.click(categoryTrigger)
+    await userEvent.click(await screen.findByRole('option', { name: 'Internal Transfer' }))
+
+    const counterpartAccountTrigger = within(sheet).getByRole('combobox', { name: 'Counterpart account' })
+    expect(within(sheet).getByText('Select a counterpart account to review matching transactions.')).toBeInTheDocument()
+
+    await userEvent.click(counterpartAccountTrigger)
+    expect(await screen.findByRole('option', { name: /Savings/i })).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: /Reserve/i })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('option', { name: /Savings/i }))
+
+    await waitFor(() => {
+      expect(within(sheet).getByText('Suggested matches')).toBeInTheDocument()
+      expect(within(sheet).getByText('Other eligible transactions')).toBeInTheDocument()
+      expect(within(sheet).getByRole('button', { name: /Exact Match/i })).toBeInTheDocument()
+      expect(within(sheet).getByRole('button', { name: /Near Match/i })).toBeInTheDocument()
+      expect(within(sheet).queryByRole('button', { name: /Same Direction Match/i })).not.toBeInTheDocument()
+      expect(within(sheet).queryByRole('button', { name: /Reserve Old Match/i })).not.toBeInTheDocument()
+    })
+
+    const buttonTexts = within(sheet).getAllByRole('button').map((button) => button.textContent ?? '')
+    expect(buttonTexts.findIndex((text) => text.includes('Exact Match'))).toBeLessThan(buttonTexts.findIndex((text) => text.includes('Near Match')))
+
+    await userEvent.click(counterpartAccountTrigger)
+    await userEvent.click(screen.getByRole('option', { name: /Reserve/i }))
+
+    await waitFor(() => {
+      expect(within(sheet).getByText('No opposite-direction transactions were found in the selected account within the previous 2 days.')).toBeInTheDocument()
+      expect(within(sheet).queryByRole('button', { name: /Exact Match/i })).not.toBeInTheDocument()
+      expect(within(sheet).queryByRole('button', { name: /Near Match/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('defaults the account selector to the current linked counterpart account and keeps out-of-window links in the summary', async () => {
+    mockedCreateClient.mockReturnValue(createSupabaseClientMock({
+      transactions: [
+        {
+          id: 'txn-1',
+          txn_date: '2026-03-10',
+          amount: 42.5,
+          txn_type: 'purchase',
+          merchant_normalized: 'Cafe Example',
+          merchant_raw: 'Cafe Example',
+          description: 'Lunch',
+          category_id: 99,
+          account_id: 'acct-1',
+          confidence: 1,
+          category: null,
+          statement_transaction_tags: [],
+        },
+        {
+          id: 'txn-old',
+          txn_date: '2026-03-05',
+          amount: 42.5,
+          txn_type: 'payment',
+          merchant_normalized: 'Old Linked Counterpart',
+          merchant_raw: 'Old Linked Counterpart',
+          description: 'Older linked transaction',
+          category_id: 99,
+          account_id: 'acct-2',
+          confidence: 1,
+          category: null,
+          statement_transaction_tags: [],
+        },
+      ],
+      transactionLinks: [
+        {
+          id: 'link-1',
+          from_transaction_id: 'txn-1',
+          to_transaction_id: 'txn-old',
+          link_type: 'internal_transfer',
+          status: 'confirmed',
+        },
+      ],
+    }) as never)
+    vi.stubGlobal('fetch', vi.fn(async () => createJsonResponse({ tags: [] })))
+
+    render(<TransactionsPage />)
+
+    const [categoryButton] = await screen.findAllByRole('button', { name: 'Edit category' })
+    await userEvent.click(categoryButton)
+
+    const sheet = await screen.findByRole('dialog')
+    const counterpartAccountTrigger = within(sheet).getByRole('combobox', { name: 'Counterpart account' })
+
+    await waitFor(() => {
+      expect(within(sheet).getByText('Transfer counterpart')).toBeInTheDocument()
+      expect(within(sheet).getByText(/Old Linked Counterpart/)).toBeInTheDocument()
+      expect(counterpartAccountTrigger).toHaveTextContent('Savings')
+      expect(within(sheet).queryByRole('button', { name: /Old Linked Counterpart/i })).not.toBeInTheDocument()
+      expect(within(sheet).getByText('No opposite-direction transactions were found in the selected account within the previous 2 days.')).toBeInTheDocument()
     })
   })
 
@@ -425,6 +629,8 @@ describe('TransactionsPage', () => {
     await waitFor(() => {
       expect(within(sheet).getByText('Transfer counterpart')).toBeInTheDocument()
     })
+    await userEvent.click(within(sheet).getByRole('combobox', { name: 'Counterpart account' }))
+    await userEvent.click(await screen.findByRole('option', { name: /Savings/i }))
     await userEvent.click(within(sheet).getByRole('button', { name: /Transfer In/i }))
 
     await userEvent.click(within(sheet).getByRole('button', { name: 'Choose tags' }))

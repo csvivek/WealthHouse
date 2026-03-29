@@ -69,6 +69,28 @@ export interface RoutedTransaction {
   tagSuggestions: TagSuggestion[]
 }
 
+export interface StagedStatementImport {
+  importId: string
+  accountId: string
+  accountLabel: string
+  status: 'in_review'
+  institutionCode: string | null
+  transactionsCount: number
+  duplicateCount: number
+  importLabel: string
+  linkedAccounts: Array<{
+    accountId: string
+    label: string
+    matchedBy: 'manual' | 'auto'
+    cardId: string | null
+    cardName: string | null
+    cardLast4: string | null
+  }>
+  statementDate: string | null
+  period: { start: string | null; end: string | null }
+  reviewUrl: string
+}
+
 export interface UnmatchedAccountDescriptor {
   descriptorKey: string
   label: string
@@ -272,6 +294,31 @@ function scoreAccountCandidate(
   }
 }
 
+function isDepositLikeAccountType(accountType?: string | null) {
+  const normalized = normalizeAccountType(accountType)
+  return normalized === 'savings' || normalized === 'current' || normalized === 'fixed_deposit'
+}
+
+function hasAmbiguousDepositLikeMatch(params: {
+  scored: Array<{ account: AccountCandidate; breakdown: AccountCandidateScore }>
+  parsedAccountType: string | null
+}) {
+  if (!isDepositLikeAccountType(params.parsedAccountType)) {
+    return false
+  }
+
+  const similarlyTypedCandidates = params.scored.filter(({ account, breakdown }) => {
+    if (!breakdown.hasInstitutionMatch) return false
+    return normalizeAccountType(account.account_type, [
+      account.product_name,
+      account.nickname,
+      ...getAccountCards(account).map((card) => card.card_name),
+    ]) === params.parsedAccountType
+  })
+
+  return similarlyTypedCandidates.length > 1
+}
+
 export function resolveAccountCandidate(params: {
   candidates: AccountCandidate[]
   institutionName: string
@@ -301,6 +348,14 @@ export function resolveAccountCandidate(params: {
     return { error: 'No confident account match found.' as const, scored }
   }
 
+  const parsedAccountType = normalizeAccountType(params.descriptor?.account_type, [
+    params.descriptor?.product_name,
+    params.descriptor?.card_name,
+  ])
+  if (!top.breakdown.hasStrongSignal && hasAmbiguousDepositLikeMatch({ scored, parsedAccountType })) {
+    return { error: 'This transaction could match more than one account.' as const, scored }
+  }
+
   if (second && top.breakdown.score - second.breakdown.score < 15) {
     return { error: 'This transaction could match more than one account.' as const, scored }
   }
@@ -320,15 +375,15 @@ export function resolveAccountCandidate(params: {
   }
 }
 
-function findSuggestedExistingAccount(params: {
+export function findSuggestedExistingAccount(params: {
   candidates: AccountCandidate[]
   descriptor: ParsedStatementAccount | null
   institutionName: string
 }) {
   const scored = params.candidates
-    .map((candidate) => ({
-      candidate,
-      breakdown: scoreAccountCandidate(candidate, params.institutionName, params.descriptor),
+    .map((account) => ({
+      account,
+      breakdown: scoreAccountCandidate(account, params.institutionName, params.descriptor),
     }))
     .sort((left, right) => right.breakdown.score - left.breakdown.score)
 
@@ -336,9 +391,22 @@ function findSuggestedExistingAccount(params: {
   if (!top || top.breakdown.score < 40) return null
   if (top.breakdown.requiresStrongSignal && !top.breakdown.hasStrongSignal) return null
 
+  const parsedAccountType = normalizeAccountType(params.descriptor?.account_type, [
+    params.descriptor?.product_name,
+    params.descriptor?.card_name,
+  ])
+  if (!top.breakdown.hasStrongSignal && hasAmbiguousDepositLikeMatch({ scored, parsedAccountType })) {
+    return null
+  }
+
+  const second = scored[1]
+  if (second && top.breakdown.score - second.breakdown.score < 15) {
+    return null
+  }
+
   return {
-    accountId: top.candidate.id,
-    label: getAccountLabel(top.candidate),
+    accountId: top.account.id,
+    label: getAccountLabel(top.account),
     score: top.breakdown.score,
   }
 }
@@ -594,6 +662,41 @@ export function buildImportLabel(parsed: ParsedStatementResult, routedTransactio
   return product ? `${institution} — ${product}` : `${institution} Statement`
 }
 
+export function groupRoutedTransactionsByAccount(routedTransactions: RoutedTransaction[]) {
+  const grouped = new Map<string, { account: ResolvedAccount; transactions: RoutedTransaction[] }>()
+
+  for (const transaction of routedTransactions) {
+    const existing = grouped.get(transaction.account.id)
+    if (existing) {
+      existing.transactions.push(transaction)
+      continue
+    }
+
+    grouped.set(transaction.account.id, {
+      account: transaction.account,
+      transactions: [transaction],
+    })
+  }
+
+  return Array.from(grouped.values())
+}
+
+export function buildAccountScopedParsedStatement(
+  parsed: ParsedStatementResult,
+  routedTransactions: RoutedTransaction[],
+) : ParsedStatementResult {
+  const firstDescriptor = routedTransactions[0]?.accountDescriptor ?? null
+
+  return {
+    ...parsed,
+    account: firstDescriptor || parsed.account || null,
+    transactions: routedTransactions.map((transaction) => ({
+      ...transaction.rawTransaction,
+      account: transaction.accountDescriptor,
+    })),
+  }
+}
+
 export async function stageRoutedTransactions(params: {
   supabase: any
   householdId: string
@@ -606,13 +709,17 @@ export async function stageRoutedTransactions(params: {
   fileSizeBytes: number
   primaryAccount: ResolvedAccount
   fileImportId?: string
+  statementUploadId?: string | null
   storageBucket?: string | null
   storagePath?: string | null
+  summaryJsonOverride?: Record<string, unknown> | null
+  cardInfoJsonOverride?: Record<string, unknown> | null
 }) {
   const { data: fileImport, error: fileImportError } = await params.supabase
     .from('file_imports')
     .insert({
       id: params.fileImportId,
+      statement_upload_id: params.statementUploadId ?? null,
       household_id: params.householdId,
       account_id: params.primaryAccount.id,
       uploaded_by: params.userId,
@@ -765,11 +872,15 @@ export async function stageRoutedTransactions(params: {
         import_label: importLabel,
         matched_accounts: uniqueMatchedAccounts,
       },
-      summary_json: (params.parsed.summary_json || { summary: params.parsed.summary || null }) as Record<string, unknown>,
-      card_info_json: {
+      summary_json: (
+        params.summaryJsonOverride
+        ?? params.parsed.summary_json
+        ?? { summary: params.parsed.summary || null }
+      ) as Record<string, unknown>,
+      card_info_json: (params.cardInfoJsonOverride ?? {
         statementAccount: params.parsed.account || null,
         matchedAccounts: uniqueMatchedAccounts,
-      } as Record<string, unknown>,
+      }) as Record<string, unknown>,
       total_rows: params.routedTransactions.length,
       duplicate_rows: duplicateCount,
       updated_at: new Date().toISOString(),
@@ -778,6 +889,8 @@ export async function stageRoutedTransactions(params: {
 
   return {
     importId: fileImport.id,
+    accountId: params.primaryAccount.id,
+    accountLabel: params.primaryAccount.label,
     status: 'in_review' as const,
     institutionCode: params.parsed.institution_code ?? null,
     transactionsCount: params.routedTransactions.length,
@@ -787,6 +900,76 @@ export async function stageRoutedTransactions(params: {
     statementDate: params.parsed.statement_date ?? null,
     period: { start: params.parsed.period_start ?? null, end: params.parsed.period_end ?? null },
     reviewUrl: `/statements/review/${fileImport.id}`,
+  }
+}
+
+export async function stageSplitRoutedTransactions(params: {
+  supabase: any
+  householdId: string
+  userId: string
+  parsed: ParsedStatementResult
+  routedTransactions: RoutedTransaction[]
+  fileName: string
+  fileSha256: string
+  mimeType: string
+  fileSizeBytes: number
+  statementUploadId?: string | null
+  storageBucket?: string | null
+  storagePath?: string | null
+}) {
+  const accountGroups = groupRoutedTransactionsByAccount(params.routedTransactions)
+  const imports: StagedStatementImport[] = []
+  try {
+    for (const group of accountGroups) {
+      const scopedParsed = buildAccountScopedParsedStatement(params.parsed, group.transactions)
+      const staged = await stageRoutedTransactions({
+        supabase: params.supabase,
+        householdId: params.householdId,
+        userId: params.userId,
+        parsed: scopedParsed,
+        routedTransactions: group.transactions,
+        fileName: params.fileName,
+        fileSha256: params.fileSha256,
+        mimeType: params.mimeType,
+        fileSizeBytes: params.fileSizeBytes,
+        primaryAccount: group.account,
+        statementUploadId: params.statementUploadId ?? null,
+        storageBucket: params.storageBucket ?? null,
+        storagePath: params.storagePath ?? null,
+        cardInfoJsonOverride: {
+          statementAccount: scopedParsed.account || null,
+          matchedAccounts: [{
+            accountId: group.account.id,
+            label: group.account.label,
+            matchedBy: group.account.matchedBy,
+            cardId: group.account.cardId,
+            cardName: group.account.cardName,
+            cardLast4: group.account.cardLast4,
+          }],
+        },
+      })
+
+      imports.push(staged)
+    }
+  } catch (error) {
+    if (imports.length > 0) {
+      await params.supabase
+        .from('file_imports')
+        .delete()
+        .in('id', imports.map((item) => item.importId))
+    }
+
+    throw error
+  }
+
+  return {
+    statementUploadId: params.statementUploadId ?? null,
+    status: 'in_review' as const,
+    importCount: imports.length,
+    transactionsCount: params.routedTransactions.length,
+    duplicateCount: imports.reduce((sum, result) => sum + result.duplicateCount, 0),
+    imports,
+    reviewUrl: imports.length === 1 ? imports[0]?.reviewUrl ?? null : null,
   }
 }
 

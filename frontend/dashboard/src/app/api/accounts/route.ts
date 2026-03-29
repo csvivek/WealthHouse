@@ -7,6 +7,37 @@ import {
   normalizeAccountType,
 } from '@/lib/server/accounts'
 
+export async function GET() {
+  try {
+    const supabase = await createServerSupabaseClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('household_id')
+      .eq('id', user.id)
+      .single()
+    if (!profile) return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
+
+    const { data: accounts, error } = await supabase
+      .from('accounts')
+      .select('id, nickname, product_name, currency, account_type')
+      .eq('household_id', profile.household_id)
+      .eq('is_active', true)
+      .order('product_name', { ascending: true })
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    return NextResponse.json({ accounts: accounts ?? [] })
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to fetch accounts' },
+      { status: 500 },
+    )
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerSupabaseClient()

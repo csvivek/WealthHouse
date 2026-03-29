@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { parseReceipt } from '@/lib/ai/receipt-parser'
+import {
+  isReceiptMerchantContactSchemaNotReadyError,
+  stripReceiptMerchantContactFields,
+} from '@/lib/receipts/config'
 import { classifyReceiptStaging } from '@/lib/receipts/intelligence'
 import { generateDuplicateCandidates } from '@/lib/receipts/duplicates'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
@@ -42,6 +46,24 @@ function findMissingRequiredFields(parsed: {
   if (!parsed.transactionDate) missing.push('txn_date')
   if (parsed.transactionTotal == null) missing.push('transaction_total')
   return missing
+}
+
+async function upsertReceiptStagingRow(supabase: any, payload: Record<string, unknown>) {
+  const result = await supabase
+    .from('receipt_staging_transactions')
+    .upsert(payload, { onConflict: 'upload_id' })
+    .select('id')
+    .single()
+
+  if (!isReceiptMerchantContactSchemaNotReadyError(result.error, 'receipt_staging_transactions')) {
+    return result
+  }
+
+  return supabase
+    .from('receipt_staging_transactions')
+    .upsert(stripReceiptMerchantContactFields(payload), { onConflict: 'upload_id' })
+    .select('id')
+    .single()
 }
 
 export async function processReceiptIngestion(params: {
@@ -95,6 +117,8 @@ export async function processReceiptIngestion(params: {
       review_status: 'pending',
       duplicate_status: 'none',
       merchant_name: parsed.merchantName,
+      merchant_address: parsed.merchantAddress,
+      merchant_phone: parsed.merchantPhone,
       txn_date: parsed.transactionDate,
       payment_time: parsed.paymentTime,
       transaction_total: parsed.transactionTotal,
@@ -112,11 +136,7 @@ export async function processReceiptIngestion(params: {
       updated_at: new Date().toISOString(),
     }
 
-    const { data: stagingRow, error: stagingError } = await supabase
-      .from('receipt_staging_transactions')
-      .upsert(stagingPayload, { onConflict: 'upload_id' })
-      .select('id')
-      .single()
+    const { data: stagingRow, error: stagingError } = await upsertReceiptStagingRow(supabase, stagingPayload)
 
     if (stagingError || !stagingRow) {
       throw new ReceiptIngestionError(stagingError?.message || 'Failed to write receipt staging transaction', 500)

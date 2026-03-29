@@ -4,6 +4,7 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
   ArrowLeftRight,
+  BarChart3,
   Bot,
   Coins,
   FolderTree,
@@ -14,6 +15,7 @@ import {
   Settings,
   Shield,
   Store,
+  Table2,
   Tag,
   TrendingUp,
   User,
@@ -59,13 +61,17 @@ interface AppSidebarProps {
 const navigationGroups = [
   {
     label: "Overview",
-    items: [{ title: "Dashboard", href: "/dashboard", icon: LayoutDashboard }],
+    items: [
+      { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { title: "Analytics", href: "/analytics", icon: BarChart3 },
+    ],
   },
   {
     label: "Money",
     items: [
       { title: "Accounts", href: "/accounts", icon: Wallet },
       { title: "Transactions", href: "/transactions", icon: ArrowLeftRight },
+      { title: "Txns (Table)", href: "/transactions2", icon: Table2 },
       { title: "Advances", href: "/advances", icon: HandCoins },
     ],
   },

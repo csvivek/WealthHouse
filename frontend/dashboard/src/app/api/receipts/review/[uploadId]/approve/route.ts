@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
 import { isMerchantSchemaNotReadyError } from '@/lib/merchants/config'
+import {
+  isReceiptMerchantContactSchemaNotReadyError,
+  stripReceiptMerchantContactFields,
+} from '@/lib/receipts/config'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { createServiceSupabaseClient } from '@/lib/supabase/service'
 import { syncReceiptKnowledgeMarkdown, upsertReceiptItemKnowledge, upsertReceiptMerchantKnowledge } from '@/lib/receipts/knowledge'
@@ -17,6 +21,27 @@ function requiredFieldsMissing(staging: Record<string, unknown>) {
   if (!staging.txn_date) missing.push('txn_date')
   if (staging.transaction_total == null) missing.push('transaction_total')
   return missing
+}
+
+async function insertFinalReceipt(
+  serviceSupabase: any,
+  payload: Record<string, unknown>,
+) {
+  const result = await serviceSupabase
+    .from('receipts')
+    .insert(payload)
+    .select('id')
+    .single()
+
+  if (!isReceiptMerchantContactSchemaNotReadyError(result.error, 'receipts')) {
+    return result
+  }
+
+  return serviceSupabase
+    .from('receipts')
+    .insert(stripReceiptMerchantContactFields(payload))
+    .select('id')
+    .single()
 }
 
 export async function POST(
@@ -152,39 +177,39 @@ export async function POST(
     }
 
     if (!receiptId) {
-      const { data: receiptData, error: insertReceiptError } = await serviceSupabase
-        .from('receipts')
-        .insert({
-          household_id: profile.household_id,
-          receipt_datetime: staging.txn_date ? `${staging.txn_date}T${staging.payment_time || '00:00:00'}Z` : null,
-          merchant_raw: staging.merchant_name,
-          merchant_id: merchantResolution?.merchant.id ?? null,
-          total_amount: staging.transaction_total,
-          tax_amount: staging.tax_amount,
-          currency: staging.currency || 'SGD',
-          payment_method_raw: staging.payment_information,
-          source: 'upload',
-          file_url: uploadResult.data.storage_path,
-          extraction_confidence: staging.extraction_confidence || 0,
-          status: 'confirmed',
-          receipt_hash: uploadResult.data.file_sha256,
-          receipt_reference: staging.receipt_reference,
-          payment_type: staging.payment_type,
-          payment_breakdown_json: staging.payment_breakdown_json,
-          raw_extraction_json: staging.raw_extraction_json,
-          parse_warnings_json: staging.confidence_warnings_json,
-          source_upload_id: uploadId,
-          receipt_category_id: staging.receipt_category_id,
-          classification_source: staging.classification_source,
-          classification_confidence: staging.classification_confidence,
-          classification_version: staging.classification_version,
-          is_mixed_basket: staging.is_mixed_basket,
-          approved_by: user.id,
-          approved_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single()
+      const receiptInsertPayload = {
+        household_id: profile.household_id,
+        receipt_datetime: staging.txn_date ? `${staging.txn_date}T${staging.payment_time || '00:00:00'}Z` : null,
+        merchant_raw: staging.merchant_name,
+        merchant_address: staging.merchant_address ?? null,
+        merchant_phone: staging.merchant_phone ?? null,
+        merchant_id: merchantResolution?.merchant.id ?? null,
+        total_amount: staging.transaction_total,
+        tax_amount: staging.tax_amount,
+        currency: staging.currency || 'SGD',
+        payment_method_raw: staging.payment_information,
+        source: 'upload',
+        file_url: uploadResult.data.storage_path,
+        extraction_confidence: staging.extraction_confidence || 0,
+        status: 'confirmed',
+        receipt_hash: uploadResult.data.file_sha256,
+        receipt_reference: staging.receipt_reference,
+        payment_type: staging.payment_type,
+        payment_breakdown_json: staging.payment_breakdown_json,
+        raw_extraction_json: staging.raw_extraction_json,
+        parse_warnings_json: staging.confidence_warnings_json,
+        source_upload_id: uploadId,
+        receipt_category_id: staging.receipt_category_id,
+        classification_source: staging.classification_source,
+        classification_confidence: staging.classification_confidence,
+        classification_version: staging.classification_version,
+        is_mixed_basket: staging.is_mixed_basket,
+        approved_by: user.id,
+        approved_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+
+      const { data: receiptData, error: insertReceiptError } = await insertFinalReceipt(serviceSupabase, receiptInsertPayload)
 
       if (insertReceiptError || !receiptData) {
         return NextResponse.json(

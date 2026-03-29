@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, UploadCloud, FileText, TriangleAlert, CheckCircle2, CircleX, Eye, Settings2 } from 'lucide-react'
+import { Loader2, UploadCloud, FileText, FileSpreadsheet, TriangleAlert, CheckCircle2, CircleX, Eye, Settings2, Download } from 'lucide-react'
 import { ExecutivePage, ExecutivePageHeader } from '@/components/executive/page'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +24,8 @@ interface UploadRow {
   created_at: string
   parse_error: string | null
   committed_receipt_id: string | null
+  import_source: 'image_upload' | 'csv_import' | null
+  csv_batch_id: string | null
 }
 
 interface FinalReceiptRow {
@@ -71,6 +73,7 @@ function humanFileSize(bytes: number) {
 
 export default function ReceiptsPage() {
   const router = useRouter()
+  const csvInputRef = useRef<HTMLInputElement>(null)
 
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -160,7 +163,7 @@ export default function ReceiptsPage() {
     return null
   }
 
-  async function handleUpload(file: File) {
+  async function handleUpload(file: File, options?: { skipRedirect?: boolean }) {
     setUploading(true)
     try {
       const form = new FormData()
@@ -181,13 +184,58 @@ export default function ReceiptsPage() {
       }
 
       const uploadId = payload.uploadId as string | undefined
-      toast.success('Receipt uploaded. Parsing started.')
+      toast.success(`${file.name} uploaded. Parsing started.`)
       await fetchData()
-      if (uploadId) {
+      if (uploadId && !options?.skipRedirect) {
         router.push(`/receipts/review/${uploadId}`)
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function handleCsvImport(file: File) {
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('csv', file)
+
+      const response = await fetch('/api/receipts/csv-import', {
+        method: 'POST',
+        body: form,
+      })
+
+      const payload = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        toast.error(payload?.error || 'CSV import failed')
+        return
+      }
+
+      const { validCount, failedCount, errors } = payload as {
+        validCount: number
+        failedCount: number
+        errors: { row: number; message: string }[]
+      }
+
+      if (validCount > 0) {
+        toast.success(
+          `Imported ${validCount} receipt${validCount === 1 ? '' : 's'} from CSV.` +
+            (failedCount > 0 ? ` ${failedCount} row${failedCount === 1 ? '' : 's'} had errors.` : ''),
+        )
+      } else {
+        toast.error(`No receipts imported. ${failedCount} row${failedCount === 1 ? '' : 's'} had errors.`)
+      }
+
+      if (errors.length > 0) {
+        console.warn('CSV import row errors:', errors)
+      }
+
+      await fetchData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'CSV import failed')
     } finally {
       setUploading(false)
     }
@@ -308,23 +356,66 @@ export default function ReceiptsPage() {
           </>
         )}
         actions={(
-          <label className="inline-flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Hidden CSV file input */}
             <input
+              ref={csvInputRef}
               type="file"
-              accept="image/*,application/pdf"
+              accept=".csv,text/csv,application/csv,text/plain"
               className="hidden"
               onChange={async (event) => {
                 const file = event.target.files?.[0]
-                if (!file) return
-                await handleUpload(file)
                 event.target.value = ''
+                if (!file) return
+                await handleCsvImport(file)
               }}
             />
-            <span className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-[0_14px_30px_rgba(201,168,76,0.18)] hover:opacity-90">
-              {uploading ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
-              {uploading ? 'Uploading…' : 'Upload Receipt'}
-            </span>
-          </label>
+
+            {/* CSV import button */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={uploading}
+              onClick={() => csvInputRef.current?.click()}
+              className="gap-1.5"
+            >
+              <FileSpreadsheet className="size-4" />
+              Import CSV
+            </Button>
+
+            {/* Template download link */}
+            <a
+              href="/api/receipts/csv-import"
+              download="receipts_template.csv"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              <Download className="size-3" />
+              Template
+            </a>
+
+            {/* Image / PDF upload — multiple files supported */}
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                multiple
+                className="hidden"
+                onChange={async (event) => {
+                  const files = Array.from(event.target.files ?? [])
+                  event.target.value = ''
+                  if (!files.length) return
+                  const isMultiple = files.length > 1
+                  for (const file of files) {
+                    await handleUpload(file, { skipRedirect: isMultiple })
+                  }
+                }}
+              />
+              <span className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-[0_14px_30px_rgba(201,168,76,0.18)] hover:opacity-90">
+                {uploading ? <Loader2 className="size-4 animate-spin" /> : <UploadCloud className="size-4" />}
+                {uploading ? 'Uploading…' : 'Upload Receipt'}
+              </span>
+            </label>
+          </div>
         )}
       />
 
@@ -364,7 +455,16 @@ export default function ReceiptsPage() {
                     return (
                       <tr key={upload.id} className="border-b last:border-0">
                         <td className="py-3 pr-4 whitespace-nowrap text-muted-foreground">{formatDate(upload.created_at)}</td>
-                        <td className="py-3 pr-4 font-medium">{upload.original_filename}</td>
+                        <td className="py-3 pr-4 font-medium">
+                          <span className="flex items-center gap-1.5">
+                            {upload.import_source === 'csv_import' && (
+                              <Badge className="border-0 bg-violet-100 px-1 py-0 text-[10px] text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
+                                CSV
+                              </Badge>
+                            )}
+                            {upload.original_filename}
+                          </span>
+                        </td>
                         <td className="py-3 pr-4 text-muted-foreground">{humanFileSize(upload.file_size_bytes)}</td>
                         <td className="py-3 pr-4">
                           <Badge className={cn('inline-flex items-center gap-1 border-0 text-xs', config.className)}>

@@ -4,9 +4,11 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import ReviewPage from '@/app/(dashboard)/statements/review/[importId]/page'
 import { toast } from 'sonner'
 
+const mockedRouterPush = vi.fn()
+
 vi.mock('next/navigation', () => ({
   useParams: () => ({ importId: 'import-1' }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: mockedRouterPush }),
 }))
 
 vi.mock('@/lib/statement-commit-jobs', () => ({
@@ -331,6 +333,7 @@ describe('Statement review category filter', () => {
   })
 
   afterEach(() => {
+    mockedRouterPush.mockReset()
     vi.restoreAllMocks()
     cleanup()
   })
@@ -458,5 +461,38 @@ describe('Statement review category filter', () => {
         }),
       })
     })
+  })
+
+  it('deletes the import and returns to the statements list', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+
+      if (url === '/api/ai/statement/import-1' && !init) {
+        return createJsonResponse(createReviewPayload())
+      }
+
+      if (url === '/api/ai/statement/import-1' && init?.method === 'DELETE') {
+        return createJsonResponse({
+          deleted: true,
+          importId: 'import-1',
+          fileName: 'dbs-march.pdf',
+        })
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<ReviewPage />)
+
+    await screen.findByText('Cold Storage')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Import' }))
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/ai/statement/import-1', { method: 'DELETE' })
+    })
+    expect(toast.success).toHaveBeenCalledWith('dbs-march.pdf deleted')
+    expect(mockedRouterPush).toHaveBeenCalledWith('/statements')
   })
 })

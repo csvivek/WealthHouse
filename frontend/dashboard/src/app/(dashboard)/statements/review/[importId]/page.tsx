@@ -13,6 +13,7 @@ import {
   Pencil,
   Plus,
   Sparkles,
+  Trash2,
   X,
   XCircle,
 } from 'lucide-react'
@@ -1190,6 +1191,33 @@ You can leave this page while the commit continues.`,
     }
   }
 
+  async function handleDeleteImport() {
+    if (!importMeta) return
+
+    const targetFileName = importMeta.fileName
+    const confirmed = window.confirm(
+      `Delete ${targetFileName} and all data imported from it?\n\nThis removes its review rows, committed statement transactions, and the stored statement file if no other split imports still use it.`,
+    )
+    if (!confirmed) return
+
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/ai/statement/${importId}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to delete import')
+        return
+      }
+
+      toast.success(`${data.fileName || targetFileName} deleted`)
+      router.push('/statements')
+    } catch {
+      toast.error('Failed to delete import')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   return (
     <ExecutivePage>
       <ExecutivePageHeader
@@ -1239,6 +1267,15 @@ You can leave this page while the commit continues.`,
               Reroute Account
             </Button>
           )}
+          <Button
+            variant="outline"
+            onClick={() => void handleDeleteImport()}
+            disabled={actionLoading || commitLoading || commitJobActive || rerouting}
+            className="gap-2 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="size-4" />
+            Delete Import
+          </Button>
           {!isReadOnly && (
             <Button
               onClick={handleCommit}

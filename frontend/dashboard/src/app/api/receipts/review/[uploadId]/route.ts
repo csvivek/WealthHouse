@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  isReceiptMerchantContactSchemaNotReadyError,
+  stripReceiptMerchantContactFields,
+} from '@/lib/receipts/config'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { resolveEffectiveReceiptGroups } from '@/lib/server/category-groups'
 import { listTags, searchOrCreateInlineTag, validateTagOwnership } from '@/lib/server/tag-service'
@@ -193,6 +197,8 @@ export async function PATCH(
 
       const allowedFields = [
         'merchant_name',
+        'merchant_address',
+        'merchant_phone',
         'txn_date',
         'payment_time',
         'transaction_total',
@@ -237,10 +243,23 @@ export async function PATCH(
         updatePayload.user_confirmed_low_confidence = Boolean(header.user_confirmed_low_confidence)
       }
 
-      await db
+      const updateResult = await db
         .from('receipt_staging_transactions')
         .update(updatePayload)
         .eq('id', staging.id)
+
+      if (updateResult.error && isReceiptMerchantContactSchemaNotReadyError(updateResult.error, 'receipt_staging_transactions')) {
+        const retryResult = await db
+          .from('receipt_staging_transactions')
+          .update(stripReceiptMerchantContactFields(updatePayload))
+          .eq('id', staging.id)
+
+        if (retryResult.error) {
+          return NextResponse.json({ error: retryResult.error.message }, { status: 500 })
+        }
+      } else if (updateResult.error) {
+        return NextResponse.json({ error: updateResult.error.message }, { status: 500 })
+      }
     }
 
     if (Array.isArray(body.items)) {
